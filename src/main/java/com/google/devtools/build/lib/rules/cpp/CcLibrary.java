@@ -254,11 +254,11 @@ public abstract class CcLibrary implements RuleConfiguredTargetFactory {
         collectHiddenTopLevelArtifacts(ruleContext, common, info.getCcCompilationOutputs());
 
     NestedSetBuilder<Artifact> filesBuilder = NestedSetBuilder.stableOrder();
-    filesBuilder.addAll(LinkerInputs.toLibraryArtifacts(linkedLibraries.getStaticLibraries()));
-    filesBuilder.addAll(LinkerInputs.toLibraryArtifacts(linkedLibraries.getPicStaticLibraries()));
     filesBuilder.addAll(LinkerInputs.toNonSolibArtifacts(linkedLibraries.getDynamicLibraries()));
     filesBuilder.addAll(
         LinkerInputs.toNonSolibArtifacts(linkedLibraries.getExecutionDynamicLibraries()));
+    filesBuilder.addAll(LinkerInputs.toLibraryArtifacts(linkedLibraries.getStaticLibraries()));
+    filesBuilder.addAll(LinkerInputs.toLibraryArtifacts(linkedLibraries.getPicStaticLibraries()));
 
     CcLinkingOutputs linkingOutputs = info.getCcLinkingOutputs();
     warnAboutEmptyLibraries(
