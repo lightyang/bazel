@@ -33,11 +33,13 @@ import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig.LipoM
 import com.google.devtools.common.options.Converter;
 import com.google.devtools.common.options.EnumConverter;
 import com.google.devtools.common.options.Option;
+import com.google.devtools.common.options.OptionsParser.OptionUsageRestrictions;
 import com.google.devtools.common.options.OptionsParsingException;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import javax.annotation.Nullable;
 
 /**
  * Command-line options for C++.
@@ -125,14 +127,6 @@ public class CppOptions extends FragmentOptions {
       super(LipoMode.class, "LIPO mode");
     }
   }
-
-  @Option(
-    name = "lipo input collector",
-    defaultValue = "false",
-    category = "internal",
-    help = "Internal flag, only used to create configurations with the LIPO-collector flag set."
-  )
-  public boolean lipoCollector;
 
   @Option(
     name = "crosstool_top",
@@ -379,7 +373,20 @@ public class CppOptions extends FragmentOptions {
             + "With Clang/LLVM compiler, it also accepts the directory name under"
             + "which the raw profile file(s) will be dumped at runtime."
   )
-  public PathFragment fdoInstrument;
+  /**
+   * Never read FDO/LIPO options directly. This is because {@link #lipoConfigurationState}
+   * determines whether these options are actually "active" for this configuration. Instead, use
+   * the equivalent getter method, which takes that into account.
+   */
+  public PathFragment fdoInstrumentForBuild;
+
+  /**
+   * Returns the --fdo_instrument value if FDO is specified and active for this configuration,
+   * the default value otherwise.
+   */
+  public PathFragment getFdoInstrument() {
+    return enableLipoSettings() ? fdoInstrumentForBuild : null;
+  }
 
   @Option(
     name = "fdo_optimize",
@@ -391,9 +398,22 @@ public class CppOptions extends FragmentOptions {
             + "an auto profile. This flag also accepts files specified as labels, for "
             + "example //foo/bar:file.afdo. Such labels must refer to input files; you may "
             + "need to add an exports_files directive to the corresponding package to make "
-            + "the file visible to Blaze. It also accepts an indexed LLVM profile file."
+            + "the file visible to Blaze. It also accepts a raw or an indexed LLVM profile file."
   )
-  public String fdoOptimize;
+  /**
+   * Never read FDO/LIPO options directly. This is because {@link #lipoConfigurationState}
+   * determines whether these options are actually "active" for this configuration. Instead, use
+   * the equivalent getter method, which takes that into account.
+   */
+  public String fdoOptimizeForBuild;
+
+  /**
+   * Returns the --fdo_optimize value if FDO is specified and active for this configuration,
+   * the default value otherwise.
+   */
+  public String getFdoOptimize() {
+    return enableLipoSettings() ? fdoOptimizeForBuild : null;
+  }
 
   @Option(
     name = "autofdo_lipo_data",
@@ -403,8 +423,23 @@ public class CppOptions extends FragmentOptions {
         "If true then the directory name for non-LIPO targets will have a "
             + "'-lipodata' suffix in AutoFDO mode."
   )
-  public boolean autoFdoLipoData;
+  /**
+   * Never read FDO/LIPO options directly. This is because {@link #lipoConfigurationState}
+   * determines whether these options are actually "active" for this configuration. Instead, use
+   * the equivalent getter method, which takes that into account.
+   */
+  public boolean autoFdoLipoDataForBuild;
 
+  /**
+   * Returns the --autofdo_lipo_data value for this configuration. This is false except for data
+   * configurations under LIPO builds.
+   */
+  public boolean getAutoFdoLipoData() {
+    return enableLipoSettings()
+        ? autoFdoLipoDataForBuild
+        : lipoModeForBuild != LipoMode.OFF && fdoOptimizeForBuild != null && FdoSupport.isAutoFdo(
+            fdoOptimizeForBuild);
+  }
   @Option(
     name = "lipo",
     defaultValue = "off",
@@ -416,7 +451,20 @@ public class CppOptions extends FragmentOptions {
             + "only has an effect when FDO is also enabled. Currently LIPO is only supported "
             + "when building a single cc_binary rule."
   )
-  public LipoMode lipoMode;
+  /**
+   * Never read FDO/LIPO options directly. This is because {@link #lipoConfigurationState}
+   * determines whether these options are actually "active" for this configuration. Instead, use
+   * the equivalent getter method, which takes that into account.
+   */
+  public LipoMode lipoModeForBuild;
+
+  /**
+   * Returns the --lipo value if LIPO is specified and active for this configuration,
+   * the default value otherwise.
+   */
+  public LipoMode getLipoMode() {
+    return enableLipoSettings() ? lipoModeForBuild : LipoMode.OFF;
+  }
 
   @Option(
     name = "lipo_context",
@@ -426,7 +474,82 @@ public class CppOptions extends FragmentOptions {
     implicitRequirements = {"--linkopt=-Wl,--warn-unresolved-symbols"},
     help = "Specifies the binary from which the LIPO profile information comes."
   )
-  public Label lipoContext;
+  /**
+   * Never read FDO/LIPO options directly. This is because {@link #lipoConfigurationState}
+   * determines whether these options are actually "active" for this configuration. Instead, use
+   * the equivalent getter method, which takes that into account.
+   */
+  public Label lipoContextForBuild;
+
+  /**
+   * Returns the --lipo_context value if LIPO is specified and active for this configuration,
+   * null otherwise.
+   */
+  @Nullable
+  public Label getLipoContext() {
+    return isLipoOptimization() ? lipoContextForBuild : null;
+  }
+
+  /**
+   * Returns the LIPO context for this build, even if LIPO isn't enabled in the current
+   * configuration.
+   */
+  public Label getLipoContextForBuild() {
+    return lipoContextForBuild;
+  }
+
+  /**
+   * Internal state determining how to apply LIPO settings under this configuration.
+   */
+  public enum LipoConfigurationState {
+    /** Don't LIPO-optimize targets under this configuration. */
+    IGNORE_LIPO,
+    /** LIPO-optimize targets under this configuration if this is a LIPO build. */
+    APPLY_LIPO,
+    /**
+     * Evaluate targets in this configuration in "LIPO context collector" mode. See
+     * {@link FdoSupport} for details.
+      */
+    LIPO_CONTEXT_COLLECTOR,
+  }
+
+  /**
+   * Converter for {@link LipoConfigurationState}.
+   */
+  public static class LipoConfigurationStateConverter
+      extends EnumConverter<LipoConfigurationState> {
+    public LipoConfigurationStateConverter() {
+      super(LipoConfigurationState.class, "LIPO configuration state");
+    }
+  }
+
+  @Option(
+    name = "lipo configuration state",
+    defaultValue = "apply_lipo",
+    optionUsageRestrictions = OptionUsageRestrictions.INTERNAL,
+    converter = LipoConfigurationStateConverter.class
+  )
+  public LipoConfigurationState lipoConfigurationState;
+
+  /**
+   * Returns true if targets under this configuration should use the build's LIPO settings.
+   *
+   * <p>Even when we switch off LIPO (e.g. by switching to a data configuration), we still need to
+   * remember the LIPO settings in case we need to switch back (e.g. if we build a genrule with a
+   * data dependency on the LIPO context).
+   *
+   * <p>We achieve this by maintaining a "configuration state" flag that flips on / off when we
+   * want to enable / disable LIPO respectively. This means we need to be careful to distinguish
+   * between the existence of LIPO settings and LIPO actually applying to the configuration. So when
+   * buiding a target, it's not enough to see if {@link #lipoContextForBuild} or
+   * {@link #lipoModeForBuild} are set. We also need to check this flag.
+   *
+   * <p>This class exposes appropriate convenience methods to make these checks convenient and easy.
+   * Use them and read the documentation carefully.
+   */
+  private boolean enableLipoSettings() {
+    return lipoConfigurationState != LipoConfigurationState.IGNORE_LIPO;
+  }
 
   @Option(
     name = "experimental_stl",
@@ -528,8 +651,8 @@ public class CppOptions extends FragmentOptions {
     defaultValue = "false",
     category = "flags",
     help =
-        "If enabled, every C++ binary linked with gold will store the number of used "
-            + "symbols per object file in a .sc file."
+        "If enabled, for every C++ binary linked with gold, the number of defined symbols "
+            + "and the number of used symbols per input file is stored in a .sc file."
   )
   public boolean symbolCounts;
 
@@ -603,7 +726,7 @@ public class CppOptions extends FragmentOptions {
     category = "strategy",
     help =
         "If true, headers found through system include paths (-isystem) are also required to be "
-        + "declared."
+            + "declared."
   )
   public boolean strictSystemIncludes;
 
@@ -635,8 +758,8 @@ public class CppOptions extends FragmentOptions {
 
     host.useStartEndLib = useStartEndLib;
     host.stripBinaries = StripMode.ALWAYS;
-    host.fdoOptimize = null;
-    host.lipoMode = LipoMode.OFF;
+    host.fdoOptimizeForBuild = null;
+    host.lipoModeForBuild = LipoMode.OFF;
     host.inmemoryDotdFiles = inmemoryDotdFiles;
 
     return host;
@@ -661,7 +784,7 @@ public class CppOptions extends FragmentOptions {
         labelMap.put("crosstool", libcLabel);
       }
     }
-    addOptionalLabel(labelMap, "fdo", fdoOptimize);
+    addOptionalLabel(labelMap, "fdo", getFdoOptimize());
 
     if (stl != null) {
       labelMap.put("STL", stl);
@@ -671,8 +794,8 @@ public class CppOptions extends FragmentOptions {
       labelMap.put("custom_malloc", customMalloc);
     }
 
-    if (getLipoContextLabel() != null) {
-      labelMap.put("lipo", getLipoContextLabel());
+    if (getLipoContext() != null) {
+      labelMap.put("lipo", getLipoContext());
     }
   }
 
@@ -694,29 +817,53 @@ public class CppOptions extends FragmentOptions {
     return ImmutableMap.of("CROSSTOOL", crosstoolLabels, "COVERAGE", ImmutableSet.<Label>of());
   }
 
+  /**
+   * Returns true if targets under this configuration should apply FDO.
+   */
   public boolean isFdo() {
-    return fdoOptimize != null || fdoInstrument != null;
+    return getFdoOptimize() != null || getFdoInstrument() != null;
   }
 
+  /**
+   * Returns true if this configuration has LIPO optimization settings (even if they're
+   * not necessarily active).
+   */
+  private boolean hasLipoOptimizationState() {
+    return lipoModeForBuild == LipoMode.BINARY && fdoOptimizeForBuild != null
+        && lipoContextForBuild != null;
+  }
+
+  /**
+   * Returns true if targets under this configuration should LIPO-optimize.
+   */
   public boolean isLipoOptimization() {
-    return lipoMode == LipoMode.BINARY
-        && fdoOptimize != null
-        && lipoContext != null
-        && !lipoCollector;
+    return hasLipoOptimizationState() && enableLipoSettings() && !isLipoContextCollector();
   }
 
+  /**
+   * Returns true if this is a data configuration for a LIPO-optimizing build.
+   *
+   * <p>This means LIPO is not applied for this configuration, but LIPO might be reenabled further
+   * down the dependency tree.
+   */
+  public boolean isDataConfigurationForLipoOptimization() {
+    return hasLipoOptimizationState() && !enableLipoSettings();
+  }
+
+  /**
+   * Returns true if targets under this configuration should LIPO-optimize or LIPO-instrument.
+   */
   public boolean isLipoOptimizationOrInstrumentation() {
-    return lipoMode == LipoMode.BINARY
-        && ((fdoOptimize != null && lipoContext != null) || fdoInstrument != null)
-        && !lipoCollector;
+    return getLipoMode() == LipoMode.BINARY
+        && ((getFdoOptimize() != null && getLipoContext() != null) || getFdoInstrument() != null)
+        && !isLipoContextCollector();
   }
 
-  public Label getLipoContextLabel() {
-    return (lipoMode == LipoMode.BINARY && fdoOptimize != null) ? lipoContext : null;
-  }
-
-  public LipoMode getLipoMode() {
-    return lipoMode;
+  /**
+   * Returns true if this is the LIPO context collector configuration.
+   */
+  public boolean isLipoContextCollector() {
+    return lipoConfigurationState == LipoConfigurationState.LIPO_CONTEXT_COLLECTOR;
   }
 
   /**
@@ -725,7 +872,11 @@ public class CppOptions extends FragmentOptions {
   @Override
   public boolean useStaticConfigurationsOverride() {
     // --lipo=binary is technically possible without FDO, even though it doesn't do anything.
-    return isFdo() || getLipoMode() == LipoMode.BINARY;
+    return isFdo() || lipoModeForBuild == LipoMode.BINARY;
   }
 
+  @Override
+  public boolean enableActions() {
+    return !isLipoContextCollector();
+  }
 }

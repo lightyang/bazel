@@ -21,9 +21,8 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import com.google.devtools.build.lib.actions.Action;
+import com.google.devtools.build.lib.actions.ActionAnalysisMetadata;
 import com.google.devtools.build.lib.actions.ActionExecutionContext;
-import com.google.devtools.build.lib.actions.ActionExecutionException;
 import com.google.devtools.build.lib.actions.ActionInput;
 import com.google.devtools.build.lib.actions.ActionOwner;
 import com.google.devtools.build.lib.actions.Artifact;
@@ -45,7 +44,6 @@ import com.google.devtools.build.lib.collect.ImmutableIterable;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
-import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.util.Fingerprint;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.ArrayList;
@@ -74,13 +72,6 @@ public class JavaHeaderCompileAction extends SpawnAction {
 
   private final Iterable<Artifact> directInputs;
   @Nullable private final CommandLine directCommandLine;
-  private final boolean fallbackError;
-
-  /** Returns true if the header compilation will use direct dependencies only. */
-  @VisibleForTesting
-  public boolean useDirectClasspath() {
-    return directCommandLine != null;
-  }
 
   /** The command line for a direct classpath compilation, or {@code null} if disabled. */
   @VisibleForTesting
@@ -97,10 +88,8 @@ public class JavaHeaderCompileAction extends SpawnAction {
    * @param directInputs the set of direct input artifacts of the compile action
    * @param transitiveInputs the set of transitive input artifacts of the compile action
    * @param outputs the outputs of the action
-   * @param directCommandLine the direct command line arguments for the java header compiler, or
-   *     {@code null} if direct classpaths are disabled
+   * @param directCommandLine the direct command line arguments for the java header compiler
    * @param transitiveCommandLine the transitive command line arguments for the java header compiler
-   * @param fallbackError true if falling back from the direct classpath should be an error
    * @param progressMessage the message printed during the progression of the build
    */
   protected JavaHeaderCompileAction(
@@ -111,7 +100,6 @@ public class JavaHeaderCompileAction extends SpawnAction {
       Iterable<Artifact> outputs,
       CommandLine directCommandLine,
       CommandLine transitiveCommandLine,
-      boolean fallbackError,
       String progressMessage) {
     super(
         owner,
@@ -125,31 +113,21 @@ public class JavaHeaderCompileAction extends SpawnAction {
         progressMessage,
         "Turbine");
     this.directInputs = checkNotNull(directInputs);
-    this.directCommandLine = directCommandLine;
-    this.fallbackError = fallbackError;
+    this.directCommandLine = checkNotNull(directCommandLine);
   }
 
   @Override
   protected String computeKey() {
-    Fingerprint fingerprint =
-        new Fingerprint()
-            .addString(GUID)
-            .addString(super.computeKey())
-            .addBoolean(useDirectClasspath())
-            .addBoolean(fallbackError);
-    if (directCommandLine != null) {
-      fingerprint.addStrings(directCommandLine.arguments());
-    }
-    return fingerprint.hexDigestAndReset();
+    return new Fingerprint()
+        .addString(GUID)
+        .addString(super.computeKey())
+        .addStrings(directCommandLine.arguments())
+        .hexDigestAndReset();
   }
 
   @Override
-  public void execute(ActionExecutionContext actionExecutionContext)
-      throws ActionExecutionException, InterruptedException {
-    if (!useDirectClasspath()) {
-      super.execute(actionExecutionContext);
-      return;
-    }
+  protected void internalExecute(ActionExecutionContext actionExecutionContext)
+      throws ExecException, InterruptedException {
     Executor executor = actionExecutionContext.getExecutor();
     SpawnActionContext context = getContext(executor);
     try {
@@ -157,14 +135,11 @@ public class JavaHeaderCompileAction extends SpawnAction {
     } catch (ExecException e) {
       // if the direct input spawn failed, try again with transitive inputs to produce better
       // better messages
-      super.execute(actionExecutionContext);
-      // the compilation should never fail with direct deps but succeed with transitive inputs
-      if (fallbackError) {
-        throw e.toActionExecutionException(
-            "header compilation failed unexpectedly", executor.getVerboseFailures(), this);
-      }
-      Event event = Event.warn(getOwner().getLocation(), "header compilation failed unexpectedly");
-      executor.getEventHandler().handle(event);
+      context.exec(getSpawn(actionExecutionContext.getClientEnv()), actionExecutionContext);
+      // The compilation should never fail with direct deps but succeed with transitive inputs
+      // unless it failed due to a strict deps error, in which case fall back to the transitive
+      // classpath may allow it to succeed (Strict Java Deps errors are reported by javac,
+      // not turbine).
     }
   }
 
@@ -342,6 +317,10 @@ public class JavaHeaderCompileAction extends SpawnAction {
     }
     /** Builds and registers the {@link JavaHeaderCompileAction} for a header compilation. */
     public void build(JavaToolchainProvider javaToolchain) {
+      ruleContext.registerAction(buildInternal(javaToolchain));
+    }
+
+    private ActionAnalysisMetadata[] buildInternal(JavaToolchainProvider javaToolchain) {
       checkNotNull(outputDepsProto, "outputDepsProto must not be null");
       checkNotNull(sourceFiles, "sourceFiles must not be null");
       checkNotNull(sourceJars, "sourceJars must not be null");
@@ -363,28 +342,19 @@ public class JavaHeaderCompileAction extends SpawnAction {
         compileTimeDependencyArtifacts = NestedSetBuilder.emptySet(Order.STABLE_ORDER);
       }
       boolean useDirectClasspath = useDirectClasspath();
-      CommandLine directCommandLine =
-          useDirectClasspath
-              ? baseCommandLine(getBaseArgs(javaToolchain))
-                  .addExecPaths("--classpath", directJars)
-                  .build()
-              : null;
-      CommandLine transitiveParams = transitiveCommandLine();
-      PathFragment paramFilePath = ParameterFile.derivePath(outputJar.getRootRelativePath());
-      Artifact paramsFile =
-          ruleContext
-              .getAnalysisEnvironment()
-              .getDerivedArtifact(paramFilePath, outputJar.getRoot());
-      Action parameterFileWriteAction =
-          new ParameterFileWriteAction(
-              ruleContext.getActionOwner(),
-              paramsFile,
-              transitiveParams,
-              ParameterFile.ParameterFileType.UNQUOTED,
-              ISO_8859_1);
-      CommandLine transitiveCommandLine =
-          getBaseArgs(javaToolchain).addPaths("@%s", paramsFile.getExecPath()).build();
+      boolean disableJavacFallback =
+          ruleContext.getFragment(JavaConfiguration.class).headerCompilationDisableJavacFallback();
+      CommandLine directCommandLine = null;
+      if (useDirectClasspath) {
+        CustomCommandLine.Builder builder =
+            baseCommandLine(getBaseArgs(javaToolchain)).addExecPaths("--classpath", directJars);
+        if (disableJavacFallback) {
+          builder.add("--nojavac_fallback");
+        }
+        directCommandLine = builder.build();
+      }
       Iterable<Artifact> tools = ImmutableList.of(javacJar, javaToolchain.getHeaderCompiler());
+      ImmutableList<Artifact> outputs = ImmutableList.of(outputJar, outputDepsProto);
       NestedSet<Artifact> directInputs =
           NestedSetBuilder.<Artifact>stableOrder()
               .addTransitive(javabaseInputs)
@@ -394,6 +364,40 @@ public class JavaHeaderCompileAction extends SpawnAction {
               .addTransitive(directJars)
               .addAll(tools)
               .build();
+
+      if (useDirectClasspath && disableJavacFallback) {
+        // use a regular SpawnAction to invoke turbine with direct deps only,
+        // and no fallback to javac-turbine
+        return new ActionAnalysisMetadata[] {
+          new SpawnAction(
+              ruleContext.getActionOwner(),
+              tools,
+              directInputs,
+              outputs,
+              LOCAL_RESOURCES,
+              directCommandLine,
+              JavaCompileAction.UTF8_ENVIRONMENT,
+              /*executionInfo=*/ ImmutableSet.<String>of(),
+              getProgressMessage(),
+              "Turbine")
+        };
+      }
+
+      CommandLine transitiveParams = transitiveCommandLine();
+      PathFragment paramFilePath = ParameterFile.derivePath(outputJar.getRootRelativePath());
+      Artifact paramsFile =
+          ruleContext
+              .getAnalysisEnvironment()
+              .getDerivedArtifact(paramFilePath, outputJar.getRoot());
+      ParameterFileWriteAction parameterFileWriteAction =
+          new ParameterFileWriteAction(
+              ruleContext.getActionOwner(),
+              paramsFile,
+              transitiveParams,
+              ParameterFile.ParameterFileType.UNQUOTED,
+              ISO_8859_1);
+      CommandLine transitiveCommandLine =
+          getBaseArgs(javaToolchain).addPaths("@%s", paramsFile.getExecPath()).build();
       NestedSet<Artifact> transitiveInputs =
           NestedSetBuilder.<Artifact>stableOrder()
               .addTransitive(directInputs)
@@ -402,20 +406,36 @@ public class JavaHeaderCompileAction extends SpawnAction {
               .addTransitive(compileTimeDependencyArtifacts)
               .add(paramsFile)
               .build();
-      JavaHeaderCompileAction javaHeaderCompileAction =
-          new JavaHeaderCompileAction(
+      if (!useDirectClasspath) {
+        // If direct classpaths are disabled (e.g. because the compilation uses API-generating
+        // annotation processors) skip the custom action implementation and just use SpawnAction.
+        return new ActionAnalysisMetadata[] {
+          parameterFileWriteAction,
+          new SpawnAction(
               ruleContext.getActionOwner(),
               tools,
-              directInputs,
               transitiveInputs,
-              ImmutableList.of(outputJar, outputDepsProto),
-              directCommandLine,
+              outputs,
+              LOCAL_RESOURCES,
               transitiveCommandLine,
-              ruleContext
-                  .getFragment(JavaConfiguration.class)
-                  .headerCompilationDirectClasspathFallbackError(),
-              getProgressMessage());
-      ruleContext.registerAction(parameterFileWriteAction, javaHeaderCompileAction);
+              JavaCompileAction.UTF8_ENVIRONMENT,
+              /*executionInfo=*/ ImmutableSet.<String>of(),
+              getProgressMessage(),
+              "JavacTurbine")
+        };
+      }
+      return new ActionAnalysisMetadata[] {
+        parameterFileWriteAction,
+        new JavaHeaderCompileAction(
+            ruleContext.getActionOwner(),
+            tools,
+            directInputs,
+            transitiveInputs,
+            outputs,
+            directCommandLine,
+            transitiveCommandLine,
+            getProgressMessage())
+      };
     }
 
     private String getProgressMessage() {
@@ -499,7 +519,7 @@ public class JavaHeaderCompileAction extends SpawnAction {
 
     /** Returns true if the header compilation classpath should only include direct deps. */
     boolean useDirectClasspath() {
-      if (directJars.isEmpty()) {
+      if (directJars.isEmpty() && !classpathEntries.isEmpty()) {
         // the compilation doesn't distinguish direct deps, e.g. because it doesn't support strict
         // java deps
         return false;

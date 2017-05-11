@@ -33,14 +33,16 @@ import static com.google.devtools.build.lib.rules.cpp.CppFileTypes.VERSIONED_SHA
 import com.google.devtools.build.lib.analysis.LanguageDependentFragment.LibraryLanguage;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.cmdline.Label;
+import com.google.devtools.build.lib.packages.Attribute;
 import com.google.devtools.build.lib.packages.Attribute.LateBoundLabel;
 import com.google.devtools.build.lib.packages.Attribute.Transition;
 import com.google.devtools.build.lib.packages.AttributeMap;
 import com.google.devtools.build.lib.packages.ImplicitOutputsFunction.SafeImplicitOutputsFunction;
 import com.google.devtools.build.lib.packages.Rule;
+import com.google.devtools.build.lib.packages.RuleTransitionFactory;
+import com.google.devtools.build.lib.rules.cpp.transitions.EnableLipoTransition;
 import com.google.devtools.build.lib.rules.test.InstrumentedFilesCollector.InstrumentationSpec;
 import com.google.devtools.build.lib.util.FileTypeSet;
-import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig.LipoMode;
 
 /**
  * Rule class definitions for C++ rules.
@@ -56,10 +58,7 @@ public class CppRuleClasses {
       // This attribute connects a target to the LIPO context target configured with the
       // lipo input collector configuration.
       CppConfiguration cppConfiguration = configuration.getFragment(CppConfiguration.class);
-      return !cppConfiguration.isLipoContextCollector()
-          && (cppConfiguration.getLipoMode() == LipoMode.BINARY)
-          ? cppConfiguration.getLipoContextLabel()
-          : null;
+      return cppConfiguration.isLipoOptimization() ? cppConfiguration.getLipoContextLabel() : null;
     }
   };
 
@@ -86,6 +85,20 @@ public class CppRuleClasses {
       return true;
     }
   }
+
+  /**
+   * Rule transition factory that enables LIPO on the LIPO context binary (i.e. applies a DATA ->
+   * TARGET transition).
+   *
+   * <p>This is how dynamic configurations enable LIPO on the LIPO context.
+   */
+  public static final RuleTransitionFactory LIPO_ON_DEMAND =
+      new RuleTransitionFactory() {
+        @Override
+        public Attribute.Transition buildTransitionFor(Rule rule) {
+          return new EnableLipoTransition(rule.getLabel());
+        }
+      };
 
   /**
    * Label of a pseudo-filegroup that contains all crosstool and libcfiles for all configurations,
@@ -282,6 +295,15 @@ public class CppRuleClasses {
    * A string constant for the ThinLTO feature.
    */
   public static final String THIN_LTO = "thin_lto";
+
+  /**
+   * A string constant for the PDB file generation feature, should only be used for toolchains
+   * targeting Windows that include a linker producing PDB files
+   */
+  public static final String GENERATE_PDB_FILE = "generate_pdb_file";
+
+  /** A string constant for /showIncludes parsing feature, should only be used for MSVC toolchain */
+  public static final String PARSE_SHOWINCLUDES = "parse_showincludes";
 
   /*
    * A string constant for the fdo_instrument feature.

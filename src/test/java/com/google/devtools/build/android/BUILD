@@ -3,6 +3,7 @@ filegroup(
     srcs = glob(["**"]) + [
         "//src/test/java/com/google/devtools/build/android/idlclass:srcs",
         "//src/test/java/com/google/devtools/build/android/resources:srcs",
+        "//src/test/java/com/google/devtools/build/android/testing/manifestmerge:srcs",
         "//src/test/java/com/google/devtools/build/android/ziputils:srcs",
     ],
     visibility = ["//src:__pkg__"],
@@ -21,6 +22,19 @@ java_test(
 )
 
 java_test(
+    name = "AaptCommandBuilderTest",
+    srcs = ["AaptCommandBuilderTest.java"],
+    deps = [
+        "//src/tools/android/java/com/google/devtools/build/android:android_builder_lib",
+        "//third_party:android_common_25_0_0",
+        "//third_party:guava",
+        "//third_party:guava-testlib",
+        "//third_party:junit4",
+        "//third_party:truth",
+    ],
+)
+
+java_test(
     name = "AndroidDataMergerTest",
     srcs = ["AndroidDataMergerTest.java"],
     tags = ["no_windows"],  # Test asserts forward slashes in android data xml files.
@@ -28,6 +42,20 @@ java_test(
         ":test_utils",
         "//src/tools/android/java/com/google/devtools/build/android:android_builder_lib",
         "//third_party:android_common_25_0_0",
+        "//third_party:guava",
+        "//third_party:jimfs",
+        "//third_party:junit4",
+        "//third_party:truth",
+    ],
+)
+
+java_test(
+    name = "AndroidDataSerializerAndDeserializerTest",
+    srcs = ["AndroidDataSerializerAndDeserializerTest.java"],
+    tags = ["no_windows"],
+    deps = [
+        ":test_utils",
+        "//src/tools/android/java/com/google/devtools/build/android:android_builder_lib",
         "//third_party:guava",
         "//third_party:jimfs",
         "//third_party:junit4",
@@ -91,6 +119,17 @@ java_test(
 )
 
 java_test(
+    name = "DensitySpecificResourceFilterTest",
+    srcs = ["DensitySpecificResourceFilterTest.java"],
+    tags = ["no_windows"],  # Test asserts forward slashes
+    deps = [
+        "//src/tools/android/java/com/google/devtools/build/android:android_builder_lib",
+        "//third_party:guava",
+        "//third_party:junit4",
+    ],
+)
+
+java_test(
     name = "DependencyAndroidDataTest",
     srcs = ["DependencyAndroidDataTest.java"],
     deps = [
@@ -103,9 +142,28 @@ java_test(
 )
 
 java_test(
+    name = "ManifestMergerActionTest",
+    srcs = ["ManifestMergerActionTest.java"],
+    data = [
+        "//src/test/java/com/google/devtools/build/android/testing/manifestmerge:test_data",
+    ],
+    jvm_flags = [
+        "-Dtestdatadir=src/test/java/com/google/devtools/build/android/testing/manifestmerge",
+    ],
+    tags = ["no_windows"],
+    deps = [
+        ":test_utils",
+        "//src/tools/android/java/com/google/devtools/build/android:android_builder_lib",
+        "//third_party:guava",
+        "//third_party:junit4",
+        "//third_party:truth",
+    ],
+)
+
+java_test(
     name = "ParsedAndroidDataTest",
     srcs = ["ParsedAndroidDataTest.java"],
-    tags = ["manual"],  # Fails due to https://github.com/bazelbuild/bazel/issues/2709
+    tags = ["no_windows"],  # Test asserts forward slashes
     deps = [
         ":test_utils",
         "//src/tools/android/java/com/google/devtools/build/android:android_builder_lib",

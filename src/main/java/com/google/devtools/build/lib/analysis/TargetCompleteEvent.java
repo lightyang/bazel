@@ -20,10 +20,13 @@ import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.EventReportingArtifacts;
 import com.google.devtools.build.lib.analysis.TopLevelArtifactHelper.ArtifactsInOutputGroup;
+import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
+import com.google.devtools.build.lib.analysis.config.BuildEventWithConfiguration;
 import com.google.devtools.build.lib.buildeventstream.ArtifactGroupNamer;
 import com.google.devtools.build.lib.buildeventstream.BuildEventConverters;
 import com.google.devtools.build.lib.buildeventstream.BuildEventId;
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos;
+import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos.File;
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos.OutputGroup;
 import com.google.devtools.build.lib.buildeventstream.BuildEventWithOrderConstraint;
 import com.google.devtools.build.lib.buildeventstream.GenericBuildEvent;
@@ -42,8 +45,10 @@ import java.util.Collection;
 
 /** This event is fired as soon as a target is either built or fails. */
 public final class TargetCompleteEvent
-    implements SkyValue, BuildEventWithOrderConstraint, EventReportingArtifacts {
-
+    implements SkyValue,
+        BuildEventWithOrderConstraint,
+        EventReportingArtifacts,
+        BuildEventWithConfiguration {
   private final ConfiguredTarget target;
   private final NestedSet<Cause> rootCauses;
   private final Collection<BuildEventId> postedAfter;
@@ -110,7 +115,8 @@ public final class TargetCompleteEvent
 
   @Override
   public BuildEventId getEventId() {
-    return BuildEventId.targetCompleted(getTarget().getLabel());
+    return BuildEventId.targetCompleted(
+        getTarget().getLabel(), getTarget().getConfiguration().getEventId());
   }
 
   @Override
@@ -127,10 +133,11 @@ public final class TargetCompleteEvent
       TestProvider.TestParams params = target.getProvider(TestProvider.class).getTestParams();
       for (int run = 0; run < Math.max(params.getRuns(), 1); run++) {
         for (int shard = 0; shard < Math.max(params.getShards(), 1); shard++) {
-          childrenBuilder.add(BuildEventId.testResult(label, run, shard));
+          childrenBuilder.add(
+              BuildEventId.testResult(label, run, shard, target.getConfiguration().getEventId()));
         }
       }
-      childrenBuilder.add(BuildEventId.testSummary(label));
+      childrenBuilder.add(BuildEventId.testSummary(label, target.getConfiguration().getEventId()));
     }
     return childrenBuilder.build();
   }
@@ -141,8 +148,21 @@ public final class TargetCompleteEvent
         BuildEventStreamProtos.TargetComplete.newBuilder();
 
     builder.setSuccess(!failed());
+    builder.setTargetKind(target.getTarget().getTargetKind());
     builder.addAllTag(getTags());
     builder.addAllOutputGroup(getOutputFilesByGroup(converters.artifactGroupNamer()));
+
+    // TODO(aehlig): remove direct reporting of artifacts as soon as clients no longer
+    // need it.
+    for (ArtifactsInOutputGroup group : outputs) {
+      if (group.areImportant()) {
+        for (Artifact artifact : group.getArtifacts()) {
+          String name = artifact.getFilename();
+          String uri = converters.pathConverter().apply(artifact.getPath());
+          builder.addImportantOutput(File.newBuilder().setName(name).setUri(uri).build());
+        }
+      }
+    }
 
     BuildEventStreamProtos.TargetComplete complete = builder.build();
     return GenericBuildEvent.protoChaining(this).setCompleted(complete).build();
@@ -161,6 +181,16 @@ public final class TargetCompleteEvent
       builder.add(artifactsInGroup.getArtifacts());
     }
     return builder.build();
+  }
+
+  @Override
+  public Collection<BuildConfiguration> getConfigurations() {
+    BuildConfiguration configuration = target.getConfiguration();
+    if (configuration != null) {
+      return ImmutableList.of(target.getConfiguration());
+    } else {
+      return ImmutableList.<BuildConfiguration>of();
+    }
   }
 
   private Iterable<String> getTags() {

@@ -36,7 +36,6 @@ import com.google.devtools.build.lib.rules.java.JavaSourceInfoProvider;
 import com.google.devtools.build.lib.rules.java.JavaTargetAttributes;
 import com.google.devtools.build.lib.rules.java.ProguardLibrary;
 import com.google.devtools.build.lib.rules.java.ProguardSpecProvider;
-import com.google.devtools.build.lib.syntax.Type;
 
 /**
  * An implementation for the "android_library" rule.
@@ -116,7 +115,8 @@ public abstract class AndroidLibrary implements RuleConfiguredTargetFactory {
           ResourceDependencies.fromRuleResourceAndDeps(ruleContext, false /* neverlink */));
     }
 
-    if (!ruleContext.getFragment(AndroidConfiguration.class).allowSrcsLessAndroidLibraryDeps()
+    AndroidConfiguration androidConfig = ruleContext.getFragment(AndroidConfiguration.class);
+    if (!androidConfig.allowSrcsLessAndroidLibraryDeps()
         && !definesLocalResources
         && ruleContext.attributes().get("srcs", BuildType.LABEL_LIST).isEmpty()
         && ruleContext.attributes().get("idl_srcs", BuildType.LABEL_LIST).isEmpty()
@@ -130,7 +130,8 @@ public abstract class AndroidLibrary implements RuleConfiguredTargetFactory {
         resourceApk,
         false /* addCoverageSupport */,
         true /* collectJavaCompilationArgs */,
-        false /* isBinary */);
+        false /* isBinary */,
+        androidConfig.includeLibraryResourceJars());
     if (javaTargetAttributes == null) {
       return null;
     }
@@ -161,15 +162,16 @@ public abstract class AndroidLibrary implements RuleConfiguredTargetFactory {
 
       String javaPackage = AndroidCommon.getJavaPackage(ruleContext);
 
-      ResourceContainer resourceContainer = ResourceContainer.builder()
-          .setLabel(ruleContext.getLabel())
-          .setJavaPackageFromString(javaPackage)
-          .setManifest(applicationManifest.getManifest())
-          .setJavaSourceJar(
-              ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_JAVA_SOURCE_JAR))
-          .setManifestExported(ruleContext.attributes().get("exports_manifest", Type.BOOLEAN))
-          .setRTxt(ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_R_TXT))
-          .build();
+      ResourceContainer resourceContainer =
+          ResourceContainer.builder()
+              .setLabel(ruleContext.getLabel())
+              .setJavaPackageFromString(javaPackage)
+              .setManifest(applicationManifest.getManifest())
+              .setJavaSourceJar(
+                  ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_JAVA_SOURCE_JAR))
+              .setManifestExported(AndroidCommon.getExportsManifest(ruleContext))
+              .setRTxt(ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_R_TXT))
+              .build();
 
       primaryResources = new AndroidResourcesProcessorBuilder(ruleContext)
           .setLibrary(true)
@@ -193,8 +195,14 @@ public abstract class AndroidLibrary implements RuleConfiguredTargetFactory {
       .build(ruleContext);
 
     RuleConfiguredTargetBuilder builder = new RuleConfiguredTargetBuilder(ruleContext);
-    androidCommon.addTransitiveInfoProviders(builder, androidSemantics, aarOut,
-        resourceApk, null, ImmutableList.<Artifact>of());
+    androidCommon.addTransitiveInfoProviders(
+        builder,
+        androidSemantics,
+        aarOut,
+        resourceApk,
+        null,
+        ImmutableList.<Artifact>of(),
+        NativeLibs.EMPTY);
     androidSemantics.addTransitiveInfoProviders(builder, ruleContext, javaCommon, androidCommon);
 
     NestedSetBuilder<Artifact> transitiveResourcesJars = collectTransitiveResourceJars(ruleContext);

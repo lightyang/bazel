@@ -26,6 +26,7 @@ import com.google.devtools.build.lib.actions.Root;
 import com.google.devtools.build.lib.analysis.ActionsProvider;
 import com.google.devtools.build.lib.analysis.AnalysisUtils;
 import com.google.devtools.build.lib.analysis.ConfigurationMakeVariableContext;
+import com.google.devtools.build.lib.analysis.DefaultProvider;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
 import com.google.devtools.build.lib.analysis.LabelExpander;
 import com.google.devtools.build.lib.analysis.LabelExpander.NotUniqueExpansionException;
@@ -479,7 +480,7 @@ public final class SkylarkRuleContext implements SkylarkValue {
     category = SkylarkModuleCategory.NONE,
     doc = "Information about attributes of a rule an aspect is applied to."
   )
-  private static class SkylarkRuleAttributesCollection {
+  private static class SkylarkRuleAttributesCollection implements SkylarkValue {
     private final SkylarkRuleContext skylarkRuleContext;
     private final SkylarkClassObject attrObject;
     private final SkylarkClassObject executableObject;
@@ -557,6 +558,17 @@ public final class SkylarkRuleContext implements SkylarkValue {
     public ImmutableMap<Artifact, FilesToRunProvider> getExecutableRunfilesMap() {
       return executableRunfilesMap;
     }
+
+    @Override
+    public boolean isImmutable() {
+      return skylarkRuleContext.isImmutable();
+    }
+
+    @Override
+    public void write(Appendable buffer, char quotationMark) {
+      Printer.append(buffer, "rule_collection:");
+      skylarkRuleContext.write(buffer, quotationMark);
+    }
   }
 
   private void addOutput(HashMap<String, Object> outputsBuilder, String key, Object value)
@@ -584,31 +596,12 @@ public final class SkylarkRuleContext implements SkylarkValue {
     return ruleContext;
   }
 
-  private static final ClassObjectConstructor DEFAULT_PROVIDER =
-      new NativeClassObjectConstructor("default_provider") {
-        @Override
-        protected SkylarkClassObject createInstanceFromSkylark(Object[] args, Location loc) {
-          @SuppressWarnings("unchecked")
-          Map<String, Object> kwargs = (Map<String, Object>) args[0];
-          return new SkylarkClassObject(this, kwargs, loc);
-        }
-      };
-
   @SkylarkCallable(
     name = "default_provider",
     structField = true,
-    doc = "A provider that's provided by every rule, even if it's not returned explicitly. "
-        + "A <code>default_provider</code> accepts all special parameters that can be returned "
-        + "from rule implementation function in a struct, which are <code>runfiles</code>, "
-        + "<code>data_runfiles</code>, <code>default_runfiles</code>, "
-        + "<code>output_groups</code>, <code>instrumented_files</code>, and all "
-        + "<a href=\"skylark-provider.html\">providers</a> that are available on built-in rules. "
-        + "Each instance of the default provider contains the following standard fields: "
-        + "<code>data_runfiles</code>, <code>default_runfiles</code>, <code>files</code>, "
-        + "and <code>files_to_run</code>. The values of these fields are equivalent to the "
-        + "values of the corresponding fields of the target the default provider belongs to.")
+    doc = "Deprecated. Use <a href=\"globals.html#DefaultInfo\">DefaultInfo</a> instead.")
   public static ClassObjectConstructor getDefaultProvider() {
-    return DEFAULT_PROVIDER;
+    return DefaultProvider.SKYLARK_CONSTRUCTOR;
   }
 
   @SkylarkCallable(name = "created_actions",
@@ -621,7 +614,7 @@ public final class SkylarkRuleContext implements SkylarkValue {
           + "<br/><br/>"
           + "This is intended to help write tests for rule-implementation helper functions, which "
           + "may take in a <code>ctx</code> object and create actions on it.")
-  public Object createdActions() throws EvalException {
+  public SkylarkValue createdActions() throws EvalException {
     checkMutable("created_actions");
     if (ruleContext.getRule().getRuleClassObject().isSkylarkTestable()) {
       return ActionsProvider.create(
@@ -993,9 +986,11 @@ public final class SkylarkRuleContext implements SkylarkValue {
   public String expandMakeVariables(String attributeName, String command,
       final Map<String, String> additionalSubstitutions) throws EvalException {
     checkMutable("expand_make_variables");
-    return ruleContext.expandMakeVariables(attributeName,
-        command, new ConfigurationMakeVariableContext(ruleContext.getRule().getPackage(),
-            ruleContext.getConfiguration()) {
+    return ruleContext.expandMakeVariables(
+        attributeName,
+        command,
+        new ConfigurationMakeVariableContext(
+            ruleContext, ruleContext.getRule().getPackage(), ruleContext.getConfiguration()) {
           @Override
           public String lookupMakeVariable(String name) throws ExpansionException {
             if (additionalSubstitutions.containsKey(name)) {

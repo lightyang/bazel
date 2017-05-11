@@ -17,6 +17,7 @@ filegroup(
         "//third_party/java/jacoco:srcs",
         "//third_party/java/jarjar:srcs",
         "//third_party/java/javapoet:srcs",
+        "//third_party/java/jopt-simple:srcs",
         "//third_party/java/jdk/langtools:srcs",
         "//third_party/java/jdk/javabuilder:srcs",
         "//third_party/javascript/bootstrap:srcs",
@@ -332,13 +333,19 @@ java_import(
     ],
 )
 
+# TODO(cushon): delete
+alias(
+    name = "error_prone-2.0.20-SNAPSHOT",
+    actual = ":error_prone",
+)
+
 java_import(
     name = "error_prone",
     jars = [
-        "error_prone/error_prone_check_api-2.0.19.jar",
-        "error_prone/error_prone_core-2.0.19.jar",
-        "error_prone/error_prone_annotations-2.0.19.jar",
-        "error_prone/error_prone_annotation-2.0.19.jar",
+        "error_prone/error_prone_check_api-2.0.20-SNAPSHOT.jar",
+        "error_prone/error_prone_core-2.0.20-SNAPSHOT.jar",
+        "error_prone/error_prone_annotations-2.0.20-SNAPSHOT.jar",
+        "error_prone/error_prone_annotation-2.0.20-SNAPSHOT.jar",
     ],
     exports = [
         ":auto_common",
@@ -377,10 +384,10 @@ filegroup(
     name = "bootstrap_guava_and_error_prone-jars",
     srcs = [
         "auto/auto-common-0.3.jar",
-        "error_prone/error_prone_annotation-2.0.19.jar",
-        "error_prone/error_prone_annotations-2.0.19.jar",
-        "error_prone/error_prone_check_api-2.0.19.jar",
-        "error_prone/error_prone_core-2.0.19.jar",
+        "error_prone/error_prone_annotation-2.0.20-SNAPSHOT.jar",
+        "error_prone/error_prone_annotations-2.0.20-SNAPSHOT.jar",
+        "error_prone/error_prone_check_api-2.0.20-SNAPSHOT.jar",
+        "error_prone/error_prone_core-2.0.20-SNAPSHOT.jar",
         "guava/guava-21.0.jar",
         "jcip_annotations/jcip-annotations-1.0-1.jar",
         "jsr305/jsr-305.jar",
@@ -388,6 +395,12 @@ filegroup(
         "//third_party/checker_framework_dataflow:bootstrap",
         "//third_party/jformatstring:bootstrap",
     ],
+)
+
+# TODO(cushon): delete
+alias(
+    name = "bootstrap_guava_and_error_prone-jars-2.0.20-SNAPSHOT",
+    actual = "bootstrap_guava_and_error_prone-jars",
 )
 
 # As of Guava 20.0, Guava code uses Error Prone annotations. This isn't a
@@ -528,7 +541,7 @@ java_import(
 
 java_import(
     name = "turbine",
-    jars = ["turbine/turbine-0.1-20170218.jar"],
+    jars = ["turbine/turbine-0.1-20170427.jar"],
 )
 
 java_import(

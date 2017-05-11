@@ -69,6 +69,19 @@ There's currently no easy way to create a rule that directly uses the
 action of a native rule. You can work around this using macros:
 
 ```python
+def _impl(ctx):
+  return struct([...],
+                # When instrumenting this rule, again hide implementation from
+                # users.
+                instrumented_files(
+                  source_attributes = ["srcs", "csrcs"],
+                  dependency_attributes = ["deps", "cdeps"]))
+
+# This rule is private and can only be accessed from the current file.
+_cc_and_something_else_binary = rule(implementation=_impl)
+
+
+# This macro is public, it's the public interface to instantiate the rule.
 def cc_and_something_else_binary(name, srcs, deps, csrcs, cdeps):
    cc_binary_name = "%s.cc_binary" % name
 
@@ -90,16 +103,6 @@ def cc_and_something_else_binary(name, srcs, deps, csrcs, cdeps):
     # were an actual rule instead of a macro.
     csrcs = csrcs,
     cdeps = cdeps)
-
-def _impl(ctx):
-  return struct([...],
-                # When instrumenting this rule, again hide implementation from
-                # users.
-                instrumented_files(
-                  source_attributes = ["srcs", "csrcs"],
-                  dependency_attributes = ["deps", "cdeps"]))
-
-_cc_and_something_else_binary = rule(implementation=_impl)
 ```
 
 
@@ -503,7 +506,7 @@ def _impl(ctx):
       content=command,
       executable=True)
 
-  return struct(
+  return [DefaultInfo(
       # Create runfiles from the files specified in the data attribute.
       # The shell executable - the output of this rule - can use them at runtime.
       # It is also possible to define data_runfiles and default_runfiles.
@@ -513,7 +516,7 @@ def _impl(ctx):
       # to have a field named "runfiles" in order to create the actual runfiles
       # symlink tree.
       runfiles=ctx.runfiles(files=ctx.files.data)
-  )
+  )]
 
 execute = rule(
   implementation=_impl,
@@ -661,14 +664,16 @@ to its dependents.
 `sum.bzl`:
 
 ```python
+NumberInfo = provider()
+
 def _impl(ctx):
   result = ctx.attr.number
-  for i in ctx.attr.deps:
-    result += i.number
+  for dep in ctx.attr.deps:
+    result += dep[NumberInfo].number
   ctx.file_action(output=ctx.outputs.out, content=str(result))
 
-  # Fields in the struct will be visible by other rules.
-  return struct(number=result)
+  # Return the provider with result, visible to other rules.
+  return [NumberInfo(number=result)]
 
 sum = rule(
   implementation=_impl,
@@ -709,15 +714,17 @@ This is a similar example, but dependencies may not provide a number.
 `sum.bzl`:
 
 ```python
+NumberInfo = provider()
+
 def _impl(ctx):
   result = ctx.attr.number
-  for i in ctx.attr.deps:
-    if hasattr(i, "number"):
-      result += i.number
+  for dep in ctx.attr.deps:
+    if NumberInfo in dep:
+      result += dep[NumberInfo].number
   ctx.file_action(output=ctx.outputs.out, content=str(result))
 
-  # Fields in the struct will be visible by other rules.
-  return struct(number=result)
+  # Return the provider with result, visible to other rules.
+  return [NumberInfo(number=result)]
 
 sum = rule(
   implementation=_impl,
@@ -864,7 +871,7 @@ def _impl(ctx):
   files = depset()
   files += ctx.attr.dep_rule_1.files
   files += ctx.attr.dep_rule_2.files
-  return struct(files=files)
+  return [DefaultInfo(files=files)]
 
 # This rule binds the depending rules together
 master_rule = rule(

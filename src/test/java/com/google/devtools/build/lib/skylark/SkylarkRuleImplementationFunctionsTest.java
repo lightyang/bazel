@@ -849,7 +849,7 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
         "test/foo.bzl",
         "foo_provider = provider()",
         "def _impl(ctx):",
-        "    default = ctx.default_provider(",
+        "    default = DefaultInfo(",
         "        runfiles=ctx.runfiles(ctx.files.runs),",
         "    )",
         "    foo = foo_provider()",
@@ -865,8 +865,9 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
         "test/bar.bzl",
         "load(':foo.bzl', 'foo_provider')",
         "def _impl(ctx):",
-        "    provider = ctx.attr.deps[0][ctx.default_provider]",
+        "    provider = ctx.attr.deps[0][DefaultInfo]",
         "    return struct(",
+        "        is_provided = DefaultInfo in ctx.attr.deps[0],",
         "        provider = provider,",
         "        dir = str(sorted(dir(provider))),",
         "        rule_data_runfiles = provider.data_runfiles,",
@@ -889,10 +890,12 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
     ConfiguredTarget configuredTarget = getConfiguredTarget("//test:my_rule");
     SkylarkProviders providers = configuredTarget.getProvider(SkylarkProviders.class);
 
+    assertThat((Boolean) providers.getValue("is_provided")).isTrue();
+
     Object provider = providers.getValue("provider");
     assertThat(provider).isInstanceOf(DefaultProvider.class);
     assertThat(((DefaultProvider) provider).getConstructor().getPrintableName())
-        .isEqualTo("default_provider");
+        .isEqualTo("DefaultInfo");
 
     assertThat(providers.getValue("dir"))
         .isEqualTo(
@@ -923,8 +926,9 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
     scratch.file(
         "test/bar.bzl",
         "def _impl(ctx):",
-        "    provider = ctx.attr.deps[0][ctx.default_provider]",
+        "    provider = ctx.attr.deps[0][DefaultInfo]",
         "    return struct(",
+        "        is_provided = DefaultInfo in ctx.attr.deps[0],",
         "        provider = provider,",
         "        dir = str(sorted(dir(provider))),",
         "        file_data_runfiles = provider.data_runfiles,",
@@ -945,10 +949,12 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
     ConfiguredTarget configuredTarget = getConfiguredTarget("//test:my_rule");
     SkylarkProviders providers = configuredTarget.getProvider(SkylarkProviders.class);
 
+    assertThat((Boolean) providers.getValue("is_provided")).isTrue();
+
     Object provider = providers.getValue("provider");
     assertThat(provider).isInstanceOf(DefaultProvider.class);
     assertThat(((DefaultProvider) provider).getConstructor().getPrintableName())
-        .isEqualTo("default_provider");
+        .isEqualTo("DefaultInfo");
 
     assertThat(providers.getValue("dir"))
         .isEqualTo(
@@ -989,8 +995,8 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
         "load(':foo.bzl', 'foo_provider')",
         "def _impl(ctx):",
         "    dep = ctx.attr.deps[0]",
-        "    provider = dep[ctx.default_provider]",  // The goal is to test this object
-        "    return struct(",                        // so we return it here
+        "    provider = dep[DefaultInfo]",  // The goal is to test this object
+        "    return struct(",               // so we return it here
         "        default = provider,",
         "    )",
         "bar_rule = rule(",
@@ -1011,7 +1017,7 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
     assertThat(provider).isInstanceOf(DefaultProvider.class);
     SkylarkClassObject defaultProvider = (DefaultProvider) provider;
     assertThat((defaultProvider).getConstructor().getPrintableName())
-        .isEqualTo("default_provider");
+        .isEqualTo("DefaultInfo");
   }
 
   @Test
@@ -1020,7 +1026,7 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
         "test/foo.bzl",
         "foo_provider = provider()",
         "def _impl(ctx):",
-        "    default = ctx.default_provider(",
+        "    default = DefaultInfo(",
         "        foo=ctx.runfiles(),",
         "    )",
         "    return [default]",

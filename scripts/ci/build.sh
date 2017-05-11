@@ -142,7 +142,13 @@ function bazel_build() {
     # Copy the results to the output directory
     mkdir -p $1/packages
     cp bazel-bin/src/bazel $1/bazel
-    cp bazel-bin/scripts/packages/install.sh $1/bazel-${release_label}-installer.sh
+    # The version with a bundled JDK may not exist on all platforms.
+    if [ "${JAVA_VERSION}" = "1.8" -a -e "bazel-bin/scripts/packages/with-jdk/install.sh" ]; then
+      cp bazel-bin/scripts/packages/with-jdk/install.sh $1/bazel-${release_label}-installer.sh
+      cp bazel-bin/scripts/packages/without-jdk/install.sh $1/bazel-${release_label}-without-jdk-installer.sh
+    else
+      cp bazel-bin/scripts/packages/without-jdk/install.sh $1/bazel-${release_label}-installer.sh
+    fi
     if [ "$PLATFORM" = "linux" ]; then
       cp bazel-bin/scripts/packages/debian/bazel-debian.deb $1/bazel_${release_label}.deb
       cp -f bazel-genfiles/scripts/packages/debian/bazel.dsc $1/bazel.dsc
@@ -301,7 +307,7 @@ function release_to_gcs() {
     return 1
   fi
   if [ -n "${release_name}" ]; then
-    local release_path="${release_name}"
+    local release_path="${release_name}/release"
     if [ -n "${rc}" ]; then
       release_path="${release_name}/rc${rc}"
     fi

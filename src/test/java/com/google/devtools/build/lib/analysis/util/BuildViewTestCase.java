@@ -81,6 +81,7 @@ import com.google.devtools.build.lib.analysis.config.BuildConfiguration.Options.
 import com.google.devtools.build.lib.analysis.config.BuildConfigurationCollection;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
 import com.google.devtools.build.lib.analysis.config.ConfigurationFactory;
+import com.google.devtools.build.lib.analysis.config.PatchTransition;
 import com.google.devtools.build.lib.buildtool.BuildRequest;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
@@ -97,6 +98,7 @@ import com.google.devtools.build.lib.flags.InvocationPolicyEnforcer;
 import com.google.devtools.build.lib.packages.AspectClass;
 import com.google.devtools.build.lib.packages.AspectDescriptor;
 import com.google.devtools.build.lib.packages.AspectParameters;
+import com.google.devtools.build.lib.packages.Attribute;
 import com.google.devtools.build.lib.packages.Attribute.ConfigurationTransition;
 import com.google.devtools.build.lib.packages.AttributeMap;
 import com.google.devtools.build.lib.packages.ConstantRuleVisibility;
@@ -107,7 +109,6 @@ import com.google.devtools.build.lib.packages.NoSuchTargetException;
 import com.google.devtools.build.lib.packages.OutputFile;
 import com.google.devtools.build.lib.packages.PackageFactory;
 import com.google.devtools.build.lib.packages.PackageFactory.EnvironmentExtension;
-import com.google.devtools.build.lib.packages.Preprocessor;
 import com.google.devtools.build.lib.packages.RawAttributeMapper;
 import com.google.devtools.build.lib.packages.Rule;
 import com.google.devtools.build.lib.packages.Target;
@@ -119,6 +120,7 @@ import com.google.devtools.build.lib.pkgcache.PackageCacheOptions;
 import com.google.devtools.build.lib.pkgcache.PackageManager;
 import com.google.devtools.build.lib.pkgcache.PathPackageLocator;
 import com.google.devtools.build.lib.rules.extra.ExtraAction;
+import com.google.devtools.build.lib.rules.repository.RepositoryDelegatorFunction;
 import com.google.devtools.build.lib.rules.test.BaselineCoverageAction;
 import com.google.devtools.build.lib.rules.test.InstrumentedFilesProvider;
 import com.google.devtools.build.lib.skyframe.AspectValue;
@@ -130,6 +132,7 @@ import com.google.devtools.build.lib.skyframe.PackageLookupValue.BuildFileName;
 import com.google.devtools.build.lib.skyframe.PrecomputedValue;
 import com.google.devtools.build.lib.skyframe.SequencedSkyframeExecutor;
 import com.google.devtools.build.lib.skyframe.SkyValueDirtinessChecker;
+import com.google.devtools.build.lib.syntax.SkylarkSemanticsOptions;
 import com.google.devtools.build.lib.testutil.BlazeTestUtils;
 import com.google.devtools.build.lib.testutil.FoundationTestCase;
 import com.google.devtools.build.lib.util.BlazeClock;
@@ -183,6 +186,7 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
 
   protected OptionsParser optionsParser;
   private PackageCacheOptions packageCacheOptions;
+  private SkylarkSemanticsOptions skylarkSemanticsOptions;
   protected PackageFactory pkgFactory;
 
   protected MockToolsConfig mockToolsConfig;
@@ -202,6 +206,7 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
     analysisMock.setupMockWorkspaceFiles(directories.getEmbeddedBinariesRoot());
 
     packageCacheOptions = parsePackageCacheOptions();
+    skylarkSemanticsOptions = parseSkylarkSemanticsOptions();
     workspaceStatusActionFactory =
         new AnalysisTestUtil.DummyWorkspaceStatusActionFactory(directories);
     mutableActionGraph = new MapBasedActionGraph();
@@ -227,19 +232,22 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
             ruleClassProvider.getBuildInfoFactories(),
             ImmutableList.<DiffAwareness.Factory>of(),
             Predicates.<PathFragment>alwaysFalse(),
-            getPreprocessorFactorySupplier(),
             analysisMock.getSkyFunctions(),
             getPrecomputedValues(),
             ImmutableList.<SkyValueDirtinessChecker>of(),
             analysisMock.getProductName(),
             CrossRepositoryLabelViolationStrategy.ERROR,
             ImmutableList.of(BuildFileName.BUILD_DOT_BAZEL, BuildFileName.BUILD));
+    skyframeExecutor.injectExtraPrecomputedValues(ImmutableList.of(PrecomputedValue.injected(
+        RepositoryDelegatorFunction.REPOSITORY_OVERRIDES,
+        ImmutableMap.<RepositoryName, PathFragment>of())));
     packageCacheOptions.defaultVisibility = ConstantRuleVisibility.PUBLIC;
     packageCacheOptions.showLoadingProgress = true;
     packageCacheOptions.globbingThreads = 7;
     skyframeExecutor.preparePackageLoading(
         new PathPackageLocator(outputBase, ImmutableList.of(rootDirectory)),
         packageCacheOptions,
+        skylarkSemanticsOptions,
         "",
         UUID.randomUUID(),
         ImmutableMap.<String, String>of(),
@@ -274,10 +282,6 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
 
   protected ImmutableList<PrecomputedValue.Injected> getPrecomputedValues() {
     return ImmutableList.of();
-  }
-
-  protected Preprocessor.Factory.Supplier getPreprocessorFactorySupplier() {
-    return Preprocessor.Factory.Supplier.NullSupplier.INSTANCE;
   }
 
   protected ResourceSet getStartingResources() {
@@ -349,6 +353,7 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
     skyframeExecutor.preparePackageLoading(
         pkgLocator,
         packageCacheOptions,
+        skylarkSemanticsOptions,
         ruleClassProvider.getDefaultsPackageContent(optionsParser),
         UUID.randomUUID(),
         ImmutableMap.<String, String>of(),
@@ -362,11 +367,23 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
     setUpSkyframe();
   }
 
-  private PackageCacheOptions parsePackageCacheOptions(String... options) throws Exception {
+  protected void setSkylarkSemanticsOptions(String... options) throws Exception {
+    skylarkSemanticsOptions = parseSkylarkSemanticsOptions(options);
+    setUpSkyframe();
+  }
+
+  private static PackageCacheOptions parsePackageCacheOptions(String... options) throws Exception {
     OptionsParser parser = OptionsParser.newOptionsParser(PackageCacheOptions.class);
     parser.parse("--default_visibility=public");
     parser.parse(options);
     return parser.getOptions(PackageCacheOptions.class);
+  }
+
+  private static SkylarkSemanticsOptions parseSkylarkSemanticsOptions(String... options)
+      throws Exception {
+    OptionsParser parser = OptionsParser.newOptionsParser(SkylarkSemanticsOptions.class);
+    parser.parse(options);
+    return parser.getOptions(SkylarkSemanticsOptions.class);
   }
 
   /** Used by skyframe-only tests. */
@@ -649,7 +666,7 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
   protected Action getGeneratingActionInOutputGroup(
       ConfiguredTarget target, String outputName, String outputGroupName) {
     NestedSet<Artifact> outputGroup =
-        target.getProvider(OutputGroupProvider.class).getOutputGroup(outputGroupName);
+        OutputGroupProvider.get(target).getOutputGroup(outputGroupName);
     return getGeneratingAction(outputName, outputGroup, "outputGroup/" + outputGroupName);
   }
 
@@ -1384,7 +1401,7 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
 
   protected NestedSet<Artifact> getOutputGroup(
       TransitiveInfoCollection target, String outputGroup) {
-    OutputGroupProvider provider = target.getProvider(OutputGroupProvider.class);
+    OutputGroupProvider provider = OutputGroupProvider.get(target);
     return provider == null
         ? NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER)
         : provider.getOutputGroup(outputGroup);
@@ -1435,12 +1452,8 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
     return Iterables.getOnlyElement(masterConfig.getTargetConfigurations());
   }
 
-  protected BuildConfiguration getDataConfiguration() {
-    BuildConfiguration targetConfig = getTargetConfiguration();
-    // TODO(bazel-team): do a proper data transition for dynamic configurations.
-    return targetConfig.useDynamicConfigurations()
-        ? targetConfig
-        : targetConfig.getConfiguration(ConfigurationTransition.DATA);
+  protected BuildConfiguration getDataConfiguration() throws InterruptedException {
+    return getConfiguration(getTargetConfiguration(), ConfigurationTransition.DATA);
   }
 
   protected BuildConfiguration getHostConfiguration() {
@@ -1448,8 +1461,28 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
   }
 
   /**
-   * Returns an attribute value retriever for the given rule for the target configuration.
+   * Returns the configuration created by applying the given transition to the source
+   * configuration. Works for both static and dynamic configuration tests.
+   */
+  protected BuildConfiguration getConfiguration(BuildConfiguration fromConfig,
+      Attribute.Transition transition) throws InterruptedException {
+    if (transition == ConfigurationTransition.NONE) {
+      return fromConfig;
+    } else if (transition == ConfigurationTransition.NULL) {
+      return null;
+    } else if (!fromConfig.useDynamicConfigurations()) {
+      return fromConfig.getConfiguration(transition);
+    } else {
+      PatchTransition patchTransition = (transition instanceof PatchTransition)
+          ? (PatchTransition) transition
+          : (PatchTransition) fromConfig.getTransitions().getDynamicTransition(transition);
+      return skyframeExecutor.getConfigurationForTesting(reporter, fromConfig.fragmentClasses(),
+          patchTransition.apply(fromConfig.getOptions()));
+    }
+  }
 
+  /**
+   * Returns an attribute value retriever for the given rule for the target configuration.
    */
   protected AttributeMap attributes(RuleConfiguredTarget ct) {
     return ConfiguredAttributeMapper.of(ct);
@@ -1662,6 +1695,11 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
 
     @Override
     public SkyFunction.Environment getSkyframeEnv() {
+      throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public SkylarkSemanticsOptions getSkylarkSemantics() {
       throw new UnsupportedOperationException();
     }
 

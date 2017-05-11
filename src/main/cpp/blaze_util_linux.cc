@@ -38,6 +38,7 @@ namespace blaze {
 
 using blaze_util::die;
 using blaze_util::pdie;
+using blaze_util::PrintWarning;
 using std::string;
 using std::vector;
 
@@ -67,16 +68,16 @@ string GetOutputRoot() {
 void WarnFilesystemType(const string& output_base) {
   struct statfs buf = {};
   if (statfs(output_base.c_str(), &buf) < 0) {
-    fprintf(stderr,
-            "WARNING: couldn't get file system type information for '%s': %s\n",
-            output_base.c_str(), strerror(errno));
+    PrintWarning("couldn't get file system type information for '%s': %s",
+                 output_base.c_str(), strerror(errno));
     return;
   }
 
   if (buf.f_type == NFS_SUPER_MAGIC) {
-    fprintf(stderr, "WARNING: Output base '%s' is on NFS. This may lead "
-            "to surprising failures and undetermined behavior.\n",
-            output_base.c_str());
+    PrintWarning(
+        "Output base '%s' is on NFS. This may lead "
+        "to surprising failures and undetermined behavior.",
+        output_base.c_str());
   }
 }
 
@@ -213,13 +214,14 @@ static bool GetStartTime(const string& pid, string* start_time) {
   return true;
 }
 
-void WriteSystemSpecificProcessIdentifier(const string& server_dir) {
-  string pid = ToString(getpid());
+void WriteSystemSpecificProcessIdentifier(
+    const string& server_dir, pid_t server_pid) {
+  string pid_string = ToString(server_pid);
 
   string start_time;
-  if (!GetStartTime(pid, &start_time)) {
+  if (!GetStartTime(pid_string, &start_time)) {
     pdie(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
-         "Cannot get start time of process %s", pid.c_str());
+         "Cannot get start time of process %s", pid_string.c_str());
   }
 
   string start_time_file = blaze_util::JoinPath(server_dir, "server.starttime");
@@ -246,7 +248,7 @@ bool VerifyServerProcess(
       blaze_util::JoinPath(output_base, "server/server.starttime"),
       &recorded_start_time);
 
-  // If start time file got deleted, but PID file didn't, assume taht this is an
+  // If start time file got deleted, but PID file didn't, assume that this is an
   // old Blaze process that doesn't know how to write start time files yet.
   return !file_present || recorded_start_time == start_time;
 }

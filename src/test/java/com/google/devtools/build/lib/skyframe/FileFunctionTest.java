@@ -37,9 +37,11 @@ import com.google.common.testing.EqualsTester;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.PackageIdentifier;
+import com.google.devtools.build.lib.cmdline.RepositoryName;
 import com.google.devtools.build.lib.events.NullEventHandler;
 import com.google.devtools.build.lib.events.StoredEventHandler;
 import com.google.devtools.build.lib.pkgcache.PathPackageLocator;
+import com.google.devtools.build.lib.rules.repository.RepositoryDelegatorFunction;
 import com.google.devtools.build.lib.skyframe.ExternalFilesHelper.ExternalFileAction;
 import com.google.devtools.build.lib.skyframe.PackageLookupFunction.CrossRepositoryLabelViolationStrategy;
 import com.google.devtools.build.lib.skyframe.PackageLookupValue.BuildFileName;
@@ -52,7 +54,6 @@ import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.util.io.TimestampGranularityMonitor;
 import com.google.devtools.build.lib.vfs.FileStatus;
 import com.google.devtools.build.lib.vfs.FileSystem;
-import com.google.devtools.build.lib.vfs.FileSystem.HashFunction;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
@@ -165,6 +166,8 @@ public class FileFunctionTest {
             differencer);
     PrecomputedValue.BUILD_ID.set(differencer, UUID.randomUUID());
     PrecomputedValue.PATH_PACKAGE_LOCATOR.set(differencer, pkgLocator);
+    RepositoryDelegatorFunction.REPOSITORY_OVERRIDES.set(
+        differencer, ImmutableMap.<RepositoryName, PathFragment>of());
     return new SequentialBuildDriver(evaluator);
   }
 
@@ -555,13 +558,15 @@ public class FileFunctionTest {
   }
 
   @Test
-  public void testSymlinkTargetContentsChangeModTime() throws Exception {
+  public void testSymlinkTargetContentsChangeCTime() throws Exception {
     fastDigest = false;
     Path fooPath = file("foo");
     FileSystemUtils.writeContentAsLatin1(fooPath, "foo");
     Path p = symlink("symlink", "foo");
     FileValue a = valueForPath(p);
-    fooPath.setLastModifiedTime(88);
+    manualClock.advanceMillis(1);
+    fooPath.chmod(0555);
+    manualClock.advanceMillis(1);
     FileValue b = valueForPath(p);
     assertThat(b).isNotEqualTo(a);
   }
@@ -757,7 +762,12 @@ public class FileFunctionTest {
                     Iterables.filter(
                         graph.getValues().keySet(),
                         SkyFunctionName.functionIs(SkyFunctions.FILE_STATE)),
-                    SkyKey.NODE_NAME));
+                    new Function<SkyKey, Object>() {
+                      @Override
+                      public Object apply(SkyKey skyKey) {
+                        return skyKey.argument();
+                      }
+                    }));
   }
 
   @Test

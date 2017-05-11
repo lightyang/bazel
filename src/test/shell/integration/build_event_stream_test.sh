@@ -105,6 +105,11 @@ def _simple_aspect_impl(target, ctx):
 simple_aspect = aspect(implementation=_simple_aspect_impl)
 EOF
 touch BUILD
+cat > sample_workspace_status <<EOF
+#!/bin/sh
+echo SAMPLE_WORKSPACE_STATUS workspace_status_value
+EOF
+chmod  755 sample_workspace_status
 }
 
 #### TESTS #############################################################
@@ -114,8 +119,10 @@ function test_basic() {
   # - a completed target explicity requested should be reported
   # - after success the stream should close naturally, without any
   #   reports about aborted events.
-  # - no events occur in an unsolicited way
   # - the command line is reported
+  # - the target_kind is reported
+  # - for single-configuration builds, there is precisely one configuration
+  #   event reported
   bazel test --experimental_build_event_text_file=$TEST_log pkg:true \
     || fail "bazel test failed"
   expect_log 'pkg:true'
@@ -125,9 +132,21 @@ function test_basic() {
   expect_log 'args: "pkg:true"'
   # Build Finished
   expect_log 'build_finished'
-  expect_log 'overall_success: true'
+  expect_log 'SUCCESS'
   expect_log 'finish_time'
   expect_not_log 'aborted'
+  expect_log_once '^configuration '
+  # target kind for the sh_test
+  expect_log 'target_kind:.*sh'
+}
+
+function test_workspace_status() {
+  bazel test --experimental_build_event_text_file=$TEST_log \
+     --workspace_status_command=sample_workspace_status pkg:true \
+    || fail "bazel test failed"
+  expect_log_once '^workspace_status'
+  expect_log 'key.*SAMPLE_WORKSPACE_STATUS'
+  expect_log 'value.*workspace_status_value'
 }
 
 function test_suite() {
@@ -198,7 +217,7 @@ function test_test_runtime() {
   expect_log '^test_result'
   expect_log 'test_attempt_duration_millis.*[1-9]'
   expect_log 'build_finished'
-  expect_log 'overall_success: true'
+  expect_log 'SUCCESS'
   expect_log 'finish_time'
   expect_not_log 'aborted'
 }
@@ -303,8 +322,8 @@ function test_build_only() {
   expect_not_log 'test_summary '
   # Build Finished
   expect_log 'build_finished'
-  expect_log 'overall_success: true'
   expect_log 'finish_time'
+  expect_log 'SUCCESS'
 }
 
 function test_multiple_transports() {
@@ -355,14 +374,33 @@ function test_loading_failure_keep_going() {
   expect_not_log 'aborted'
 }
 
-function test_artifact_dedup() {
-  bazel build --experimental_build_event_text_file=$TEST_log \
-      pkg:innergroup pkg:outergroup \
-  || fail "bazel build failed"
-  expect_log_once "name.*sourcefileA"
-  expect_log_once "name.*sourcefileB"
-  expect_log_once "name.*sourcefileC"
-  expect_not_log 'aborted'
+# TODO(aehlig): readd, once we stop reporting the important artifacts
+#               for every target completion
+#
+# function test_artifact_dedup() {
+#   bazel build --experimental_build_event_text_file=$TEST_log \
+#       pkg:innergroup pkg:outergroup \
+#   || fail "bazel build failed"
+#   expect_log_once "name.*sourcefileA"
+#   expect_log_once "name.*sourcefileB"
+#   expect_log_once "name.*sourcefileC"
+#   expect_not_log 'aborted'
+# }
+
+function test_stdout_stderr_reported() {
+  # Verify that bazel's stdout/stderr is included in the build event stream.
+
+  # Make sure we generate enough output on stderr
+  bazel clean --expunge
+  bazel test --experimental_build_event_text_file=$TEST_log --curses=no \
+        pkg:slow 2>stderr.log || fail "slowtest failed"
+  # Take a line that is likely not the output of an action (possibly reported
+  # independently in the stream) and still characteristic enough to not occur
+  # in the stream by accident. Taking the first line mentioning the test name
+  # is likely some form of progress report.
+  sample_line=`cat stderr.log | grep 'slow' | head -1 | tr '[]' '..'`
+  echo "Sample regexp of stderr: ${sample_line}"
+  expect_log "stderr.*$sample_line"
 }
 
 run_suite "Integration tests for the build event stream"

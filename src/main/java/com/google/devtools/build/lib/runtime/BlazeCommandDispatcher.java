@@ -363,6 +363,13 @@ public class BlazeCommandDispatcher {
       return exitCausingException.getExitCode().getNumericExitCode();
     }
 
+    for (BlazeModule module : runtime.getBlazeModules()) {
+      OutErr listener = module.getOutputListener();
+      if (listener != null) {
+        outErr = tee(outErr, listener);
+      }
+    }
+
     try {
       Path commandLog = getCommandLogPath(env.getOutputBase());
 
@@ -511,6 +518,10 @@ public class BlazeCommandDispatcher {
 
       env.getEventBus().post(originalCommandLine);
 
+      for (BlazeModule module : runtime.getBlazeModules()) {
+        env.getSkyframeExecutor().injectExtraPrecomputedValues(module.getPrecomputedValues());
+      }
+
       ExitCode outcome = command.exec(env, optionsParser);
       outcome = env.precompleteCommand(outcome);
       numericExitCode = outcome.getNumericExitCode();
@@ -534,10 +545,10 @@ public class BlazeCommandDispatcher {
       System.setOut(savedOut);
       System.setErr(savedErr);
       reporter.removeHandler(handler);
-      releaseHandler(handler);
+      releaseHandler(handler, eventHandlerOptions);
       if (!eventHandlerOptions.useColor()) {
         reporter.removeHandler(ansiAllowingHandler);
-        releaseHandler(ansiAllowingHandler);
+        releaseHandler(ansiAllowingHandler, eventHandlerOptions);
       }
       env.getTimestampGranularityMonitor().waitForTimestampGranularity(outErr);
     }
@@ -797,13 +808,15 @@ public class BlazeCommandDispatcher {
   /**
    * Unsets the event handler.
    */
-  private void releaseHandler(EventHandler eventHandler) {
+  private void releaseHandler(EventHandler eventHandler,
+      BlazeCommandEventHandler.Options eventOptions) {
     if (eventHandler instanceof FancyTerminalEventHandler) {
       // Make sure that the terminal state of the old event handler is clear
       // before creating a new one.
       ((FancyTerminalEventHandler) eventHandler).resetTerminal();
     }
-    if (eventHandler instanceof ExperimentalEventHandler) {
+    if ((eventHandler instanceof ExperimentalEventHandler)
+        && (eventOptions.useColor())) {
       ((ExperimentalEventHandler) eventHandler).resetTerminal();
     }
   }

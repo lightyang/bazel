@@ -76,8 +76,8 @@ import com.google.devtools.build.lib.rules.cpp.CppHelper;
 import com.google.devtools.build.lib.rules.cpp.CppModuleMap;
 import com.google.devtools.build.lib.rules.cpp.CppModuleMapAction;
 import com.google.devtools.build.lib.rules.cpp.FdoSupportProvider;
+import com.google.devtools.build.lib.rules.cpp.UmbrellaHeaderAction;
 import com.google.devtools.build.lib.rules.objc.ObjcCommandLineOptions.ObjcCrosstoolMode;
-import com.google.devtools.build.lib.rules.objc.XcodeProvider.Builder;
 import com.google.devtools.build.lib.rules.test.InstrumentedFilesCollector;
 import com.google.devtools.build.lib.rules.test.InstrumentedFilesCollector.InstrumentationSpec;
 import com.google.devtools.build.lib.rules.test.InstrumentedFilesCollector.LocalMetadataCollector;
@@ -88,7 +88,9 @@ import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import javax.annotation.Nullable;
 
 /**
@@ -310,6 +312,7 @@ public abstract class CompilationSupport {
   protected final CompilationAttributes attributes;
   protected final IntermediateArtifacts intermediateArtifacts;
   protected final boolean useDeps;
+  protected final Map<String, NestedSet<Artifact>> outputGroupCollector;
 
   /**
    * Creates a new compilation support for the given rule and build configuration.
@@ -321,15 +324,16 @@ public abstract class CompilationSupport {
    * The names of the generated artifacts will be retrieved from the given intermediate artifacts.
    *
    * <p>By instantiating multiple compilation supports for the same rule but with intermediate
-   * artifacts with different output prefixes, multiple archives can be compiled for the same
-   * rule context.
+   * artifacts with different output prefixes, multiple archives can be compiled for the same rule
+   * context.
    */
-  public CompilationSupport(
+  protected CompilationSupport(
       RuleContext ruleContext,
       BuildConfiguration buildConfiguration,
       IntermediateArtifacts intermediateArtifacts,
       CompilationAttributes compilationAttributes,
-      boolean useDeps) {
+      boolean useDeps,
+      Map<String, NestedSet<Artifact>> outputGroupCollector) {
     this.ruleContext = ruleContext;
     this.buildConfiguration = buildConfiguration;
     this.objcConfiguration = buildConfiguration.getFragment(ObjcConfiguration.class);
@@ -337,120 +341,120 @@ public abstract class CompilationSupport {
     this.attributes = compilationAttributes;
     this.intermediateArtifacts = intermediateArtifacts;
     this.useDeps = useDeps;
+    this.outputGroupCollector = outputGroupCollector;
   }
 
-  /**
-   * Returns a CompilationSupport instance, the type of which is determined from the
-   * --experimental_objc_crosstool flag.
-   *
-   * @param ruleContext the RuleContext for the calling target
-   */
-  public static CompilationSupport create(RuleContext ruleContext) {
-    return createForConfig(ruleContext, ruleContext.getConfiguration(), /*useDeps=*/true);
-  }
+  /** Builder for {@link CompilationSupport} */
+  public static class Builder {
+    private RuleContext ruleContext;
+    private BuildConfiguration buildConfiguration;
+    private IntermediateArtifacts intermediateArtifacts;
+    private CompilationAttributes compilationAttributes;
+    private boolean useDeps = true;
+    private Map<String, NestedSet<Artifact>> outputGroupCollector;
+    private boolean isObjcLibrary = false;
 
-  /**
-   * Returns a CompilationSupport instance, the type of which is determined from the
-   * --experimental_objc_crosstool flag.  If this is an instance of
-   * {@link CrosstoolCompilationSupport}, dependencies will not be used.
-   */
-  public static CompilationSupport createWithoutDeps(RuleContext ruleContext) {
-    CompilationSupport result = createForConfig(ruleContext, ruleContext.getConfiguration(),
-        /*useDeps=*/false);
-    return result;
-  }
+    /** Sets the {@link RuleContext} for the calling target. */
+    public Builder setRuleContext(RuleContext ruleContext) {
+      this.ruleContext = ruleContext;
+      return this;
+    }
 
-   /**
-   * Returns a CompilationSupport instance, the type of which is determined from the
-   * --experimental_objc_crosstool flag.  The result can be either {@link LegacyCompilationSupport}
-   * or {@link CrosstoolCompilationSupport}.
-   *
-   * @param ruleContext the RuleContext for the calling target
-   * @param buildConfiguration the configuration for the calling target
-   */
-   public static CompilationSupport createForConfig(RuleContext ruleContext,
-       BuildConfiguration buildConfiguration) {
-     return createForConfig(ruleContext, buildConfiguration, /*useDeps=*/true);
-   }
+    /** Sets the {@link BuildConfiguration} for the calling target. */
+    public Builder setConfig(BuildConfiguration buildConfiguration) {
+      this.buildConfiguration = buildConfiguration;
+      return this;
+    }
 
-  /**
-   * Returns a CompilationSupport instance, the type of which is determined from the
-   * --experimental_objc_crosstool flag.  The result can be either {@link LegacyCompilationSupport}
-   * or {@link CrosstoolCompilationSupport}.
-   *
-   * @param ruleContext the RuleContext for the calling target
-   * @param buildConfiguration the configuration for the calling target
-   * @param useDeps true if deps should be used
-   */
-   public static CompilationSupport createForConfig(RuleContext ruleContext,
-       BuildConfiguration buildConfiguration, boolean useDeps) {
-     return createWithSelectedImplementation(ruleContext,
-         buildConfiguration,
-         ObjcRuleClasses.intermediateArtifacts(ruleContext, buildConfiguration),
-         CompilationAttributes.Builder.fromRuleContext(ruleContext).build(), useDeps);
-   }
+    /** Sets {@link IntermediateArtifacts} for deriving artifact paths. */
+    public Builder setIntermediateArtifacts(IntermediateArtifacts intermediateArtifacts) {
+      this.intermediateArtifacts = intermediateArtifacts;
+      return this;
+    }
 
-  /**
-   * Returns a CompilationSupport instance, the type of which is determined from the
-   * --experimental_objc_crosstool flag.
-   *
-   * @param ruleContext the RuleContext for the calling target
-   * @param compilationAttributes attributes of the calling target
-   */
-  public static CompilationSupport createForAttributes(RuleContext ruleContext,
-      CompilationAttributes compilationAttributes) {
-    BuildConfiguration config = ruleContext.getConfiguration();
-    return createWithSelectedImplementation(ruleContext,
-        config,
-        ObjcRuleClasses.intermediateArtifacts(ruleContext, config),
-        compilationAttributes,
-        /*useDeps=*/true);
-  }
+    /** Sets {@link CompilationAttributes} for the calling target. */
+    public Builder setCompilationAttributes(CompilationAttributes compilationAttributes) {
+      this.compilationAttributes = compilationAttributes;
+      return this;
+    }
 
-   /**
-   * Returns a CompilationSupport instance, the type of which is determined from the
-   * --experimental_objc_crosstool flag.
-   *
-   * @param ruleContext the RuleContext for the calling target
-   * @param buildConfiguration the configuration for the calling target
-   * @param intermediateArtifacts IntermediateArtifacts for deriving artifact paths
-   * @param compilationAttributes attributes of the calling target
-   */
-   static CompilationSupport createWithSelectedImplementation(
-      RuleContext ruleContext,
-      BuildConfiguration buildConfiguration,
-      IntermediateArtifacts intermediateArtifacts,
-      CompilationAttributes compilationAttributes) {
-     return createWithSelectedImplementation(
-         ruleContext,
-         buildConfiguration,
-         intermediateArtifacts,
-         compilationAttributes,
-         /*useDeps=*/true);
-  }
+    /**
+     * Sets that this {@link CompilationSupport} will not take deps into account in determining
+     * compilation actions.
+     */
+    public Builder doNotUseDeps() {
+      this.useDeps = false;
+      return this;
+    }
 
-  /**
-   * Returns a CompilationSupport instance, the type of which is determined from the
-   * --experimental_objc_crosstool flag.
-   *
-   * @param ruleContext the RuleContext for the calling target
-   * @param buildConfiguration the configuration for the calling target
-   * @param intermediateArtifacts IntermediateArtifacts for deriving artifact paths
-   * @param compilationAttributes attributes of the calling target
-   * @param useDeps true if deps should be used
-   */
-   static CompilationSupport createWithSelectedImplementation(
-      RuleContext ruleContext,
-      BuildConfiguration buildConfiguration,
-      IntermediateArtifacts intermediateArtifacts,
-      CompilationAttributes compilationAttributes,
-       boolean useDeps) {
-    return buildConfiguration.getFragment(ObjcConfiguration.class).getObjcCrosstoolMode()
-        == ObjcCrosstoolMode.ALL
-        ? new CrosstoolCompilationSupport(ruleContext, buildConfiguration, intermediateArtifacts,
-            compilationAttributes, useDeps)
-        : new LegacyCompilationSupport(ruleContext, buildConfiguration, intermediateArtifacts,
-            compilationAttributes, useDeps);
+    /**
+     * Indicates that this CompilationSupport is for use in an objc_library target. This will cause
+     * CrosstoolCompilationSupport to be used if --experimental_objc_crosstool=library
+     */
+    public Builder isObjcLibrary() {
+      this.isObjcLibrary = true;
+      return this;
+    }
+
+    /**
+     * Causes the provided map to be updated with output groups produced by compile action
+     * registration.
+     *
+     * <p>This map is intended to be mutated by {@link
+     * CompilationSupport#registerCompileAndArchiveActions}. The added output groups should be
+     * exported by the calling rule class implementation.
+     */
+    public Builder setOutputGroupCollector(Map<String, NestedSet<Artifact>> outputGroupCollector) {
+      this.outputGroupCollector = outputGroupCollector;
+      return this;
+    }
+
+    /**
+     * Returns a {@link CompilationSupport} instance. This is either a {@link
+     * CrosstoolCompilationSupport} or {@link LegacyCompilationSupport} depending on the value of
+     * --experimental_objc_crosstool.
+     */
+    public CompilationSupport build() {
+      Preconditions.checkNotNull(ruleContext, "CompilationSupport is missing RuleContext");
+
+      if (buildConfiguration == null) {
+        buildConfiguration = ruleContext.getConfiguration();
+      }
+
+      if (intermediateArtifacts == null) {
+        intermediateArtifacts =
+            ObjcRuleClasses.intermediateArtifacts(ruleContext, buildConfiguration);
+      }
+
+      if (compilationAttributes == null) {
+        compilationAttributes = CompilationAttributes.Builder.fromRuleContext(ruleContext).build();
+      }
+
+      if (outputGroupCollector == null) {
+        outputGroupCollector = new TreeMap<>();
+      }
+
+      ObjcCrosstoolMode objcCrosstoolMode =
+          buildConfiguration.getFragment(ObjcConfiguration.class).getObjcCrosstoolMode();
+      if (objcCrosstoolMode == ObjcCrosstoolMode.ALL
+          || (isObjcLibrary && objcCrosstoolMode == ObjcCrosstoolMode.LIBRARY)) {
+        return new CrosstoolCompilationSupport(
+            ruleContext,
+            buildConfiguration,
+            intermediateArtifacts,
+            compilationAttributes,
+            useDeps,
+            outputGroupCollector);
+      } else {
+        return new LegacyCompilationSupport(
+            ruleContext,
+            buildConfiguration,
+            intermediateArtifacts,
+            compilationAttributes,
+            useDeps,
+            outputGroupCollector);
+      }
+    }
   }
 
  /**
@@ -653,6 +657,11 @@ public abstract class CompilationSupport {
     CppModuleMap moduleMap = intermediateArtifacts.moduleMap();
     registerGenerateModuleMapAction(moduleMap, publicHeaders);
 
+    Optional<Artifact> umbrellaHeader = moduleMap.getUmbrellaHeader();
+    if (umbrellaHeader.isPresent()) {
+      registerGenerateUmbrellaHeaderAction(umbrellaHeader.get(), publicHeaders);
+    }
+
     return this;
   }
 
@@ -702,7 +711,8 @@ public abstract class CompilationSupport {
    * @param common common information about this rule's attributes and its dependencies
    * @return this compilation support
    */
-  CompilationSupport addXcodeSettings(Builder xcodeProviderBuilder, ObjcCommon common) {
+  CompilationSupport addXcodeSettings(
+      XcodeProvider.Builder xcodeProviderBuilder, ObjcCommon common) {
     for (CompilationArtifacts artifacts : common.getCompilationArtifacts().asSet()) {
       xcodeProviderBuilder.setCompilationArtifacts(artifacts);
     }
@@ -1231,6 +1241,18 @@ public abstract class CompilationSupport {
     }
   }
 
+  CompilationSupport registerGenerateUmbrellaHeaderAction(
+      Artifact umbrellaHeader, Iterable<Artifact> publicHeaders) {
+     ruleContext.registerAction(
+        new UmbrellaHeaderAction(
+            ruleContext.getActionOwner(),
+            umbrellaHeader,
+            publicHeaders,
+            ImmutableList.<PathFragment>of()));
+ 
+    return this;
+  }
+
   /**
    * Registers an action that will generate a clang module map.
    * @param moduleMap the module map to generate
@@ -1330,6 +1352,13 @@ public abstract class CompilationSupport {
   /**
    * Creates and registers ObjcHeaderScanning {@link SpawnAction}. Groups all the actions by their
    * compilation command line arguments and creates a ObjcHeaderScanning action for each unique one.
+   *
+   * <p>The number of sources to scan per actions are bounded so that targets with a high number of
+   * sources are not penalized. A large number of sources may require a lot of processing
+   * particularly when the headers required for different sources vary greatly and the caching
+   * mechanism in the tool is largely useless. In these instances these actions would benefit by
+   * being distributed so they don't contribute to the critical path. The partition size is
+   * configurable so that it can be tuned.
    */
   protected void registerHeaderScanningActions(
       ImmutableList<ObjcHeaderThinningInfo> headerThinningInfo,
@@ -1339,49 +1368,63 @@ public abstract class CompilationSupport {
       return;
     }
 
-    FilesToRunProvider headerScannerTool = getHeaderThinningToolExecutable();
-    PrerequisiteArtifacts appleSdks =
-        ruleContext.getPrerequisiteArtifacts(ObjcRuleClasses.APPLE_SDK_ATTRIBUTE, Mode.TARGET);
     ListMultimap<ImmutableList<String>, ObjcHeaderThinningInfo>
         objcHeaderThinningInfoByCommandLine = groupActionsByCommandLine(headerThinningInfo);
     // Register a header scanning spawn action for each unique set of command line arguments
     for (ImmutableList<String> args : objcHeaderThinningInfoByCommandLine.keySet()) {
-      SpawnAction.Builder builder =
-          new SpawnAction.Builder()
-              .setMnemonic("ObjcHeaderScanning")
-              .setExecutable(headerScannerTool)
-              .addInputs(appleSdks.list());
-      CustomCommandLine.Builder cmdLine =
-          CustomCommandLine.builder()
-              .add("--arch")
-              .add(appleConfiguration.getSingleArchitecture().toLowerCase())
-              .add("--platform")
-              .add(appleConfiguration.getSingleArchPlatform().getLowerCaseNameInPlist())
-              .add("--sdk_version")
-              .add(
-                  appleConfiguration
-                      .getSdkVersionForPlatform(appleConfiguration.getSingleArchPlatform())
-                      .toStringWithMinimumComponents(2))
-              .add("--xcode_version")
-              .add(appleConfiguration.getXcodeVersion().toStringWithMinimumComponents(2))
-              .add("--");
-      for (ObjcHeaderThinningInfo info : objcHeaderThinningInfoByCommandLine.get(args)) {
-        cmdLine.addJoinPaths(
-            ":",
-            Lists.newArrayList(info.sourceFile.getExecPath(), info.headersListFile.getExecPath()));
-        builder.addInput(info.sourceFile).addOutput(info.headersListFile);
+      // As infos is in insertion order we should reliably get the same sublists below
+      for (List<ObjcHeaderThinningInfo> partition :
+          Lists.partition(
+              objcHeaderThinningInfoByCommandLine.get(args),
+              objcConfiguration.objcHeaderThinningPartitionSize())) {
+        registerHeaderScanningAction(objcProvider, compilationArtifacts, args, partition);
       }
-      ruleContext.registerAction(
-          builder
-              .setCommandLine(cmdLine.add("--").add(args).build())
-              .addInputs(compilationArtifacts.getPrivateHdrs())
-              .addTransitiveInputs(attributes.hdrs())
-              .addTransitiveInputs(objcProvider.get(ObjcProvider.HEADER))
-              .addInputs(compilationArtifacts.getPchFile().asSet())
-              .addTransitiveInputs(objcProvider.get(ObjcProvider.STATIC_FRAMEWORK_FILE))
-              .addTransitiveInputs(objcProvider.get(ObjcProvider.DYNAMIC_FRAMEWORK_FILE))
-              .build(ruleContext));
     }
+  }
+
+  private void registerHeaderScanningAction(
+      ObjcProvider objcProvider,
+      CompilationArtifacts compilationArtifacts,
+      ImmutableList<String> args,
+      List<ObjcHeaderThinningInfo> infos) {
+    SpawnAction.Builder builder =
+        new SpawnAction.Builder()
+            .setMnemonic("ObjcHeaderScanning")
+            .setExecutable(getHeaderThinningToolExecutable())
+            .addInputs(
+                ruleContext
+                    .getPrerequisiteArtifacts(ObjcRuleClasses.APPLE_SDK_ATTRIBUTE, Mode.TARGET)
+                    .list());
+    CustomCommandLine.Builder cmdLine =
+        CustomCommandLine.builder()
+            .add("--arch")
+            .add(appleConfiguration.getSingleArchitecture().toLowerCase())
+            .add("--platform")
+            .add(appleConfiguration.getSingleArchPlatform().getLowerCaseNameInPlist())
+            .add("--sdk_version")
+            .add(
+                appleConfiguration
+                    .getSdkVersionForPlatform(appleConfiguration.getSingleArchPlatform())
+                    .toStringWithMinimumComponents(2))
+            .add("--xcode_version")
+            .add(appleConfiguration.getXcodeVersion().toStringWithMinimumComponents(2))
+            .add("--");
+    for (ObjcHeaderThinningInfo info : infos) {
+      cmdLine.addJoinPaths(
+          ":",
+          Lists.newArrayList(info.sourceFile.getExecPath(), info.headersListFile.getExecPath()));
+      builder.addInput(info.sourceFile).addOutput(info.headersListFile);
+    }
+    ruleContext.registerAction(
+        builder
+            .setCommandLine(cmdLine.add("--").add(args).build())
+            .addInputs(compilationArtifacts.getPrivateHdrs())
+            .addTransitiveInputs(attributes.hdrs())
+            .addTransitiveInputs(objcProvider.get(ObjcProvider.HEADER))
+            .addInputs(compilationArtifacts.getPchFile().asSet())
+            .addTransitiveInputs(objcProvider.get(ObjcProvider.STATIC_FRAMEWORK_FILE))
+            .addTransitiveInputs(objcProvider.get(ObjcProvider.DYNAMIC_FRAMEWORK_FILE))
+            .build(ruleContext));
   }
 
   /**

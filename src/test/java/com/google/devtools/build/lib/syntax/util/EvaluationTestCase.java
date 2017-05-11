@@ -92,37 +92,44 @@ public class EvaluationTestCase {
   }
 
   /**
-   * Creates a new Environment suitable for the test case. Subclasses may override it
-   * to fit their purpose and e.g. call newBuildEnvironment or newSkylarkEnvironment;
-   * or they may play with the testMode to run tests in either or both kinds of Environment.
-   * Note that all Environment-s may share the same Mutability, so don't close it.
+   * Creates a new Environment suitable for the test case. Subclasses may override it to fit their
+   * purpose and e.g. call newBuildEnvironment or newSkylarkEnvironment; or they may play with the
+   * testMode to run tests in either or both kinds of Environment. Note that all Environment-s may
+   * share the same Mutability, so don't close it.
+   *
    * @return a fresh Environment.
    */
   public Environment newEnvironment() throws Exception {
+    return newEnvironmentWithSkylarkOptions();
+  }
+
+  protected Environment newEnvironmentWithSkylarkOptions(String... skylarkOptions)
+      throws Exception {
     if (testMode == null) {
       throw new IllegalArgumentException(
           "TestMode is null. Please set a Testmode via setMode() or set the "
               + "Environment manually by overriding newEnvironment()");
     }
-    return testMode.createEnvironment(getEventHandler(), null);
+    return testMode.createEnvironment(getEventHandler(), skylarkOptions);
   }
 
   /**
    * Sets the specified {@code TestMode} and tries to create the appropriate {@code Environment}
+   *
    * @param testMode
    * @throws Exception
    */
-  protected void setMode(TestMode testMode) throws Exception {
+  protected void setMode(TestMode testMode, String... skylarkOptions) throws Exception {
     this.testMode = testMode;
-    env = newEnvironment();
+    env = newEnvironmentWithSkylarkOptions(skylarkOptions);
   }
 
-  protected void enableSkylarkMode() throws Exception {
-    setMode(TestMode.SKYLARK);
+  protected void enableSkylarkMode(String... skylarkOptions) throws Exception {
+    setMode(TestMode.SKYLARK, skylarkOptions);
   }
 
-  protected void enableBuildMode() throws Exception {
-    setMode(TestMode.BUILD);
+  protected void enableBuildMode(String... skylarkOptions) throws Exception {
+    setMode(TestMode.BUILD, skylarkOptions);
   }
 
   public EventHandler getEventHandler() {
@@ -554,11 +561,15 @@ public class EvaluationTestCase {
    * A class that runs all tests in Skylark mode
    */
   protected class SkylarkTest extends ModalTestCase {
-    public SkylarkTest() {}
+    private final String[] skylarkOptions;
+
+    public SkylarkTest(String... skylarkOptions) {
+      this.skylarkOptions = skylarkOptions;
+    }
 
     @Override
     protected void run(Testable testable) throws Exception {
-      enableSkylarkMode();
+      enableSkylarkMode(skylarkOptions);
       testable.run();
     }
   }

@@ -17,6 +17,8 @@ package com.google.devtools.build.remote;
 import com.google.common.collect.ImmutableList;
 import com.google.devtools.build.lib.remote.CacheNotFoundException;
 import com.google.devtools.build.lib.remote.CasServiceGrpc.CasServiceImplBase;
+import com.google.devtools.build.lib.remote.ChannelOptions;
+import com.google.devtools.build.lib.remote.Chunker;
 import com.google.devtools.build.lib.remote.ContentDigests;
 import com.google.devtools.build.lib.remote.ContentDigests.ActionKey;
 import com.google.devtools.build.lib.remote.ExecuteServiceGrpc.ExecuteServiceImplBase;
@@ -63,11 +65,10 @@ import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.JavaIoFileSystem;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.common.options.OptionsParser;
-import com.google.protobuf.ByteString;
 import com.google.protobuf.Duration;
 import com.google.protobuf.util.Durations;
 import io.grpc.Server;
-import io.grpc.ServerBuilder;
+import io.grpc.netty.NettyServerBuilder;
 import io.grpc.stub.StreamObserver;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -76,7 +77,6 @@ import java.io.PrintWriter;
 import java.nio.file.FileAlreadyExistsException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -96,25 +96,46 @@ public class RemoteWorker {
   private final ExecuteServiceImplBase execServer;
   private final ExecutionCacheServiceImplBase execCacheServer;
   private final SimpleBlobStoreActionCache cache;
+  private final RemoteWorkerOptions workerOptions;
+  private final RemoteOptions remoteOptions;
 
   public RemoteWorker(
-      Path workPath, RemoteWorkerOptions options, SimpleBlobStoreActionCache cache) {
+      RemoteWorkerOptions workerOptions,
+      RemoteOptions remoteOptions,
+      SimpleBlobStoreActionCache cache)
+      throws IOException {
     this.cache = cache;
+    this.workerOptions = workerOptions;
+    this.remoteOptions = remoteOptions;
+    if (workerOptions.workPath != null) {
+      Path workPath = getFileSystem().getPath(workerOptions.workPath);
+      FileSystemUtils.createDirectoryAndParents(workPath);
+      execServer = new ExecutionServer(workPath);
+    } else {
+      execServer = null;
+    }
     casServer = new CasServer();
-    execServer = new ExecutionServer(workPath, options);
     execCacheServer = new ExecutionCacheServer();
   }
 
-  public CasServiceImplBase getCasServer() {
-    return casServer;
-  }
-
-  public ExecuteServiceImplBase getExecutionServer() {
-    return execServer;
-  }
-
-  public ExecutionCacheServiceImplBase getExecCacheServer() {
-    return execCacheServer;
+  public Server startServer() throws IOException {
+    NettyServerBuilder b =
+        NettyServerBuilder.forPort(workerOptions.listenPort)
+            .maxMessageSize(ChannelOptions.create(remoteOptions).maxMessageSize())
+            .addService(casServer)
+            .addService(execCacheServer);
+    if (execServer != null) {
+      b.addService(execServer);
+    } else {
+      System.out.println("*** Execution disabled, only serving cache requests.");
+    }
+    Server server = b.build();
+    System.out.println(
+        "*** Starting grpc server on all locally bound IPs on port "
+            + workerOptions.listenPort
+            + ".");
+    server.start();
+    return server;
   }
 
   class CasServer extends CasServiceImplBase {
@@ -184,17 +205,23 @@ public class RemoteWorker {
       }
       status.setSucceeded(true);
       try {
+        // This still relies on the total blob size to be small enough to fit in memory
+        // simultaneously! TODO(olaola): refactor to fix this if the need arises.
+        Chunker.Builder b = new Chunker.Builder().chunkSize(remoteOptions.grpcMaxChunkSizeBytes);
         for (ContentDigest digest : request.getDigestList()) {
-          reply.setData(
-              BlobChunk.newBuilder()
-                  .setDigest(digest)
-                  .setData(ByteString.copyFrom(cache.downloadBlob(digest)))
-                  .build());
+          b.addInput(cache.downloadBlob(digest));
+        }
+        Chunker c = b.build();
+        while (c.hasNext()) {
+          reply.setData(c.next());
           responseObserver.onNext(reply.build());
           if (reply.hasStatus()) {
             reply.clearStatus(); // Only send status on first chunk.
           }
         }
+      } catch (IOException e) {
+        // This cannot happen, as we are chunking in-memory blobs.
+        throw new RuntimeException("Internal error: " + e);
       } catch (CacheNotFoundException e) {
         // This can only happen if an item gets evicted right after we check.
         reply.clearData();
@@ -329,7 +356,6 @@ public class RemoteWorker {
 
   class ExecutionServer extends ExecuteServiceImplBase {
     private final Path workPath;
-    private final RemoteWorkerOptions options;
 
     //The name of the container image entry in the Platform proto
     // (see src/main/protobuf/remote_protocol.proto and
@@ -337,9 +363,8 @@ public class RemoteWorker {
     // src/main/java/com/google/devtools/build/lib/remote/RemoteOptions.java)
     public static final String CONTAINER_IMAGE_ENTRY_NAME = "container-image";
 
-    public ExecutionServer(Path workPath, RemoteWorkerOptions options) {
+    public ExecutionServer(Path workPath) {
       this.workPath = workPath;
-      this.options = options;
     }
 
     private Map<String, String> getEnvironmentVariables(RemoteProtocol.Command command) {
@@ -547,14 +572,14 @@ public class RemoteWorker {
         }
         ExecuteReply reply = execute(request.getAction(), tempRoot);
         responseObserver.onNext(reply);
-        if (options.debug) {
+        if (workerOptions.debug) {
           if (!reply.getStatus().getSucceeded()) {
             LOG.warning("Work failed. Request: " + request.toString() + ".");
           } else if (LOG_FINER) {
             LOG.fine("Work completed.");
           }
         }
-        if (!options.debug) {
+        if (!workerOptions.debug) {
           FileSystemUtils.deleteTree(tempRoot);
         } else {
           LOG.warning("Preserving work directory " + tempRoot.toString() + ".");
@@ -579,11 +604,6 @@ public class RemoteWorker {
     RemoteOptions remoteOptions = parser.getOptions(RemoteOptions.class);
     RemoteWorkerOptions remoteWorkerOptions = parser.getOptions(RemoteWorkerOptions.class);
 
-    if (remoteWorkerOptions.workPath == null) {
-      printUsage(parser);
-      return;
-    }
-
     System.out.println("*** Initializing in-memory cache server.");
     boolean remoteCache = SimpleBlobStoreFactory.isRemoteCacheOptions(remoteOptions);
     if (!remoteCache) {
@@ -595,21 +615,10 @@ public class RemoteWorker {
             : new SimpleBlobStoreFactory.ConcurrentMapBlobStore(
                 new ConcurrentHashMap<String, byte[]>());
 
-    System.out.println(
-        "*** Starting grpc server on all locally bound IPs on port "
-            + remoteWorkerOptions.listenPort
-            + ".");
-    Path workPath = getFileSystem().getPath(remoteWorkerOptions.workPath);
-    FileSystemUtils.createDirectoryAndParents(workPath);
     RemoteWorker worker =
-        new RemoteWorker(workPath, remoteWorkerOptions, new SimpleBlobStoreActionCache(blobStore));
-    final Server server =
-        ServerBuilder.forPort(remoteWorkerOptions.listenPort)
-            .addService(worker.getCasServer())
-            .addService(worker.getExecutionServer())
-            .addService(worker.getExecCacheServer())
-            .build();
-    server.start();
+        new RemoteWorker(
+            remoteWorkerOptions, remoteOptions, new SimpleBlobStoreActionCache(blobStore));
+    final Server server = worker.startServer();
 
     final Path pidFile;
     if (remoteWorkerOptions.pidFile != null) {
@@ -640,13 +649,6 @@ public class RemoteWorker {
               }
             });
     server.awaitTermination();
-  }
-
-  public static void printUsage(OptionsParser parser) {
-    System.out.println("Usage: remote_worker \n\n" + "Starts a worker that runs a gRPC service.");
-    System.out.println(
-        parser.describeOptions(
-            Collections.<String, String>emptyMap(), OptionsParser.HelpVerbosity.LONG));
   }
 
   static FileSystem getFileSystem() {

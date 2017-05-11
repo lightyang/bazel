@@ -26,12 +26,14 @@ import com.google.devtools.build.lib.analysis.FileConfiguredTarget;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTarget;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
+import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.packages.NativeClassObjectConstructor;
 import com.google.devtools.build.lib.packages.SkylarkClassObject;
 import com.google.devtools.build.lib.skylarkinterface.Param;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkSignature;
+import com.google.devtools.build.lib.skylarkinterface.SkylarkValue;
 import com.google.devtools.build.lib.syntax.SkylarkList.MutableList;
 import com.google.devtools.build.lib.testutil.TestMode;
 import org.junit.Before;
@@ -59,6 +61,7 @@ public class SkylarkEvaluationTest extends EvaluationTest {
     return new SkylarkTest();
   }
 
+  @Immutable
   static class Bad {
     Bad () {
     }
@@ -100,11 +103,11 @@ public class SkylarkEvaluationTest extends EvaluationTest {
     }
     @SuppressWarnings("unused")
     @SkylarkCallable(name = "nullfunc_failing", doc = "", allowReturnNones = false)
-    public Object nullfuncFailing(String p1, Integer p2) {
+    public SkylarkValue nullfuncFailing(String p1, Integer p2) {
       return null;
     }
     @SkylarkCallable(name = "nullfunc_working", doc = "", allowReturnNones = true)
-    public Object nullfuncWorking() {
+    public SkylarkValue nullfuncWorking() {
       return null;
     }
     @SkylarkCallable(name = "voidfunc", doc = "")
@@ -213,8 +216,8 @@ public class SkylarkEvaluationTest extends EvaluationTest {
       switch (name) {
         case "field": return "a";
         case "nset": return NestedSetBuilder.stableOrder().build();
+        default: return null;
       }
-      return null;
     }
 
     @Override
@@ -984,6 +987,74 @@ public class SkylarkEvaluationTest extends EvaluationTest {
   }
 
   @Test
+  public void testPlusEqualsOnListCopying() throws Exception {
+    new SkylarkTest("--incompatible_list_plus_equals_inplace=false")
+        .setUp(
+            "def func():",
+            "  l1 = [1, 2]",
+            "  l2 = l1",
+            "  l2 += [3, 4]",
+            "  return l1, l2",
+            "lists = str(func())")
+        .testLookup("lists", "([1, 2], [1, 2, 3, 4])");
+  }
+
+  @Test
+  public void testPlusEqualsOnListMutating() throws Exception {
+    new SkylarkTest("--incompatible_list_plus_equals_inplace=true")
+        .setUp(
+            "def func():",
+            "  l1 = [1, 2]",
+            "  l2 = l1",
+            "  l2 += [3, 4]",
+            "  return l1, l2",
+            "lists = str(func())")
+        .testLookup("lists", "([1, 2, 3, 4], [1, 2, 3, 4])");
+
+    // The same but with += after an IndexExpression
+    new SkylarkTest("--incompatible_list_plus_equals_inplace=true")
+        .setUp(
+            "def func():",
+            "  l = [1, 2]",
+            "  d = {0: l}",
+            "  d[0] += [3, 4]",
+            "  return l, d[0]",
+            "lists = str(func())")
+        .testLookup("lists", "([1, 2, 3, 4], [1, 2, 3, 4])");
+  }
+
+  @Test
+  public void testPlusEqualsOnTuple() throws Exception {
+    new SkylarkTest("--incompatible_list_plus_equals_inplace=false")
+        .setUp(
+            "def func():",
+            "  t1 = (1, 2)",
+            "  t2 = t1",
+            "  t2 += (3, 4)",
+            "  return t1, t2",
+            "tuples = func()")
+        .testLookup("tuples", SkylarkList.Tuple.of(
+            SkylarkList.Tuple.of(1, 2),
+            SkylarkList.Tuple.of(1, 2, 3, 4)
+        ));
+
+    // This behavior should remain the same regardless of the
+    // --incompatible_list_plus_equals_inplace flag
+    new SkylarkTest("--incompatible_list_plus_equals_inplace=true")
+        .setUp(
+            "def func():",
+            "  t1 = (1, 2)",
+            "  t2 = t1",
+            "  t2 += (3, 4)",
+            "  return t1, t2",
+            "tuples = func()")
+        .testLookup("tuples", SkylarkList.Tuple.of(
+            SkylarkList.Tuple.of(1, 2),
+            SkylarkList.Tuple.of(1, 2, 3, 4)
+        ));
+  }
+
+  @Test
   public void testPlusEqualsOnDict() throws Exception {
     new SkylarkTest().setUp("def func():",
         "  d = {'a' : 1}",
@@ -991,6 +1062,20 @@ public class SkylarkEvaluationTest extends EvaluationTest {
         "  return d",
         "d = func()")
         .testLookup("d", ImmutableMap.of("a", 1, "b", 2));
+  }
+
+  @Test
+  public void testPlusOnDictDeprecated() throws Exception {
+    new SkylarkTest("--incompatible_disallow_dict_plus=true")
+        .testIfErrorContains(
+            "The `+` operator for dicts is deprecated and no longer supported.", "{1: 2} + {3: 4}");
+    new SkylarkTest("--incompatible_disallow_dict_plus=true")
+        .testIfErrorContains(
+            "The `+` operator for dicts is deprecated and no longer supported.",
+            "def func():",
+            "  d = {1: 2}",
+            "  d += {3: 4}",
+            "func()");
   }
 
   @Test

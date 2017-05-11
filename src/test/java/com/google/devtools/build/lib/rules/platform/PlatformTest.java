@@ -18,16 +18,25 @@ import static com.google.common.truth.Truth.assertThat;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
+import com.google.devtools.build.lib.analysis.platform.ConstraintSettingInfo;
+import com.google.devtools.build.lib.analysis.platform.ConstraintValueInfo;
+import com.google.devtools.build.lib.analysis.platform.PlatformInfo;
 import com.google.devtools.build.lib.analysis.util.BuildViewTestCase;
 import com.google.devtools.build.lib.cmdline.Label;
+import com.google.devtools.build.lib.util.CPU;
+import com.google.devtools.build.lib.util.OS;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
 /** Tests of {@link Platform}. */
 @RunWith(JUnit4.class)
 public class PlatformTest extends BuildViewTestCase {
+
+  @Rule public ExpectedException expectedException = ExpectedException.none();
 
   @Before
   public void createPlatform() throws Exception {
@@ -48,7 +57,7 @@ public class PlatformTest extends BuildViewTestCase {
     ConfiguredTarget platform = getConfiguredTarget("//constraint:plat1");
     assertThat(platform).isNotNull();
 
-    PlatformInfo provider = PlatformInfo.fromTarget(platform);
+    PlatformInfo provider = Platform.platform(platform);
     assertThat(provider).isNotNull();
     assertThat(provider.constraints()).hasSize(1);
     ConstraintSettingInfo constraintSetting =
@@ -57,6 +66,39 @@ public class PlatformTest extends BuildViewTestCase {
         ConstraintValueInfo.create(constraintSetting, makeLabel("//constraint:foo"));
     assertThat(provider.constraints()).containsExactly(constraintValue);
     assertThat(provider.remoteExecutionProperties()).isEmpty();
+  }
+
+  @Test
+  public void testPlatform_host() throws Exception {
+    String currentCpu = CPU.getCurrent().getCanonicalName();
+    String currentOs = OS.getCurrent().getCanonicalName();
+    scratch.file(
+        "host/BUILD",
+        "constraint_setting(name = 'cpu')",
+        "constraint_value(name = '" + currentCpu + "', constraint_setting = ':cpu')",
+        "constraint_value(name = 'another_cpu', constraint_setting = ':cpu')",
+        "constraint_setting(name = 'os')",
+        "constraint_value(name = '" + currentOs + "', constraint_setting = ':os')",
+        "constraint_value(name = 'another_os', constraint_setting = ':os')",
+        "platform(name = 'host_platform',",
+        "    host_platform = True,",
+        "    host_cpu_constraints = [':" + currentCpu + "', ':another_cpu'],",
+        "    host_os_constraints = [':" + currentOs + "', ':another_os'],",
+        ")");
+
+    ConfiguredTarget platform = getConfiguredTarget("//host:host_platform");
+    assertThat(platform).isNotNull();
+
+    PlatformInfo provider = Platform.platform(platform);
+    assertThat(provider).isNotNull();
+
+    // Check the CPU and OS.
+    ConstraintSettingInfo cpuConstraint = ConstraintSettingInfo.create(makeLabel("//host:cpu"));
+    ConstraintSettingInfo osConstraint = ConstraintSettingInfo.create(makeLabel("//host:os"));
+    assertThat(provider.constraints())
+        .containsExactly(
+            ConstraintValueInfo.create(cpuConstraint, makeLabel("//host:" + currentCpu)),
+            ConstraintValueInfo.create(osConstraint, makeLabel("//host:" + currentOs)));
   }
 
   @Test
@@ -93,7 +135,7 @@ public class PlatformTest extends BuildViewTestCase {
     ConfiguredTarget platform = getConfiguredTarget("//constraint/remote:plat_remote");
     assertThat(platform).isNotNull();
 
-    PlatformInfo provider = PlatformInfo.fromTarget(platform);
+    PlatformInfo provider = Platform.platform(platform);
     assertThat(provider).isNotNull();
     assertThat(provider.remoteExecutionProperties())
         .containsExactlyEntriesIn(ImmutableMap.of("foo", "val1", "bar", "val2"));

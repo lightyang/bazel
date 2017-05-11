@@ -25,17 +25,18 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.LinkedHashMultimap;
 import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
 import com.google.devtools.common.options.OptionsParser.OptionDescription;
+import com.google.devtools.common.options.OptionsParser.OptionUsageRestrictions;
 import com.google.devtools.common.options.OptionsParser.OptionValueDescription;
 import com.google.devtools.common.options.OptionsParser.UnparsedOptionValueDescription;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -60,14 +61,14 @@ class OptionsParserImpl {
    *
    * This map is modified by repeated calls to {@link #parse(OptionPriority,Function,List)}.
    */
-  private final Map<Field, OptionValueDescription> parsedValues = Maps.newHashMap();
+  private final Map<Field, OptionValueDescription> parsedValues = new HashMap<>();
 
   /**
    * We store the pre-parsed, explicit options for each priority in here.
    * We use partially preparsed options, which can be different from the original
    * representation, e.g. "--nofoo" becomes "--foo=0".
    */
-  private final List<UnparsedOptionValueDescription> unparsedValues = Lists.newArrayList();
+  private final List<UnparsedOptionValueDescription> unparsedValues = new ArrayList<>();
 
   /**
    * Unparsed values for use with the canonicalize command are stored separately from
@@ -81,10 +82,10 @@ class OptionsParserImpl {
   private final Multimap<Field, UnparsedOptionValueDescription> canonicalizeValues
       = LinkedHashMultimap.create();
 
-  private final List<String> warnings = Lists.newArrayList();
+  private final List<String> warnings = new ArrayList<>();
 
   private boolean allowSingleDashLongOptions = false;
-  
+
   private ArgsPreProcessor argsPreProcessor =
       new ArgsPreProcessor() {
         @Override
@@ -92,7 +93,7 @@ class OptionsParserImpl {
           return args;
         }
       };
-  
+
   /**
    * Create a new parser object
    */
@@ -111,31 +112,10 @@ class OptionsParserImpl {
   void setAllowSingleDashLongOptions(boolean allowSingleDashLongOptions) {
     this.allowSingleDashLongOptions = allowSingleDashLongOptions;
   }
-  
+
   /** Sets the ArgsPreProcessor for manipulations of the options before parsing. */
   void setArgsPreProcessor(ArgsPreProcessor preProcessor) {
     this.argsPreProcessor = Preconditions.checkNotNull(preProcessor);
-  }
-
-  /**
-   * The implementation of {@link OptionsBase#asMap}.
-   */
-  static Map<String, Object> optionsAsMap(OptionsBase optionsInstance) {
-    Map<String, Object> map = Maps.newHashMap();
-    for (Field field : OptionsParser.getAllAnnotatedFields(optionsInstance.getClass())) {
-      try {
-        String name = field.getAnnotation(Option.class).name();
-        Object value = field.get(optionsInstance);
-        map.put(name, value);
-      } catch (IllegalAccessException e) {
-        throw new IllegalStateException(e); // unreachable
-      }
-    }
-    return map;
-  }
-
-  List<Field> getAnnotatedFieldsFor(Class<? extends OptionsBase> clazz) {
-    return optionsData.getFieldsForClass(clazz);
   }
 
   /**
@@ -199,7 +179,7 @@ class OptionsParserImpl {
       }
     });
 
-    List<String> result = Lists.newArrayList();
+    List<String> result = new ArrayList<>();
     for (UnparsedOptionValueDescription value : processed) {
 
       // Ignore expansion options.
@@ -216,7 +196,7 @@ class OptionsParserImpl {
    * Implements {@link OptionsParser#asListOfEffectiveOptions()}.
    */
   List<OptionValueDescription> asListOfEffectiveOptions() {
-    List<OptionValueDescription> result = Lists.newArrayList();
+    List<OptionValueDescription> result = new ArrayList<>();
     for (Map.Entry<String, Field> mapEntry : optionsData.getAllNamedFields()) {
       String fieldName = mapEntry.getKey();
       Field field = mapEntry.getValue();
@@ -238,10 +218,6 @@ class OptionsParserImpl {
       }
     }
     return result;
-  }
-
-  Collection<Class<?  extends OptionsBase>> getOptionsClasses() {
-    return optionsData.getOptionsClasses();
   }
 
   private void maybeAddDeprecationWarning(Field field) {
@@ -448,8 +424,8 @@ class OptionsParserImpl {
       String expandedFrom,
       List<String> args) throws OptionsParsingException {
 
-    List<String> unparsedArgs = Lists.newArrayList();
-    LinkedHashMap<String, List<String>> implicitRequirements = Maps.newLinkedHashMap();
+    List<String> unparsedArgs = new ArrayList<>();
+    LinkedHashMap<String, List<String>> implicitRequirements = new LinkedHashMap<>();
 
     Iterator<String> argsIterator = argsPreProcessor.preProcess(args).iterator();
     while (argsIterator.hasNext()) {
@@ -644,18 +620,14 @@ class OptionsParserImpl {
       // Look for a "no"-prefixed option name: "no<optionName>".
       if (field == null && name.startsWith("no")) {
         // Give a nice error if someone is using the deprecated --no_ prefix.
-        // Note: With this check in place, is impossible to specify "--no_foo" for a flag named
-        // "--_foo", if a --foo flag also exists, since that'll be interpreted as the "no_"
-        // negating prefix for "--foo". Let that be a warning to anyone wanting to make flags that
-        // start with underscores.
         // TODO(Bazel-team): Remove the --no_ check when sufficient time has passed for users of
         // that feature to have stopped using it.
-        if (name.startsWith("no_") && optionsData.getFieldFromName(name.substring(3)) != null) {
-          throw new OptionsParsingException(
-              "'no_' prefixes are no longer accepted, --no<flag> is an accepted alternative.",
-              name.substring(3));
-        }
         name = name.substring(2);
+        if (name.startsWith("_") && optionsData.getFieldFromName(name.substring(1)) != null) {
+          name = name.substring(1);
+          warnings.add("Option '" + name + "' is specified using the deprecated --no_ prefix. "
+            + "Use --no without the underscore instead.");
+        }
         field = optionsData.getFieldFromName(name);
         booleanValue = false;
         if (field != null) {
@@ -679,8 +651,7 @@ class OptionsParserImpl {
     Option option = field == null ? null : field.getAnnotation(Option.class);
 
     if (option == null
-        || OptionsParser.documentationLevel(option.category())
-            == OptionsParser.DocumentationLevel.INTERNAL) {
+        || option.optionUsageRestrictions() == OptionUsageRestrictions.INTERNAL) {
       // This also covers internal options, which are treated as if they did not exist.
       throw new OptionsParsingException("Unrecognized option: " + arg, arg);
     }
@@ -712,9 +683,9 @@ class OptionsParserImpl {
       if (constructor == null) {
         return null;
       }
-      optionsInstance = constructor.newInstance(new Object[0]);
-    } catch (Exception e) {
-      throw new IllegalStateException(e);
+      optionsInstance = constructor.newInstance();
+    } catch (ReflectiveOperationException e) {
+      throw new IllegalStateException("Error while instantiating options class", e);
     }
 
     // Set the fields

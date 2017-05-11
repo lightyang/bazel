@@ -13,6 +13,8 @@
 // limitations under the License.
 package com.google.devtools.build.lib.runtime;
 
+import static com.google.devtools.build.lib.util.Preconditions.checkState;
+
 import com.google.common.collect.ImmutableSet;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.primitives.Bytes;
@@ -22,6 +24,8 @@ import com.google.devtools.build.lib.actions.ActionStartedEvent;
 import com.google.devtools.build.lib.actions.ActionStatusMessage;
 import com.google.devtools.build.lib.analysis.AnalysisPhaseCompleteEvent;
 import com.google.devtools.build.lib.analysis.NoBuildEvent;
+import com.google.devtools.build.lib.buildeventstream.AnnounceBuildEventTransportsEvent;
+import com.google.devtools.build.lib.buildeventstream.BuildEventTransportClosedEvent;
 import com.google.devtools.build.lib.buildtool.buildevent.BuildCompleteEvent;
 import com.google.devtools.build.lib.buildtool.buildevent.BuildStartingEvent;
 import com.google.devtools.build.lib.buildtool.buildevent.ExecutionProgressReceiverAvailableEvent;
@@ -67,7 +71,7 @@ public class ExperimentalEventHandler implements EventHandler {
   static final long LONG_REFRESH_MILLIS = 20000L;
 
   private static final DateTimeFormatter TIMESTAMP_FORMAT =
-      DateTimeFormat.forPattern("(HH:mm:ss.SSS) ");
+      DateTimeFormat.forPattern("(HH:mm:ss) ");
 
   private final boolean cursorControl;
   private final Clock clock;
@@ -85,6 +89,8 @@ public class ExperimentalEventHandler implements EventHandler {
   private long mustRefreshAfterMillis;
   private int numLinesProgressBar;
   private boolean buildComplete;
+  // Number of open build even protocol transports.
+  private int openBepTransports;
   private boolean progressBarNeedsRefresh;
   private Thread updateThread;
   private byte[] stdoutBuffer;
@@ -219,13 +225,13 @@ public class ExperimentalEventHandler implements EventHandler {
             if (incompleteLine) {
               crlf();
             }
+            if (showTimestamp) {
+              terminal.writeString(TIMESTAMP_FORMAT.print(clock.currentTimeMillis()));
+            }
             setEventKindColor(event.getKind());
             terminal.writeString(event.getKind() + ": ");
             terminal.resetTerminal();
             incompleteLine = true;
-            if (showTimestamp) {
-              terminal.writeString(TIMESTAMP_FORMAT.print(clock.currentTimeMillis()));
-            }
             if (event.getLocation() != null) {
               terminal.writeString(event.getLocation() + ": ");
             }
@@ -320,19 +326,20 @@ public class ExperimentalEventHandler implements EventHandler {
   @Subscribe
   public void buildComplete(BuildCompleteEvent event) {
     // The final progress bar will flow into the scroll-back buffer, to if treat
-    // it as an event and add a time stamp, if events are supposed to have a time stmap.
+    // it as an event and add a timestamp, if events are supposed to have a timestmap.
     synchronized (this) {
-      if (showTimestamp) {
-        stateTracker.buildComplete(event, TIMESTAMP_FORMAT.print(clock.currentTimeMillis()));
-      } else {
-        stateTracker.buildComplete(event);
-      }
+      stateTracker.buildComplete(event);
       ignoreRefreshLimitOnce();
       refresh();
-      buildComplete = true;
+
+      // After a build has completed, only stop updating the UI if there is no more BEP
+      // upload happening.
+      if (openBepTransports == 0) {
+        buildComplete = true;
+        stopUpdateThread();
+        flushStdOutStdErrBuffers();
+      }
     }
-    stopUpdateThread();
-    flushStdOutStdErrBuffers();
   }
 
   @Subscribe
@@ -429,6 +436,28 @@ public class ExperimentalEventHandler implements EventHandler {
       } catch (IOException e) {
         LOG.warning("IO Error writing to output stream: " + e);
       }
+    } else {
+      refresh();
+    }
+  }
+
+  @Subscribe
+  public synchronized void buildEventTransportsAnnounced(AnnounceBuildEventTransportsEvent event) {
+    openBepTransports = event.transports().size();
+    stateTracker.buildEventTransportsAnnounced(event);
+  }
+
+  @Subscribe
+  public synchronized void buildEventTransportClosed(BuildEventTransportClosedEvent event) {
+    checkState(openBepTransports > 0);
+    openBepTransports--;
+    stateTracker.buildEventTransportClosed(event);
+
+    if (openBepTransports == 0) {
+      stopUpdateThread();
+      flushStdOutStdErrBuffers();
+      ignoreRefreshLimitOnce();
+      refresh();
     } else {
       refresh();
     }
@@ -604,7 +633,11 @@ public class ExperimentalEventHandler implements EventHandler {
     if (cursorControl) {
       terminalWriter = new LineWrappingAnsiTerminalWriter(terminalWriter, terminalWidth - 1);
     }
-    stateTracker.writeProgressBar(terminalWriter, /* shortVersion=*/ !cursorControl);
+    String timestamp = null;
+    if (showTimestamp) {
+      timestamp = TIMESTAMP_FORMAT.print(clock.currentTimeMillis());
+    }
+    stateTracker.writeProgressBar(terminalWriter, /* shortVersion=*/ !cursorControl, timestamp);
     terminalWriter.newline();
     numLinesProgressBar = countingTerminalWriter.getWrittenLines();
     if (progressInTermTitle) {

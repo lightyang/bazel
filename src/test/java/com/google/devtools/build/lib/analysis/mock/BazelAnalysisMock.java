@@ -81,6 +81,7 @@ public final class BazelAnalysisMock extends AnalysisMock {
     List<String> workspaceContents = getWorkspaceContents(config);
     config.create(
         "/local_config_xcode/BUILD", "xcode_config(name = 'host_xcodes')");
+    config.create("/local_config_xcode/WORKSPACE");
     config.overwrite("WORKSPACE", workspaceContents.toArray(new String[workspaceContents.size()]));
     config.create("/bazel_tools_workspace/WORKSPACE", "workspace(name = 'bazel_tools')");
     config.create(
@@ -228,7 +229,9 @@ public final class BazelAnalysisMock extends AnalysisMock {
         .add("java_import(name = 'idlclass_import',")
         .add("            jars = [ 'idlclass.jar' ])")
         .add("exports_files(['adb', 'adb_static'])")
-        .add("sh_binary(name = 'android_runtest', srcs = ['empty.sh'])");
+        .add("sh_binary(name = 'android_runtest', srcs = ['empty.sh'])")
+        .add("java_plugin(name = 'databinding_annotation_processor',")
+        .add("    processor_class = 'android.databinding.annotationprocessor.ProcessDataBinding')");
 
     return androidBuildContents.build();
   }

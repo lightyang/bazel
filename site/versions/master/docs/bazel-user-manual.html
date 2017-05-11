@@ -1372,11 +1372,12 @@ $ bazel fetch //...
 
 <h4 id='flag--output_symbol_counts'><code class='flag'>--[no]output_symbol_counts</code></h4>
 <p>
-  If enabled, each gold-invoked link of a C++ executable binary will also output
+  If enabled, each gold-invoked link of a C++ executable binary will output
   a <i>symbol counts</i> file (via the <code>--print-symbol-counts</code> gold
-  option) that logs the number of symbols from each .o input that were used in
-  the binary. This can be used to track unnecessary link dependencies. The
-  symbol counts file is written to the binary's output path with the name
+  option). For each linker input, the file logs the number of symbols that were
+  defined and the number of symbols that were used in the binary.
+  This information can be used to track unnecessary link dependencies.
+  The symbol counts file is written to the binary's output path with the name
   <code>[targetname].sc</code>.
 </p>
 <p>
@@ -2310,7 +2311,7 @@ either to the terminal, or to additional log files.
   &gt;&gt;&gt;&gt;&gt; # //examples/cpp:hello-world [action 'Linking examples/cpp/hello-world']
   (cd /home/jrluser/.cache/bazel/_bazel_jrluser/4c084335afceb392cfbe7c31afee3a9f/bazel && \
     exec env - \
-    /usr/bin/gcc -o bazel-out/local_linux-fastbuild/bin/examples/cpp/hello-world -B/usr/bin/ -Wl,-z,relro,-z,now -no-canonical-prefixes -pass-exit-codes '-Wl,--build-id=md5' '-Wl,--hash-style=gnu' -Wl,-S -Wl,@bazel-out/local_linux-fastbuild/bin/examples/cpp/hello-world-2.params)
+    /usr/bin/gcc -o bazel-out/local_linux-fastbuild/bin/examples/cpp/hello-world -B/usr/bin/ -Wl,-z,relro,-z,now -no-canonical-prefixes -pass-exit-codes -Wl,-S -Wl,@bazel-out/local_linux-fastbuild/bin/examples/cpp/hello-world-2.params)
 </pre>
 <p>
   Where possible, commands are printed in a Bourne shell compatible syntax,

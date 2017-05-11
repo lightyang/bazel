@@ -179,7 +179,7 @@ public final class SkylarkAttr {
             new SkylarkComputedDefaultTemplate(
                 type, callback.getParameterNames(), callback, ast.getLocation()));
       } else {
-        builder.defaultValue(defaultValue, env.getGlobals().label());
+        builder.defaultValue(defaultValue, env.getGlobals().getTransitiveLabel());
       }
     }
 
@@ -1481,7 +1481,7 @@ public final class SkylarkAttr {
      */
     private final Object lock = new Object();
 
-    private Descriptor(
+    public Descriptor(
         Attribute.Builder<?> attributeBuilder) {
       this.attributeBuilder = attributeBuilder;
     }

@@ -14,6 +14,7 @@
 
 package com.google.devtools.build.lib.sandbox;
 
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.actions.ActionExecutionContext;
 import com.google.devtools.build.lib.actions.ActionStatusMessage;
@@ -22,10 +23,10 @@ import com.google.devtools.build.lib.actions.ExecutionStrategy;
 import com.google.devtools.build.lib.actions.Executor;
 import com.google.devtools.build.lib.actions.Spawn;
 import com.google.devtools.build.lib.actions.SpawnActionContext;
-import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.buildtool.BuildRequest;
-import com.google.devtools.build.lib.events.Event;
+import com.google.devtools.build.lib.exec.SpawnInputExpander;
 import com.google.devtools.build.lib.runtime.CommandEnvironment;
+import com.google.devtools.build.lib.standalone.StandaloneSpawnStrategy;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
@@ -35,32 +36,38 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** Strategy that uses sandboxing to execute a process. */
 @ExecutionStrategy(
-  name = {"sandboxed"},
+  name = {"sandboxed", "processwrapper-sandbox"},
   contextType = SpawnActionContext.class
 )
 public class ProcessWrapperSandboxedStrategy extends SandboxStrategy {
-  public static boolean isSupported(CommandEnvironment env) {
-    return ProcessWrapperRunner.isSupported(env);
+
+  public static boolean isSupported(CommandEnvironment cmdEnv) {
+    return ProcessWrapperRunner.isSupported(cmdEnv);
   }
 
   private final SandboxOptions sandboxOptions;
   private final Path execRoot;
   private final boolean verboseFailures;
+  private final String productName;
+  private final SpawnInputExpander spawnInputExpander;
 
   ProcessWrapperSandboxedStrategy(
+      CommandEnvironment cmdEnv,
       BuildRequest buildRequest,
-      BlazeDirectories blazeDirs,
       Path sandboxBase,
-      boolean verboseFailures) {
+      boolean verboseFailures,
+      String productName) {
     super(
+        cmdEnv,
         buildRequest,
-        blazeDirs,
         sandboxBase,
         verboseFailures,
         buildRequest.getOptions(SandboxOptions.class));
     this.sandboxOptions = buildRequest.getOptions(SandboxOptions.class);
-    this.execRoot = blazeDirs.getExecRoot();
+    this.execRoot = cmdEnv.getExecRoot();
     this.verboseFailures = verboseFailures;
+    this.productName = productName;
+    this.spawnInputExpander = new SpawnInputExpander(false);
   }
 
   @Override
@@ -81,18 +88,24 @@ public class ProcessWrapperSandboxedStrategy extends SandboxStrategy {
     Path sandboxPath = getSandboxRoot();
     Path sandboxExecRoot = sandboxPath.getRelative("execroot").getRelative(execRoot.getBaseName());
 
+    ImmutableMap<String, String> spawnEnvironment =
+        StandaloneSpawnStrategy.locallyDeterminedEnv(execRoot, productName, spawn.getEnvironment());
+
     Set<Path> writableDirs = getWritableDirs(sandboxExecRoot, spawn.getEnvironment());
     SymlinkedExecRoot symlinkedExecRoot = new SymlinkedExecRoot(sandboxExecRoot);
     ImmutableSet<PathFragment> outputs = SandboxHelpers.getOutputFiles(spawn);
     symlinkedExecRoot.createFileSystem(
-        getMounts(spawn, actionExecutionContext), outputs, writableDirs);
+        SandboxHelpers.getInputFiles(
+            spawnInputExpander, this.execRoot, spawn, actionExecutionContext),
+        outputs,
+        writableDirs);
 
-    SandboxRunner runner = new ProcessWrapperRunner(execRoot, sandboxExecRoot, verboseFailures);
+    SandboxRunner runner = new ProcessWrapperRunner(sandboxExecRoot, verboseFailures);
     try {
       runSpawn(
           spawn,
           actionExecutionContext,
-          spawn.getEnvironment(),
+          spawnEnvironment,
           symlinkedExecRoot,
           outputs,
           runner,
@@ -102,13 +115,13 @@ public class ProcessWrapperSandboxedStrategy extends SandboxStrategy {
         try {
           FileSystemUtils.deleteTree(sandboxPath);
         } catch (IOException e) {
-          executor
-              .getEventHandler()
-              .handle(
-                  Event.warn(
-                      String.format(
-                          "Cannot delete sandbox directory after action execution: %s (%s)",
-                          sandboxPath.getPathString(), e)));
+          // This usually means that the Spawn itself exited, but still has children running that
+          // we couldn't wait for, which now block deletion of the sandbox directory. On Linux this
+          // should never happen, as we use PID namespaces and where they are not available the
+          // subreaper feature to make sure all children have been reliably killed before returning,
+          // but on other OS this might not always work. The SandboxModule will try to delete them
+          // again when the build is all done, at which point it hopefully works, so let's just go
+          // on here.
         }
       }
     }

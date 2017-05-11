@@ -18,6 +18,7 @@ import com.google.auto.value.AutoValue;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.Artifact;
@@ -33,6 +34,7 @@ import com.google.devtools.build.lib.rules.cpp.CcLinkParamsProvider;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainProvider;
 import com.google.devtools.build.lib.rules.objc.CompilationSupport.ExtraLinkArgs;
 import com.google.devtools.build.lib.rules.objc.ObjcCommon.ResourceAttributes;
+import com.google.devtools.build.lib.rules.proto.ProtoSourcesProvider;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -42,6 +44,28 @@ import java.util.Set;
  */
 public class MultiArchBinarySupport {
   private final RuleContext ruleContext;
+
+  /**
+   * Returns all child configurations for this multi-arch target, mapped to the toolchains that they
+   * should use.
+   */
+  static ImmutableMap<BuildConfiguration, CcToolchainProvider> getChildConfigurationsAndToolchains(
+      RuleContext ruleContext) {
+    // This is currently a hack to obtain all child configurations regardless of the attribute
+    // values of this rule -- this rule does not currently use the actual info provided by
+    // this attribute. b/28403953 tracks cc toolchain usage.
+    ImmutableListMultimap<BuildConfiguration, CcToolchainProvider> configToProvider =
+        ruleContext.getPrerequisitesByConfiguration(
+            ObjcRuleClasses.CHILD_CONFIG_ATTR, Mode.SPLIT, CcToolchainProvider.class);
+
+    ImmutableMap.Builder<BuildConfiguration, CcToolchainProvider> result = ImmutableMap.builder();
+    for (BuildConfiguration config : configToProvider.keySet()) {
+      CcToolchainProvider toolchain = Iterables.getOnlyElement(configToProvider.get(config));
+      result.put(config, toolchain);
+    }
+
+    return result.build();
+  }
 
   /**
    * Configuration, toolchain, and provider for for single-arch dependency configurations of a
@@ -84,6 +108,8 @@ public class MultiArchBinarySupport {
    *     provider collections which are propagated from the dependencies of that configuration
    * @param outputLipoBinary the artifact (lipo'ed binary) which should be output as a result of
    *     this support
+   * @param outputMapCollector a map to which output groups created by compile action generation are
+   *     added
    * @throws RuleErrorException if there are attribute errors in the current rule context
    */
   public void registerActions(
@@ -92,7 +118,8 @@ public class MultiArchBinarySupport {
       Set<DependencySpecificConfiguration> dependencySpecificConfigurations,
       Iterable<Artifact> extraLinkInputs,
       ImmutableListMultimap<BuildConfiguration, TransitiveInfoCollection> configToDepsCollectionMap,
-      Artifact outputLipoBinary)
+      Artifact outputLipoBinary,
+      Map<String, NestedSet<Artifact>> outputMapCollector)
       throws RuleErrorException, InterruptedException {
 
     NestedSetBuilder<Artifact> binariesToLipo =
@@ -128,7 +155,15 @@ public class MultiArchBinarySupport {
               ruleContext,
               ObjcRuleClasses.intermediateArtifacts(
                   ruleContext, dependencySpecificConfiguration.config()));
-      CompilationSupport.createForConfig(ruleContext, dependencySpecificConfiguration.config())
+
+      CompilationSupport compilationSupport =
+          new CompilationSupport.Builder()
+              .setRuleContext(ruleContext)
+              .setConfig(dependencySpecificConfiguration.config())
+              .setOutputGroupCollector(outputMapCollector)
+              .build();
+
+      compilationSupport
           .registerCompileAndArchiveActions(
               compilationArtifacts, objcProvider, dependencySpecificConfiguration.toolchain())
           .registerLinkActions(
@@ -178,11 +213,21 @@ public class MultiArchBinarySupport {
     NestedSet<Artifact> protosToAvoid = protoArtifactsToAvoid(dylibProtoProviders);
     ImmutableSet.Builder<DependencySpecificConfiguration> childInfoBuilder = ImmutableSet.builder();
 
+    ImmutableListMultimap<BuildConfiguration, ObjcProtoProvider> objcProtoProvidersMap =
+        ruleContext.getPrerequisitesByConfiguration("deps", Mode.SPLIT, ObjcProtoProvider.class);
+
     for (BuildConfiguration childConfig : childConfigurationsAndToolchains.keySet()) {
       Optional<ObjcProvider> protosObjcProvider;
+      Iterable<ObjcProtoProvider> objcProtoProviders = objcProtoProvidersMap.get(childConfig);
       if (ObjcRuleClasses.objcConfiguration(ruleContext).enableAppleBinaryNativeProtos()) {
         ProtobufSupport protoSupport =
-            new ProtobufSupport(ruleContext, childConfig, protosToAvoid)
+            new ProtobufSupport(
+                    ruleContext,
+                    childConfig,
+                    protosToAvoid,
+                    ImmutableList.<ProtoSourcesProvider>of(),
+                    objcProtoProviders,
+                    ProtobufSupport.getTransitivePortableProtoFilters(objcProtoProviders))
                 .registerGenerationActions()
                 .registerCompilationActions();
         protosObjcProvider = protoSupport.getObjcProvider();

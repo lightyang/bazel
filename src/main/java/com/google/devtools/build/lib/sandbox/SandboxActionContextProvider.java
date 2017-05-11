@@ -16,9 +16,7 @@ package com.google.devtools.build.lib.sandbox;
 
 import com.google.common.collect.ImmutableList;
 import com.google.devtools.build.lib.actions.Executor.ActionContext;
-import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.buildtool.BuildRequest;
-import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.exec.ActionContextProvider;
 import com.google.devtools.build.lib.exec.ExecutionOptions;
 import com.google.devtools.build.lib.runtime.CommandEnvironment;
@@ -31,11 +29,6 @@ import java.io.IOException;
  */
 final class SandboxActionContextProvider extends ActionContextProvider {
 
-  private static final String SANDBOX_NOT_SUPPORTED_MESSAGE =
-      "Sandboxed execution is not supported on your system and thus hermeticity of actions cannot "
-          + "be guaranteed. See http://bazel.build/docs/bazel-user-manual.html#sandboxing for more "
-          + "information. You can turn off this warning via --ignore_unsupported_sandboxing";
-
   @SuppressWarnings("unchecked")
   private final ImmutableList<ActionContext> contexts;
 
@@ -44,51 +37,35 @@ final class SandboxActionContextProvider extends ActionContextProvider {
   }
 
   public static SandboxActionContextProvider create(
-      CommandEnvironment env, BuildRequest buildRequest, Path sandboxBase) throws IOException {
+      CommandEnvironment cmdEnv, BuildRequest buildRequest, Path sandboxBase) throws IOException {
     ImmutableList.Builder<ActionContext> contexts = ImmutableList.builder();
 
-    BlazeDirectories blazeDirs = env.getDirectories();
     boolean verboseFailures = buildRequest.getOptions(ExecutionOptions.class).verboseFailures;
-    String productName = env.getRuntime().getProductName();
+    String productName = cmdEnv.getRuntime().getProductName();
+
+    // The ProcessWrapperSandboxedStrategy works on all POSIX-compatible operating systems.
+    if (OS.isPosixCompatible()) {
+      contexts.add(
+          new ProcessWrapperSandboxedStrategy(
+              cmdEnv, buildRequest, sandboxBase, verboseFailures, productName));
+    }
 
     switch (OS.getCurrent()) {
       case LINUX:
-        if (LinuxSandboxedStrategy.isSupported(env)) {
+        if (LinuxSandboxedStrategy.isSupported(cmdEnv)) {
           contexts.add(
-              new LinuxSandboxedStrategy(
-                  buildRequest, env.getDirectories(), sandboxBase, verboseFailures));
-        } else {
-          if (!buildRequest.getOptions(SandboxOptions.class).ignoreUnsupportedSandboxing) {
-            env.getReporter().handle(Event.warn(SANDBOX_NOT_SUPPORTED_MESSAGE));
-          }
-          contexts.add(
-              new ProcessWrapperSandboxedStrategy(
-                  buildRequest, env.getDirectories(), sandboxBase, verboseFailures));
+              new LinuxSandboxedStrategy(cmdEnv, buildRequest, sandboxBase, verboseFailures));
         }
         break;
       case DARWIN:
-        if (DarwinSandboxRunner.isSupported()) {
+        if (DarwinSandboxRunner.isSupported(cmdEnv)) {
           contexts.add(
               DarwinSandboxedStrategy.create(
-                  buildRequest,
-                  env.getClientEnv(),
-                  blazeDirs,
-                  sandboxBase,
-                  verboseFailures,
-                  productName));
-        } else {
-          if (!buildRequest.getOptions(SandboxOptions.class).ignoreUnsupportedSandboxing) {
-            env.getReporter().handle(Event.warn(SANDBOX_NOT_SUPPORTED_MESSAGE));
-          }
+                  cmdEnv, buildRequest, sandboxBase, verboseFailures, productName));
         }
         break;
-      case FREEBSD:
-        contexts.add(
-            new ProcessWrapperSandboxedStrategy(
-                buildRequest, env.getDirectories(), sandboxBase, verboseFailures));
-        break;
       default:
-        // No sandboxing available.
+        // No additional platform-specific sandboxing available.
     }
 
     return new SandboxActionContextProvider(contexts.build());

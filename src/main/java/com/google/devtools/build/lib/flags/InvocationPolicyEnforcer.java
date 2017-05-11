@@ -17,12 +17,15 @@ import com.google.common.base.Function;
 import com.google.common.base.Functions;
 import com.google.common.base.Joiner;
 import com.google.common.base.Verify;
+import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Multimap;
 import com.google.common.collect.Sets;
 import com.google.devtools.build.lib.runtime.proto.InvocationPolicyOuterClass.AllowValues;
 import com.google.devtools.build.lib.runtime.proto.InvocationPolicyOuterClass.DisallowValues;
 import com.google.devtools.build.lib.runtime.proto.InvocationPolicyOuterClass.FlagPolicy;
+import com.google.devtools.build.lib.runtime.proto.InvocationPolicyOuterClass.FlagPolicy.OperationCase;
 import com.google.devtools.build.lib.runtime.proto.InvocationPolicyOuterClass.InvocationPolicy;
 import com.google.devtools.build.lib.runtime.proto.InvocationPolicyOuterClass.SetValue;
 import com.google.devtools.build.lib.runtime.proto.InvocationPolicyOuterClass.UseDefault;
@@ -33,7 +36,10 @@ import com.google.devtools.common.options.OptionsParser.OptionValueDescription;
 import com.google.devtools.common.options.OptionsParsingException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -93,29 +99,13 @@ public final class InvocationPolicyEnforcer {
     if (invocationPolicy == null || invocationPolicy.getFlagPoliciesCount() == 0) {
       return;
     }
-    List<FlagPolicy> effectivePolicy = getEffectivePolicy(invocationPolicy, parser);
 
-    ImmutableSet<String> commandAndParentCommands =
-        command == null
-            ? ImmutableSet.<String>of()
-            : CommandNameCache.CommandNameCacheInstance.INSTANCE.get(command);
+    // The effective policy returned is expanded, filtered for applicable commands, and cleaned of
+    // redundancies and conflicts.
+    List<FlagPolicy> effectivePolicy = getEffectivePolicy(invocationPolicy, parser, command);
+
     for (FlagPolicy flagPolicy : effectivePolicy) {
       String flagName = flagPolicy.getFlagName();
-
-      // Skip the flag policy if it doesn't apply to this command. If the commands list is empty,
-      // then the policy applies to all commands.
-      if (!flagPolicy.getCommandsList().isEmpty() && !commandAndParentCommands.isEmpty()) {
-        boolean flagApplies = false;
-        for (String policyCommand : flagPolicy.getCommandsList()) {
-          if (commandAndParentCommands.contains(policyCommand)) {
-            flagApplies = true;
-            break;
-          }
-        }
-        if (!flagApplies) {
-          continue;
-        }
-      }
 
       OptionValueDescription valueDescription;
       try {
@@ -188,25 +178,52 @@ public final class InvocationPolicyEnforcer {
     }
   }
 
+  private static boolean policyApplies(FlagPolicy policy, ImmutableSet<String> applicableCommands) {
+    // Skip the flag policy if it doesn't apply to this command. If the commands list is empty,
+    // then the policy applies to all commands.
+    if (policy.getCommandsList().isEmpty() || applicableCommands.isEmpty()) {
+      return true;
+    }
+
+    return !Collections.disjoint(policy.getCommandsList(), applicableCommands);
+  }
+
   /**
    * Takes the provided policy and processes it to the form that can be used on the user options.
    *
    * <p>Expands any policies on expansion flags.
    */
-  private static List<FlagPolicy> getEffectivePolicy(
-      InvocationPolicy invocationPolicy, OptionsParser parser) throws OptionsParsingException {
+  public static List<FlagPolicy> getEffectivePolicy(
+      InvocationPolicy invocationPolicy, OptionsParser parser, String command)
+      throws OptionsParsingException {
     if (invocationPolicy == null) {
       return ImmutableList.of();
     }
 
+    ImmutableSet<String> commandAndParentCommands =
+        command == null
+            ? ImmutableSet.<String>of()
+            : CommandNameCache.CommandNameCacheInstance.INSTANCE.get(command);
+
     // Expand all policies to transfer policies on expansion flags to policies on the child flags.
     List<FlagPolicy> expandedPolicies = new ArrayList<>();
     for (FlagPolicy policy : invocationPolicy.getFlagPoliciesList()) {
+      if (!policyApplies(policy, commandAndParentCommands)) {
+        // Only keep and expand policies that are applicable to the current command.
+        continue;
+      }
       List<FlagPolicy> policies = expandPolicy(policy, parser);
       expandedPolicies.addAll(policies);
     }
 
-    return expandedPolicies;
+    // Only keep that last policy for each flag.
+    Map<String, FlagPolicy> effectivePolicy = new HashMap<>();
+    for (FlagPolicy expandedPolicy : expandedPolicies) {
+      String flagName = expandedPolicy.getFlagName();
+      effectivePolicy.put(flagName, expandedPolicy);
+    }
+
+    return new ArrayList<>(effectivePolicy.values());
   }
 
   /**
@@ -222,8 +239,8 @@ public final class InvocationPolicyEnforcer {
       throws OptionsParsingException {
     List<FlagPolicy> expandedPolicy = new ArrayList<>();
 
-    OptionDescription desc = parser.getOptionDescription(originalPolicy.getFlagName());
-    if (desc == null) {
+    OptionDescription originalDesc = parser.getOptionDescription(originalPolicy.getFlagName());
+    if (originalDesc == null) {
       // InvocationPolicy ignores policy on non-existing flags by design, for version compatibility.
       return expandedPolicy;
     }
@@ -231,10 +248,10 @@ public final class InvocationPolicyEnforcer {
     ImmutableList.Builder<OptionValueDescription> subflagBuilder = new ImmutableList.Builder<>();
     ImmutableList<OptionValueDescription> subflags =
         subflagBuilder
-            .addAll(desc.getImplicitRequirements())
-            .addAll(desc.getExpansions())
+            .addAll(originalDesc.getImplicitRequirements())
+            .addAll(originalDesc.getExpansions())
             .build();
-    boolean isExpansion = !desc.getExpansions().isEmpty();
+    boolean isExpansion = !originalDesc.getExpansions().isEmpty();
 
     if (!subflags.isEmpty() && log.isLoggable(Level.FINE)) {
       // Log the expansion. Since this is logged regardless of user provided command line, it is
@@ -256,87 +273,159 @@ public final class InvocationPolicyEnforcer {
             Joiner.on("; ").join(subflagNames)));
     }
 
+    // Repeated flags are special, and could set multiple times in an expansion, with the user
+    // expecting both values to be valid. Collect these separately.
+    Multimap<String, OptionValueDescription> repeatableSubflagsInSetValues =
+        ArrayListMultimap.create();
+
     // Create a flag policy for the child that looks like the parent's policy "transferred" to its
     // child. Note that this only makes sense for SetValue, when setting an expansion flag, or
     // UseDefault, when preventing it from being set.
     for (OptionValueDescription currentSubflag : subflags) {
-      FlagPolicy subflagAsPolicy = null;
-      switch (originalPolicy.getOperationCase()) {
-        case SET_VALUE:
-          // Flag value from the expansion, overridability from the original policy
-          SetValue setValueExpansion =
-              SetValue.newBuilder()
-                  .addFlagValue(currentSubflag.getOriginalValueString())
-                  .setOverridable(
-                      originalPolicy
-                          .getSetValue()
-                          .getOverridable())
-                  .build();
-          // Commands from the original policy, flag name of the expansion
-          subflagAsPolicy =
-              FlagPolicy.newBuilder()
-                  .addAllCommands(originalPolicy.getCommandsList())
-                  .setFlagName(currentSubflag.getName())
-                  .setSetValue(setValueExpansion)
-                  .build();
-          break;
-
-        case USE_DEFAULT:
-          // Commands from the original policy, flag name of the expansion
-          subflagAsPolicy =
-              FlagPolicy.newBuilder()
-                  .addAllCommands(originalPolicy.getCommandsList())
-                  .setFlagName(currentSubflag.getName())
-                  .setUseDefault(
-                      UseDefault
-                          .getDefaultInstance())
-                  .build();
-          break;
-
-        case ALLOW_VALUES:
-          if (isExpansion) {
-            throw new OptionsParsingException(
-                String.format(
-                    "Allow_Values on expansion flags like %s is not allowed.",
-                    originalPolicy.getFlagName()));
-          }
-          // If this flag is an implicitRequirement, and some values for the parent flag are
-          // allowed, nothing needs to happen on the implicitRequirement that is set for all
-          // values of the flag.
-          break;
-
-        case DISALLOW_VALUES:
-          if (isExpansion) {
-            throw new OptionsParsingException(
-                String.format(
-                    "Disallow_Values on expansion flags like %s is not allowed.",
-                    originalPolicy.getFlagName()));
-          }
-          // If this flag is an implicitRequirement, and some values for the parent flag are
-          // disallowed, that implies that all others are allowed, so nothing needs to happen
-          // on the implicitRequirement that is set for all values of the parent flag.
-          break;
-
-        case OPERATION_NOT_SET:
-          throw new PolicyOperationNotSetException(originalPolicy.getFlagName());
-
-        default:
-          // A warning will be logged later, but return to skip recursive loop.
-          expandedPolicy.add(originalPolicy);
-          return expandedPolicy;
+      if (currentSubflag.getAllowMultiple()
+          && originalPolicy.getOperationCase().equals(OperationCase.SET_VALUE)) {
+        repeatableSubflagsInSetValues.put(currentSubflag.getName(), currentSubflag);
+      } else {
+        FlagPolicy subflagAsPolicy = getSubflagAsPolicy(
+            currentSubflag, originalPolicy, originalDesc);
+        // In case any of the expanded flags are themselves expansions, recurse.
+        expandedPolicy.addAll(expandPolicy(subflagAsPolicy, parser));
       }
-      // In case any of the expanded flags are themselves expansions, recurse.
-      expandedPolicy.addAll(expandPolicy(subflagAsPolicy, parser));
     }
 
+    // If there are any repeatable flag SetValues, deal with them together now.
+    // Note that expansion flags have no value, and so cannot have multiple values either.
+    // Skipping the recursion above is fine.
+    for (String repeatableFlag : repeatableSubflagsInSetValues.keySet()) {
+      int numValues = repeatableSubflagsInSetValues.get(repeatableFlag).size();
+      ArrayList<String> newValues = new ArrayList<>(numValues);
+      for (OptionValueDescription setValue : repeatableSubflagsInSetValues.get(repeatableFlag)) {
+        newValues.add(setValue.getOriginalValueString());
+      }
+      expandedPolicy.add(
+          getSetValueSubflagAsPolicy(
+              repeatableFlag,
+              newValues,
+              /* allowMultiple */ true,
+              originalPolicy));
 
-    // Don't add the original policy if it was an expansion flag, which have no value, but do
-    // add it if there
+    }
+
+    // Don't add the original policy if it was an expansion flag, which have no value, but do add
+    // it if there was either no expansion or if it was a valued flag with implicit requirements.
     if (!isExpansion) {
       expandedPolicy.add(originalPolicy);
     }
 
     return expandedPolicy;
+  }
+
+  /**
+   * Expand a SetValue flag policy on a repeatable flag. SetValue operations are the only flag
+   * policies that set the flag, and so interact with repeatable flags, flags that can be set
+   * multiple times, in subtle ways.
+   *
+   * @param subflagName, the flag the SetValue'd expansion flag expands to.
+   * @param subflagValue, the values that the SetValue'd expansion flag expands to for this flag.
+   * @param allowMultiple, whether the flag is multivalued.
+   * @param originalPolicy, the original policy on the expansion flag.
+   * @return the flag policy for the subflag given, this will be part of the expanded form of the
+   *  SetValue policy on the original flag.
+   */
+  private static FlagPolicy getSetValueSubflagAsPolicy(
+      String subflagName,
+      List<String> subflagValue,
+      boolean allowMultiple,
+      FlagPolicy originalPolicy) {
+    // Some sanity checks.
+    Verify.verify(originalPolicy.getOperationCase().equals(OperationCase.SET_VALUE));
+    if (!allowMultiple) {
+      Verify.verify(subflagValue.size() <= 1);
+    }
+
+    // Flag value from the expansion, overridability from the original policy, unless the flag is
+    // repeatable, in which case we care about appendability, not overridability.
+    SetValue.Builder setValueExpansion = SetValue.newBuilder();
+    for (String value : subflagValue) {
+      setValueExpansion.addFlagValue(value);
+    }
+    if (allowMultiple) {
+      setValueExpansion.setAppend(originalPolicy.getSetValue().getOverridable());
+    } else {
+      setValueExpansion.setOverridable(originalPolicy.getSetValue().getOverridable());
+    }
+
+    // Commands from the original policy, flag name of the expansion
+    return FlagPolicy.newBuilder()
+            .addAllCommands(originalPolicy.getCommandsList())
+            .setFlagName(subflagName)
+            .setSetValue(setValueExpansion)
+            .build();
+  }
+
+  /**
+   * For an expansion flag in an invocation policy, each flag it expands to must be given a
+   * corresponding policy.
+   */
+  private static FlagPolicy getSubflagAsPolicy(
+      OptionValueDescription currentSubflag,
+      FlagPolicy originalPolicy,
+      OptionDescription originalDesc) throws OptionsParsingException {
+    boolean isExpansion = !originalDesc.getExpansions().isEmpty();
+    FlagPolicy subflagAsPolicy = null;
+    switch (originalPolicy.getOperationCase()) {
+      case SET_VALUE:
+        assert(!currentSubflag.getAllowMultiple());
+        subflagAsPolicy = getSetValueSubflagAsPolicy(
+            currentSubflag.getName(),
+            ImmutableList.of(currentSubflag.getOriginalValueString()),
+            /* allowMultiple */ false,
+            originalPolicy);
+        break;
+
+      case USE_DEFAULT:
+        // Commands from the original policy, flag name of the expansion
+        subflagAsPolicy =
+            FlagPolicy.newBuilder()
+                .addAllCommands(originalPolicy.getCommandsList())
+                .setFlagName(currentSubflag.getName())
+                .setUseDefault(
+                    UseDefault
+                        .getDefaultInstance())
+                .build();
+        break;
+
+      case ALLOW_VALUES:
+        if (isExpansion) {
+          throw new OptionsParsingException(
+              String.format(
+                  "Allow_Values on expansion flags like %s is not allowed.",
+                  originalPolicy.getFlagName()));
+        }
+        // If this flag is an implicitRequirement, and some values for the parent flag are
+        // allowed, nothing needs to happen on the implicitRequirement that is set for all
+        // values of the flag.
+        break;
+
+      case DISALLOW_VALUES:
+        if (isExpansion) {
+          throw new OptionsParsingException(
+              String.format(
+                  "Disallow_Values on expansion flags like %s is not allowed.",
+                  originalPolicy.getFlagName()));
+        }
+        // If this flag is an implicitRequirement, and some values for the parent flag are
+        // disallowed, that implies that all others are allowed, so nothing needs to happen
+        // on the implicitRequirement that is set for all values of the parent flag.
+        break;
+
+      case OPERATION_NOT_SET:
+        throw new PolicyOperationNotSetException(originalPolicy.getFlagName());
+
+      default:
+        return null;
+    }
+    return subflagAsPolicy;
   }
 
   private static void logInApplySetValueOperation(String formattingString, Object... objects) {

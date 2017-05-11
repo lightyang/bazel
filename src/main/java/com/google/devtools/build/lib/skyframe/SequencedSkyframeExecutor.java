@@ -37,7 +37,6 @@ import com.google.devtools.build.lib.concurrent.Uninterruptibles;
 import com.google.devtools.build.lib.events.ExtendedEventHandler;
 import com.google.devtools.build.lib.packages.Package;
 import com.google.devtools.build.lib.packages.PackageFactory;
-import com.google.devtools.build.lib.packages.Preprocessor;
 import com.google.devtools.build.lib.pkgcache.PackageCacheOptions;
 import com.google.devtools.build.lib.pkgcache.PathPackageLocator;
 import com.google.devtools.build.lib.profiler.AutoProfiler;
@@ -50,6 +49,7 @@ import com.google.devtools.build.lib.skyframe.ExternalFilesHelper.ExternalFilesK
 import com.google.devtools.build.lib.skyframe.ExternalFilesHelper.FileType;
 import com.google.devtools.build.lib.skyframe.PackageLookupFunction.CrossRepositoryLabelViolationStrategy;
 import com.google.devtools.build.lib.skyframe.PackageLookupValue.BuildFileName;
+import com.google.devtools.build.lib.syntax.SkylarkSemanticsOptions;
 import com.google.devtools.build.lib.util.AbruptExitException;
 import com.google.devtools.build.lib.util.Pair;
 import com.google.devtools.build.lib.util.Preconditions;
@@ -62,6 +62,7 @@ import com.google.devtools.build.skyframe.BuildDriver;
 import com.google.devtools.build.skyframe.Differencer;
 import com.google.devtools.build.skyframe.InMemoryMemoizingEvaluator;
 import com.google.devtools.build.skyframe.Injectable;
+import com.google.devtools.build.skyframe.LegacySkyKey;
 import com.google.devtools.build.skyframe.MemoizingEvaluator.EvaluatorSupplier;
 import com.google.devtools.build.skyframe.NodeEntry;
 import com.google.devtools.build.skyframe.RecordingDifferencer;
@@ -119,7 +120,6 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
       ImmutableList<BuildInfoFactory> buildInfoFactories,
       Iterable<? extends DiffAwareness.Factory> diffAwarenessFactories,
       Predicate<PathFragment> allowedMissingInputs,
-      Preprocessor.Factory.Supplier preprocessorFactorySupplier,
       ImmutableMap<SkyFunctionName, SkyFunction> extraSkyFunctions,
       ImmutableList<PrecomputedValue.Injected> extraPrecomputedValues,
       Iterable<SkyValueDirtinessChecker> customDirtinessCheckers,
@@ -135,7 +135,6 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
         workspaceStatusActionFactory,
         buildInfoFactories,
         allowedMissingInputs,
-        preprocessorFactorySupplier,
         extraSkyFunctions,
         extraPrecomputedValues,
         ExternalFileAction.DEPEND_ON_EXTERNAL_PKG_FOR_EXTERNAL_REPO_PATHS,
@@ -155,7 +154,6 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
       ImmutableList<BuildInfoFactory> buildInfoFactories,
       Iterable<? extends DiffAwareness.Factory> diffAwarenessFactories,
       Predicate<PathFragment> allowedMissingInputs,
-      Preprocessor.Factory.Supplier preprocessorFactorySupplier,
       ImmutableMap<SkyFunctionName, SkyFunction> extraSkyFunctions,
       ImmutableList<PrecomputedValue.Injected> extraPrecomputedValues,
       Iterable<SkyValueDirtinessChecker> customDirtinessCheckers,
@@ -170,7 +168,6 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
         buildInfoFactories,
         diffAwarenessFactories,
         allowedMissingInputs,
-        preprocessorFactorySupplier,
         extraSkyFunctions,
         extraPrecomputedValues,
         customDirtinessCheckers,
@@ -188,7 +185,6 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
       ImmutableList<BuildInfoFactory> buildInfoFactories,
       Iterable<? extends DiffAwareness.Factory> diffAwarenessFactories,
       Predicate<PathFragment> allowedMissingInputs,
-      Preprocessor.Factory.Supplier preprocessorFactorySupplier,
       ImmutableMap<SkyFunctionName, SkyFunction> extraSkyFunctions,
       ImmutableList<PrecomputedValue.Injected> extraPrecomputedValues,
       Iterable<SkyValueDirtinessChecker> customDirtinessCheckers,
@@ -206,7 +202,6 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
             buildInfoFactories,
             diffAwarenessFactories,
             allowedMissingInputs,
-            preprocessorFactorySupplier,
             extraSkyFunctions,
             extraPrecomputedValues,
             customDirtinessCheckers,
@@ -219,14 +214,15 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
   }
 
   @VisibleForTesting
-  public static SequencedSkyframeExecutor create(PackageFactory pkgFactory,
-      BlazeDirectories directories, BinTools binTools,
+  public static SequencedSkyframeExecutor create(
+      PackageFactory pkgFactory,
+      BlazeDirectories directories,
+      BinTools binTools,
       WorkspaceStatusAction.Factory workspaceStatusActionFactory,
       ImmutableList<BuildInfoFactory> buildInfoFactories,
       Iterable<? extends DiffAwareness.Factory> diffAwarenessFactories,
       PathFragment blacklistedPackagePrefixesFile,
-      String productName,
-      Preprocessor.Factory.Supplier preprocessorFactorySupplier) {
+      String productName) {
     return create(
         pkgFactory,
         directories,
@@ -235,7 +231,6 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
         buildInfoFactories,
         diffAwarenessFactories,
         Predicates.<PathFragment>alwaysFalse(),
-        preprocessorFactorySupplier,
         ImmutableMap.<SkyFunctionName, SkyFunction>of(),
         ImmutableList.<PrecomputedValue.Injected>of(),
         ImmutableList.<SkyValueDirtinessChecker>of(),
@@ -283,6 +278,7 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
   public void sync(
       ExtendedEventHandler eventHandler,
       PackageCacheOptions packageCacheOptions,
+      SkylarkSemanticsOptions skylarkSemanticsOptions,
       Path outputBase,
       Path workingDirectory,
       String defaultsPackageContents,
@@ -291,8 +287,8 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
       TimestampGranularityMonitor tsgm,
       OptionsClassProvider options)
       throws InterruptedException, AbruptExitException {
-    super.sync(eventHandler, packageCacheOptions, outputBase, workingDirectory,
-        defaultsPackageContents, commandId, clientEnv, tsgm, options);
+    super.sync(eventHandler, packageCacheOptions, skylarkSemanticsOptions, outputBase,
+        workingDirectory, defaultsPackageContents, commandId, clientEnv, tsgm, options);
     handleDiffs(eventHandler, packageCacheOptions.checkOutputFiles, options);
   }
 
@@ -301,7 +297,7 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
    * it via an explicit Skyframe dependency. They need to be invalidated if the package locator
    * changes.
    */
-  private static final Set<SkyFunctionName> PACKAGE_LOCATOR_DEPENDENT_VALUES =
+  private static final ImmutableSet<SkyFunctionName> PACKAGE_LOCATOR_DEPENDENT_VALUES =
       ImmutableSet.of(
           SkyFunctions.AST_FILE_LOOKUP,
           SkyFunctions.FILE_STATE,
@@ -390,7 +386,7 @@ public final class SequencedSkyframeExecutor extends SkyframeExecutor {
     envToCheck.addAll(clientEnv.get().keySet());
     previousClientEnvironment = clientEnv.get().keySet();
     for (String env : envToCheck) {
-      SkyKey key = SkyKey.create(SkyFunctions.CLIENT_ENVIRONMENT_VARIABLE, env);
+      SkyKey key = LegacySkyKey.create(SkyFunctions.CLIENT_ENVIRONMENT_VARIABLE, env);
       if (values.containsKey(key)) {
         String value = ((ClientEnvironmentValue) values.get(key)).getValue();
         String newValue = clientEnv.get().get(env);

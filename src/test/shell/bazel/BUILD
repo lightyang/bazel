@@ -122,7 +122,10 @@ sh_test(
     name = "bazel_coverage_test",
     srcs = ["bazel_coverage_test.sh"],
     data = [":test-deps"],
-    tags = ["local"],
+    tags = [
+        "jdk8",  # TODO(elenairina): Re-enable for JDK7 once https://github.com/bazelbuild/bazel/issues/2890 is fixed.
+        "local",
+    ],
 )
 
 sh_test(
@@ -436,7 +439,7 @@ sh_test(
 
 sh_test(
     name = "toolchain_test",
-    size = "small",
+    size = "medium",
     srcs = ["toolchain_test.sh"],
     data = [":test-deps"],
 )
