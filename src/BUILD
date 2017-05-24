@@ -174,7 +174,7 @@ filegroup(
         ":darwin_x86_64": [
             "@openjdk_macos//file",
         ],
-        ":windows": [
+        ":windows_msys": [
             "@openjdk_win//file",
         ],
         ":windows_msvc": [
@@ -262,6 +262,12 @@ filegroup(
     "_notools",
     "_with_jdk",
 ]]
+
+config_setting(
+    name = "linux_x86_64",
+    values = {"cpu": "k8"},
+    visibility = ["//visibility:public"],
+)
 
 config_setting(
     name = "darwin",

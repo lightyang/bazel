@@ -36,7 +36,6 @@ import com.google.devtools.build.lib.analysis.AspectCollection.AspectDeps;
 import com.google.devtools.build.lib.analysis.CachingAnalysisEnvironment;
 import com.google.devtools.build.lib.analysis.ConfiguredAspect;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
-import com.google.devtools.build.lib.analysis.ConfiguredTargetFactory;
 import com.google.devtools.build.lib.analysis.Dependency;
 import com.google.devtools.build.lib.analysis.DependencyResolver.InconsistentAspectOrderException;
 import com.google.devtools.build.lib.analysis.LabelAndConfiguration;
@@ -867,6 +866,7 @@ final class ConfiguredTargetFunction implements SkyFunction {
       NestedSetBuilder<Package> transitivePackages)
       throws AspectCreationException, InterruptedException {
     OrderedSetMultimap<SkyKey, ConfiguredAspect> result = OrderedSetMultimap.create();
+    OrderedSetMultimap<SkyKey, SkyKey> processedAspects = OrderedSetMultimap.create();
     Set<SkyKey> allAspectKeys = new HashSet<>();
     for (Dependency dep : deps) {
       allAspectKeys.addAll(getAspectKeys(dep).values());
@@ -878,16 +878,16 @@ final class ConfiguredTargetFunction implements SkyFunction {
 
     for (Dependency dep : deps) {
       SkyKey depKey = TO_KEYS.apply(dep);
-      // If the same target was declared in different attributes of rule, we should not process it
-      // twice.
-      if (result.containsKey(depKey)) {
-        continue;
-      }
       Map<AspectDescriptor, SkyKey> aspectToKeys = getAspectKeys(dep);
 
       ConfiguredTarget depConfiguredTarget = configuredTargetMap.get(depKey);
       for (AspectDeps depAspect : dep.getAspects().getVisibleAspects()) {
         SkyKey aspectKey = aspectToKeys.get(depAspect.getAspect());
+        // Skip if the aspect was already applied to the target (perhaps through different
+        // attributes).
+        if (!processedAspects.put(depKey, aspectKey)) {
+          continue;
+        }
 
         AspectValue aspectValue;
         try {
@@ -1073,7 +1073,7 @@ final class ConfiguredTargetFunction implements SkyFunction {
     boolean failed = false;
     Iterable<SkyKey> depKeys = Iterables.transform(deps, TO_KEYS);
     Map<SkyKey, ValueOrException<ConfiguredValueCreationException>> depValuesOrExceptions =
-            env.getValuesOrThrow(depKeys, ConfiguredValueCreationException.class);
+        env.getValuesOrThrow(depKeys, ConfiguredValueCreationException.class);
     Map<SkyKey, ConfiguredTarget> result =
         Maps.newHashMapWithExpectedSize(depValuesOrExceptions.size());
     for (Map.Entry<SkyKey, ValueOrException<ConfiguredValueCreationException>> entry
@@ -1119,11 +1119,8 @@ final class ConfiguredTargetFunction implements SkyFunction {
       NestedSetBuilder<Package> transitivePackages)
       throws ConfiguredTargetFunctionException, InterruptedException {
     StoredEventHandler events = new StoredEventHandler();
-    BuildConfiguration ownerConfig =
-        ConfiguredTargetFactory.getArtifactOwnerConfiguration(env, configuration);
-    if (env.valuesMissing()) {
-      return null;
-    }
+    BuildConfiguration ownerConfig = (configuration == null)
+        ? null : configuration.getArtifactOwnerConfiguration();
     CachingAnalysisEnvironment analysisEnvironment = view.createAnalysisEnvironment(
         new ConfiguredTargetKey(target.getLabel(), ownerConfig), false,
         events, env, configuration);

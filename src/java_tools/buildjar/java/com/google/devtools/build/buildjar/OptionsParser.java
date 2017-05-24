@@ -18,6 +18,8 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.google.common.base.Preconditions;
 import com.google.common.base.Splitter;
+import com.google.common.collect.Iterables;
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -59,17 +61,13 @@ public final class OptionsParser {
 
   private final List<String> sourceFiles = new ArrayList<>();
   private final List<String> sourceJars = new ArrayList<>();
-  private final List<String> messageFiles = new ArrayList<>();
-  private final List<String> resourceFiles = new ArrayList<>();
-  private final List<String> resourceJars = new ArrayList<>();
-  private final List<String> rootResourceFiles = new ArrayList<>();
 
-  private String classPath = "";
-  private String sourcePath;
-  private String bootClassPath;
-  private String extdir;
+  private final List<String> classPath = new ArrayList<>();
+  private final List<String> sourcePath = new ArrayList<>();
+  private final List<String> bootClassPath = new ArrayList<>();
+  private final List<String> extClassPath = new ArrayList<>();
 
-  private String processorPath = "";
+  private final List<String> processorPath = new ArrayList<>();
   private final List<String> processorNames = new ArrayList<>();
 
   private String outputJar;
@@ -157,36 +155,25 @@ public final class OptionsParser {
         case "--source_jars":
           collectFlagArguments(sourceJars, argQueue, "-");
           break;
-        case "--messages":
-          collectFlagArguments(messageFiles, argQueue, "-");
-          break;
-        case "--resources":
-          collectFlagArguments(resourceFiles, argQueue, "-");
-          break;
-        case "--resource_jars":
-          collectFlagArguments(resourceJars, argQueue, "-");
-          break;
-        case "--classpath_resources":
-          collectFlagArguments(rootResourceFiles, argQueue, "-");
-          break;
         case "--classpath":
-          classPath = getArgument(argQueue, arg);
+          collectClassPathArguments(classPath, argQueue);
           break;
           // TODO(#970): Consider wether we want to use --sourcepath for resolving of #970.
         case "--sourcepath":
-          sourcePath = getArgument(argQueue, arg);
+          collectClassPathArguments(sourcePath, argQueue);
           break;
         case "--bootclasspath":
-          bootClassPath = getArgument(argQueue, arg);
+          collectClassPathArguments(bootClassPath, argQueue);
           break;
         case "--processorpath":
-          processorPath = getArgument(argQueue, arg);
+          collectClassPathArguments(processorPath, argQueue);
           break;
         case "--processors":
           collectProcessorArguments(processorNames, argQueue, "-");
           break;
+        case "--extclasspath":
         case "--extdir":
-          extdir = getArgument(argQueue, arg);
+          collectClassPathArguments(extClassPath, argQueue);
           break;
         case "--output":
           outputJar = getArgument(argQueue, arg);
@@ -228,7 +215,7 @@ public final class OptionsParser {
       String curr = it.next();
       if (curr.equals("-sourcepath") && it.hasNext()) {
         it.remove();
-        sourcePath = it.next();
+        Iterables.addAll(sourcePath, CLASSPATH_SPLITTER.split(it.next()));
         it.remove();
       }
     }
@@ -300,6 +287,20 @@ public final class OptionsParser {
         break;
       }
       output.add(arg);
+    }
+  }
+
+  private static final Splitter CLASSPATH_SPLITTER =
+      Splitter.on(File.pathSeparatorChar).trimResults().omitEmptyStrings();
+
+  // TODO(cushon): stop splitting classpaths once cl/127006119 is released
+  private static void collectClassPathArguments(Collection<String> output, Deque<String> args) {
+    for (String arg = args.pollFirst(); arg != null; arg = args.pollFirst()) {
+      if (arg.startsWith("-")) {
+        args.addFirst(arg);
+        break;
+      }
+      Iterables.addAll(output, CLASSPATH_SPLITTER.split(arg));
     }
   }
 
@@ -395,39 +396,23 @@ public final class OptionsParser {
     return sourceJars;
   }
 
-  public List<String> getMessageFiles() {
-    return messageFiles;
-  }
-
-  public List<String> getResourceFiles() {
-    return resourceFiles;
-  }
-
-  public List<String> getResourceJars() {
-    return resourceJars;
-  }
-
-  public List<String> getRootResourceFiles() {
-    return rootResourceFiles;
-  }
-
-  public String getClassPath() {
+  public List<String> getClassPath() {
     return classPath;
   }
 
-  public String getBootClassPath() {
+  public List<String> getBootClassPath() {
     return bootClassPath;
   }
 
-  public String getSourcePath() {
+  public List<String> getSourcePath() {
     return sourcePath;
   }
 
-  public String getExtdir() {
-    return extdir;
+  public List<String> getExtClassPath() {
+    return extClassPath;
   }
 
-  public String getProcessorPath() {
+  public List<String> getProcessorPath() {
     return processorPath;
   }
 

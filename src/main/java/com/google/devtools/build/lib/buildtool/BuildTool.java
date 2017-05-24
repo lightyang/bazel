@@ -28,7 +28,9 @@ import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.LicensesProvider;
 import com.google.devtools.build.lib.analysis.LicensesProvider.TargetLicense;
 import com.google.devtools.build.lib.analysis.MakeEnvironmentEvent;
+import com.google.devtools.build.lib.analysis.OutputFileConfiguredTarget;
 import com.google.devtools.build.lib.analysis.StaticallyLinkedMarkerProvider;
+import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.analysis.ViewCreationFailedException;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.BuildConfigurationCollection;
@@ -141,12 +143,6 @@ public final class BuildTool {
     try {
       env.getEventBus().post(new BuildStartingEvent(env, request));
       LOG.info("Build identifier: " + request.getId());
-      executionTool = new ExecutionTool(env, request);
-      if (needsExecutionPhase(request.getBuildOptions())) {
-        // Initialize the execution tool early if we need it. This hides the latency of setting up
-        // the execution backends.
-        executionTool.init();
-      }
 
       // Error out early if multi_cpus is set, but we're not in build or test command.
       if (!request.getMultiCpus().isEmpty()) {
@@ -166,6 +162,11 @@ public final class BuildTool {
 
       // Target pattern evaluation.
       LoadingResult loadingResult = evaluateTargetPatterns(request, validator);
+      env.setWorkspaceName(loadingResult.getWorkspaceName());
+      executionTool = new ExecutionTool(env, request);
+      if (needsExecutionPhase(request.getBuildOptions())) {
+        executionTool.init();
+      }
 
       // Exit if there are any pending exceptions from modules.
       env.throwPendingException();
@@ -300,8 +301,14 @@ public final class BuildTool {
       EnvironmentCollection expectedEnvironments = builder.build();
 
       // Now check the target against those environments.
+      TransitiveInfoCollection asProvider;
+      if (topLevelTarget instanceof OutputFileConfiguredTarget) {
+        asProvider = ((OutputFileConfiguredTarget) topLevelTarget).getGeneratingRule();
+      } else {
+        asProvider = topLevelTarget;
+      }
       SupportedEnvironmentsProvider provider =
-          Verify.verifyNotNull(topLevelTarget.getProvider(SupportedEnvironmentsProvider.class));
+          Verify.verifyNotNull(asProvider.getProvider(SupportedEnvironmentsProvider.class));
         Collection<Label> missingEnvironments = ConstraintSemantics.getUnsupportedEnvironments(
             provider.getRefinedEnvironments(), expectedEnvironments);
         if (!missingEnvironments.isEmpty()) {

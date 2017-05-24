@@ -38,7 +38,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
-
 /**
  * Recursive descent parser for LL(2) BUILD language.
  * Loosely based on Python 2 grammar.
@@ -159,6 +158,7 @@ public class Parser {
           .put(TokenKind.OR, Operator.OR)
           .put(TokenKind.PERCENT, Operator.PERCENT)
           .put(TokenKind.SLASH, Operator.DIVIDE)
+          .put(TokenKind.SLASH_SLASH, Operator.FLOOR_DIVIDE)
           .put(TokenKind.PLUS, Operator.PLUS)
           .put(TokenKind.PIPE, Operator.PIPE)
           .put(TokenKind.STAR, Operator.MULT)
@@ -171,6 +171,7 @@ public class Parser {
           .put(TokenKind.MINUS_EQUALS, Operator.MINUS)
           .put(TokenKind.STAR_EQUALS, Operator.MULT)
           .put(TokenKind.SLASH_EQUALS, Operator.DIVIDE)
+          .put(TokenKind.SLASH_SLASH_EQUALS, Operator.FLOOR_DIVIDE)
           .put(TokenKind.PERCENT_EQUALS, Operator.PERCENT)
           .build();
 
@@ -185,7 +186,7 @@ public class Parser {
           Operator.GREATER, Operator.GREATER_EQUALS, Operator.IN, Operator.NOT_IN),
       EnumSet.of(Operator.PIPE),
       EnumSet.of(Operator.MINUS, Operator.PLUS),
-      EnumSet.of(Operator.DIVIDE, Operator.MULT, Operator.PERCENT));
+      EnumSet.of(Operator.DIVIDE, Operator.FLOOR_DIVIDE, Operator.MULT, Operator.PERCENT));
 
   private final Iterator<Token> tokens;
   private int errorsCount;
@@ -785,7 +786,7 @@ public class Parser {
   //                        | 'IF' expr comprehension_suffix
   //                        | ']'
   private Expression parseComprehensionSuffix(
-      AbstractComprehension comprehension, TokenKind closingBracket) {
+      AbstractComprehension.AbstractBuilder comprehensionBuilder, TokenKind closingBracket) {
     while (true) {
       if (token.kind == TokenKind.FOR) {
         nextToken();
@@ -794,13 +795,13 @@ public class Parser {
         // The expression cannot be a ternary expression ('x if y else z') due to
         // conflicts in Python grammar ('if' is used by the comprehension).
         Expression listExpression = parseNonTupleExpression(0);
-        comprehension.addFor(loopVar, listExpression);
+        comprehensionBuilder.addFor(loopVar, listExpression);
       } else if (token.kind == TokenKind.IF) {
         nextToken();
-        comprehension.addIf(parseExpression());
+        comprehensionBuilder.addIf(parseExpression());
       } else if (token.kind == closingBracket) {
         nextToken();
-        return comprehension;
+        return comprehensionBuilder.build();
       } else {
         syntaxError(token, "expected '" + closingBracket.getPrettyName() + "', 'for' or 'if'");
         syncPast(LIST_TERMINATOR_SET);
@@ -836,7 +837,9 @@ public class Parser {
       case FOR:
         { // list comprehension
           Expression result =
-              parseComprehensionSuffix(new ListComprehension(expression), TokenKind.RBRACKET);
+              parseComprehensionSuffix(
+                  new ListComprehension.Builder().setOutputExpression(expression),
+                  TokenKind.RBRACKET);
           return setLocation(result, start, token.right);
         }
       case COMMA:
@@ -883,7 +886,10 @@ public class Parser {
     if (token.kind == TokenKind.FOR) {
       // Dict comprehension
       Expression result = parseComprehensionSuffix(
-          new DictComprehension(entry.getKey(), entry.getValue()), TokenKind.RBRACE);
+          new DictComprehension.Builder()
+              .setKeyExpression(entry.getKey())
+              .setValueExpression(entry.getValue()),
+          TokenKind.RBRACE);
       return setLocation(result, start, token.right);
     }
     List<DictionaryEntryLiteral> entries = new ArrayList<>();
@@ -1193,7 +1199,8 @@ public class Parser {
     if (token.kind == TokenKind.EQUALS) {
       nextToken();
       Expression rvalue = parseExpression();
-      return setLocation(new AssignmentStatement(expression, rvalue), start, rvalue);
+      return setLocation(
+          new AssignmentStatement(/*lvalue=*/ expression, /*expression=*/ rvalue), start, rvalue);
     } else if (augmentedAssignmentMethods.containsKey(token.kind)) {
       Operator operator = augmentedAssignmentMethods.get(token.kind);
       nextToken();

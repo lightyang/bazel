@@ -17,6 +17,8 @@
  * mount, UTS, IPC and PID namespace.
  */
 
+#include "src/main/tools/linux-sandbox-pid1.h"
+
 #include <errno.h>
 #include <fcntl.h>
 #include <libgen.h>
@@ -38,12 +40,11 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
-
 #include <string>
 
 #include "src/main/tools/linux-sandbox-options.h"
-#include "src/main/tools/linux-sandbox-utils.h"
 #include "src/main/tools/linux-sandbox.h"
+#include "src/main/tools/logging.h"
 #include "src/main/tools/process-tools.h"
 
 static int global_child_pid;
@@ -56,6 +57,13 @@ static void SetupSelfDestruction(int *sync_pipe) {
   // almost as obscure as this prctl.
   if (prctl(PR_SET_PDEATHSIG, SIGKILL) < 0) {
     DIE("prctl");
+  }
+
+  // Switch to a new process group, otherwise our process group will still refer
+  // to the outer PID namespace. We might then accidentally kill our parent by a
+  // call to e.g. `kill(0, sig)`.
+  if (setpgid(0, 0) < 0) {
+    DIE("setpgid");
   }
 
   // Verify that the parent still lives.
@@ -76,6 +84,26 @@ static void SetupMountNamespace() {
   // mounts in the outside environment do not affect our sandbox.
   if (mount(nullptr, "/", nullptr, MS_REC | MS_PRIVATE, nullptr) < 0) {
     DIE("mount");
+  }
+}
+
+static void WriteFile(const std::string &filename, const char *fmt, ...) {
+  FILE *stream = fopen(filename.c_str(), "w");
+  if (stream == nullptr) {
+    DIE("fopen(%s)", filename.c_str());
+  }
+
+  va_list ap;
+  va_start(ap, fmt);
+  int r = vfprintf(stream, fmt, ap);
+  va_end(ap);
+
+  if (r < 0) {
+    DIE("vfprintf");
+  }
+
+  if (fclose(stream) != 0) {
+    DIE("fclose(%s)", filename.c_str());
   }
 }
 
@@ -271,8 +299,7 @@ static void SetupNetworking() {
       DIE("socket");
     }
 
-    struct ifreq ifr;
-    memset(&ifr, 0, sizeof(ifr));
+    struct ifreq ifr = {};
     strncpy(ifr.ifr_name, "lo", IF_NAMESIZE);
 
     // Verify that name is valid.
@@ -295,6 +322,30 @@ static void SetupNetworking() {
 static void EnterSandbox() {
   if (chdir(opt.working_dir.c_str()) < 0) {
     DIE("chdir(%s)", opt.working_dir.c_str());
+  }
+}
+
+// Reset the signal mask and restore the default handler for all signals.
+static void RestoreSignalHandlersAndMask() {
+  // Use an empty signal mask for the process (= unblock all signals).
+  sigset_t empty_set;
+  if (sigemptyset(&empty_set) < 0) {
+    DIE("sigemptyset");
+  }
+  if (sigprocmask(SIG_SETMASK, &empty_set, nullptr) < 0) {
+    DIE("sigprocmask(SIG_SETMASK, <empty set>, nullptr)");
+  }
+
+  // Set the default signal handler for all signals.
+  struct sigaction sa = {};
+  if (sigemptyset(&sa.sa_mask) < 0) {
+    DIE("sigemptyset");
+  }
+  sa.sa_handler = SIG_DFL;
+  for (int i = 1; i < NSIG; ++i) {
+    // Ignore possible errors, because we might not be allowed to set the
+    // handler for certain signals, but we still want to try.
+    sigaction(i, &sa, nullptr);
   }
 }
 
@@ -340,6 +391,71 @@ static void SetupSignalHandlers() {
   }
 }
 
+static void SpawnChild() {
+  global_child_pid = fork();
+
+  if (global_child_pid < 0) {
+    DIE("fork()");
+  } else if (global_child_pid == 0) {
+    // Put the child into its own process group.
+    if (setpgid(0, 0) < 0) {
+      DIE("setpgid");
+    }
+
+    // Try to assign our terminal to the child process.
+    if (tcsetpgrp(STDIN_FILENO, getpgrp()) < 0 && errno != ENOTTY) {
+      DIE("tcsetpgrp")
+    }
+
+    // Unblock all signals, restore default handlers.
+    RestoreSignalHandlersAndMask();
+
+    // Force umask to include read and execute for everyone, to make output
+    // permissions predictable.
+    umask(022);
+
+    // argv[] passed to execve() must be a null-terminated array.
+    opt.args.push_back(nullptr);
+
+    if (execvp(opt.args[0], opt.args.data()) < 0) {
+      DIE("execvp(%s, %p)", opt.args[0], opt.args.data());
+    }
+  }
+}
+
+static void WaitForChild() {
+  while (1) {
+    // Check for zombies to be reaped and exit, if our own child exited.
+    int status;
+    pid_t killed_pid = waitpid(-1, &status, 0);
+    PRINT_DEBUG("waitpid returned %d", killed_pid);
+
+    if (killed_pid < 0) {
+      // Our PID1 process got a signal that interrupted the waitpid() call and
+      // that was either ignored or forwared to the child. This is expected &
+      // fine, just continue waiting.
+      if (errno == EINTR) {
+        continue;
+      }
+      DIE("waitpid")
+    } else {
+      if (killed_pid == global_child_pid) {
+        // If the child process we spawned earlier terminated, we'll also
+        // terminate. We can simply _exit() here, because the Linux kernel will
+        // kindly SIGKILL all remaining processes in our PID namespace once we
+        // exit.
+        if (WIFSIGNALED(status)) {
+          PRINT_DEBUG("child died due to signal %d", WTERMSIG(status));
+          _exit(128 + WTERMSIG(status));
+        } else {
+          PRINT_DEBUG("child exited with code %d", WEXITSTATUS(status));
+          _exit(WEXITSTATUS(status));
+        }
+      }
+    }
+  }
+}
+
 int Pid1Main(void *sync_pipe_param) {
   if (getpid() != 1) {
     DIE("Using PID namespaces, but we are not PID 1");
@@ -357,6 +473,7 @@ int Pid1Main(void *sync_pipe_param) {
   SetupNetworking();
   EnterSandbox();
   SetupSignalHandlers();
-  global_child_pid = SpawnCommand(opt.args);
-  return WaitForChild(global_child_pid);
+  SpawnChild();
+  WaitForChild();
+  _exit(EXIT_FAILURE);
 }

@@ -113,11 +113,6 @@ public final class JavaCompileAction extends SpawnAction {
    */
   private final ImmutableList<String> processorNames;
 
-  /**
-   * The list of custom javac flags to pass to annotation processors.
-   */
-  private final ImmutableList<String> processorFlags;
-
   /** Set of additional Java source files to compile. */
   private final ImmutableList<Artifact> sourceJars;
 
@@ -158,7 +153,6 @@ public final class JavaCompileAction extends SpawnAction {
    * @param extdirInputs the compile-time extclasspath entries
    * @param processorPath the classpath to search for annotation processors
    * @param processorNames the annotation processors to run
-   * @param processorFlags custom annotation processor flags to pass to javac
    * @param sourceJars jars of sources to compile
    * @param sourceFiles source files to compile
    * @param javacOpts the javac options for the compilation
@@ -183,7 +177,6 @@ public final class JavaCompileAction extends SpawnAction {
       ImmutableList<Artifact> extdirInputs,
       NestedSet<Artifact> processorPath,
       List<String> processorNames,
-      List<String> processorFlags,
       Collection<Artifact> sourceJars,
       ImmutableSet<Artifact> sourceFiles,
       List<String> javacOpts,
@@ -199,6 +192,7 @@ public final class JavaCompileAction extends SpawnAction {
         outputs,
         LOCAL_RESOURCES,
         commandLine,
+        false,
         ImmutableMap.copyOf(UTF8_ENVIRONMENT),
         ImmutableSet.copyOf(ImmutableSet.<String>of()),
         ImmutableMap.copyOf(executionInfo),
@@ -218,7 +212,6 @@ public final class JavaCompileAction extends SpawnAction {
     this.extdirInputs = extdirInputs;
     this.processorPath = processorPath;
     this.processorNames = ImmutableList.copyOf(processorNames);
-    this.processorFlags = ImmutableList.copyOf(processorFlags);
     this.sourceJars = ImmutableList.copyOf(sourceJars);
     this.sourceFiles = sourceFiles;
     this.javacOpts = ImmutableList.copyOf(javacOpts);
@@ -306,10 +299,6 @@ public final class JavaCompileAction extends SpawnAction {
   @VisibleForTesting
   public List<String> getProcessorNames() {
     return processorNames;
-  }
-
-  private List<String> getProcessorFlags() {
-    return processorFlags;
   }
 
   /**
@@ -520,6 +509,7 @@ public final class JavaCompileAction extends SpawnAction {
     private PathFragment classDirectory;
     private NestedSet<Artifact> processorPath = NestedSetBuilder.emptySet(Order.NAIVE_LINK_ORDER);
     private final List<String> processorNames = new ArrayList<>();
+    /** The list of custom javac flags to pass to annotation processors. */
     private final List<String> processorFlags = new ArrayList<>();
     private String ruleKind;
     private Label targetLabel;
@@ -582,8 +572,6 @@ public final class JavaCompileAction extends SpawnAction {
       }
 
       Preconditions.checkState(javaExecutable != null, owner);
-      Preconditions.checkState(javaExecutable.isAbsolute() ^ !javabaseInputs.isEmpty(),
-          javaExecutable);
 
       ImmutableList.Builder<Artifact> outputsBuilder = ImmutableList.<Artifact>builder()
           .addAll(
@@ -655,7 +643,6 @@ public final class JavaCompileAction extends SpawnAction {
           extdirInputs,
           processorPath,
           processorNames,
-          processorFlags,
           sourceJars,
           sourceFiles,
           internedJcopts,
@@ -669,8 +656,6 @@ public final class JavaCompileAction extends SpawnAction {
     private CustomCommandLine buildParamFileContents(Collection<String> javacOpts) {
       checkNotNull(classDirectory, "classDirectory should not be null");
       checkNotNull(tempDirectory, "tempDirectory should not be null");
-
-      final String pathSeparator = configuration.getHostPathSeparator();
 
       CustomCommandLine.Builder result = CustomCommandLine.builder();
 
@@ -695,17 +680,16 @@ public final class JavaCompileAction extends SpawnAction {
         result.addExecPath("--output_deps_proto", outputDepsProto);
       }
       if (!extdirInputs.isEmpty()) {
-        result.addJoinExecPaths("--extdir", pathSeparator, extdirInputs);
+        result.addExecPaths("--extclasspath", extdirInputs);
       }
       if (!bootclasspathEntries.isEmpty()) {
-        result.addJoinExecPaths(
-            "--bootclasspath", pathSeparator, bootclasspathEntries);
+        result.addExecPaths("--bootclasspath", bootclasspathEntries);
       }
       if (!sourcePathEntries.isEmpty()) {
-        result.addJoinExecPaths("--sourcepath", pathSeparator, sourcePathEntries);
+        result.addExecPaths("--sourcepath", sourcePathEntries);
       }
       if (!processorPath.isEmpty()) {
-        result.addJoinExecPaths("--processorpath", pathSeparator, processorPath);
+        result.addExecPaths("--processorpath", processorPath);
       }
       if (!processorNames.isEmpty()) {
         result.add("--processors", processorNames);
@@ -742,8 +726,7 @@ public final class JavaCompileAction extends SpawnAction {
       }
 
       if (!classpathEntries.isEmpty()) {
-        result.addJoinExecPaths(
-            "--classpath", pathSeparator, classpathEntries);
+        result.addExecPaths("--classpath", classpathEntries);
       }
 
       // strict_java_deps controls whether the mapping from jars to targets is

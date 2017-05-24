@@ -31,7 +31,6 @@ import com.android.io.StreamException;
 import com.android.repository.Revision;
 import com.android.utils.ILogger;
 import com.android.utils.StdLogger;
-import com.android.utils.StdLogger.Level;
 import com.android.xml.AndroidManifest;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ArrayListMultimap;
@@ -43,7 +42,6 @@ import com.google.common.util.concurrent.MoreExecutors;
 import com.google.devtools.build.android.Converters.ExistingPathConverter;
 import com.google.devtools.build.android.Converters.RevisionConverter;
 import com.google.devtools.build.android.SplitConfigurationFilter.UnrecognizedSplitsException;
-import com.google.devtools.build.android.resources.RClassGenerator;
 import com.google.devtools.build.android.resources.ResourceSymbols;
 import com.google.devtools.common.options.Converters.CommaSeparatedOptionListConverter;
 import com.google.devtools.common.options.Option;
@@ -496,9 +494,8 @@ public class AndroidResourceProcessor {
     ListeningExecutorService executorService = MoreExecutors.listeningDecorator(
         Executors.newFixedThreadPool(numThreads));
     try (Closeable closeable = ExecutorServiceCloser.createWith(executorService)) {
-      StdLogger iLogger = new StdLogger(Level.INFO);
       for (Entry<String, ListenableFuture<ResourceSymbols>> entry :
-          ResourceSymbols.loadFrom(libraries, executorService, iLogger, appPackageName).entries()) {
+          ResourceSymbols.loadFrom(libraries, executorService, appPackageName).entries()) {
         libMap.put(entry.getKey(), entry.getValue().get());
       }
       if (primaryRTxt != null && Files.exists(primaryRTxt)) {
@@ -532,27 +529,8 @@ public class AndroidResourceProcessor {
       // Loop on all the package name, merge all the symbols to write, and write.
       for (String packageName : libSymbolMap.keySet()) {
         Collection<ResourceSymbols> symbols = libSymbolMap.get(packageName);
-        fullSymbolValues.writeTo(sourceOut, packageName, symbols);
+        fullSymbolValues.writeSourcesTo(sourceOut, packageName, symbols, true /* finalFields */);
       }
-    }
-  }
-
-  void writePackageRClasses(
-      Multimap<String, ResourceSymbols> libMap,
-      ResourceSymbols fullSymbolValues,
-      @Nullable String appPackageName,
-      Path classesOut,
-      boolean finalFields)
-      throws IOException {
-    RClassGenerator classWriter =
-        RClassGenerator.fromSymbols(classesOut, fullSymbolValues, finalFields);
-    for (String packageName : libMap.keySet()) { 
-      classWriter.write(packageName, ResourceSymbols.merge(libMap.get(packageName)).asFilterMap());
-    }
-    if (appPackageName != null) {
-      // Unlike the R.java generation, we also write the app's R.class file so that the class
-      // jar file can be complete (aapt doesn't generate it for us).
-      classWriter.write(appPackageName);
     }
   }
 

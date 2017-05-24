@@ -32,6 +32,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
+import org.hamcrest.BaseMatcher;
+import org.hamcrest.Description;
+import org.hamcrest.Matcher;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -83,8 +86,8 @@ public class RClassGeneratorTest {
             "lib.R.txt", "int attr agility 0x1", "int id someTextView 0x1", "int string ok 0x1");
     Path out = temp.resolve("classes");
     Files.createDirectories(out);
-    RClassGenerator writer = RClassGenerator.fromSymbols(out, symbolValues, finalFields);
-    writer.write("com.bar", symbolsInLibrary.asFilterMap());
+    RClassGenerator writer = RClassGenerator.with(out, symbolValues.asInitializers(), finalFields);
+    writer.write("com.bar", symbolsInLibrary.asInitializers());
 
     Path packageDir = out.resolve("com/bar");
     checkFilesInPackage(packageDir, "R.class", "R$attr.class", "R$id.class", "R$string.class");
@@ -124,8 +127,8 @@ public class RClassGeneratorTest {
     ResourceSymbols symbolsInLibrary = symbolValues;
     Path out = temp.resolve("classes");
     Files.createDirectories(out);
-    RClassGenerator writer = RClassGenerator.fromSymbols(out, symbolValues, finalFields);
-    writer.write("com.testEmptyIntArray", symbolsInLibrary.asFilterMap());
+    RClassGenerator writer = RClassGenerator.with(out, symbolValues.asInitializers(), finalFields);
+    writer.write("com.testEmptyIntArray", symbolsInLibrary.asInitializers());
 
     Path packageDir = out.resolve("com/testEmptyIntArray");
     checkFilesInPackage(packageDir, "R.class", "R$styleable.class");
@@ -142,29 +145,37 @@ public class RClassGeneratorTest {
         finalFields
     );
   }
+  
+  static final Matcher<Throwable> NUMBER_FORMAT_EXCEPTION =
+      new BaseMatcher<Throwable>() {
+        @Override
+        public boolean matches(Object item) {
+          if (item instanceof NumberFormatException) {
+            return true;
+          }
+          return false;
+        }
+
+        @Override
+        public void describeTo(Description description) {
+          description.appendText(NumberFormatException.class.toString());
+        }
+      };
 
   @Test
   public void corruptIntArraysTrailingComma() throws Exception {
-    boolean finalFields = true;
     // Test a few cases of what happens if the R.txt is corrupted. It shouldn't happen unless there
     // is a bug in aapt, or R.txt is manually written the wrong way.
-    ResourceSymbols symbolValues =
-        createSymbolFile("R.txt", "int[] styleable ActionMenuView { 1, }");
-    Path out = temp.resolve("classes");
-    Files.createDirectories(out);
-    thrown.expect(NumberFormatException.class);
-    RClassGenerator.fromSymbols(out, symbolValues, finalFields);
+    Path path = createFile("R.txt", new String[] {"int[] styleable ActionMenuView { 1, }"});
+    thrown.expectCause(NUMBER_FORMAT_EXCEPTION);
+    ResourceSymbols.load(path, MoreExecutors.newDirectExecutorService()).get();
   }
 
   @Test
   public void corruptIntArraysOmittedMiddle() throws Exception {
-    boolean finalFields = true;
-    ResourceSymbols symbolValues =
-        createSymbolFile("R.txt", "int[] styleable ActionMenuView { 1, , 2 }");
-    Path out = temp.resolve("classes");
-    Files.createDirectories(out);
-    thrown.expect(NumberFormatException.class);
-    RClassGenerator.fromSymbols(out, symbolValues, finalFields);
+    Path path = createFile("R.txt", "int[] styleable ActionMenuView { 1, , 2 }");
+    thrown.expectCause(NUMBER_FORMAT_EXCEPTION);
+    ResourceSymbols.load(path, MoreExecutors.newDirectExecutorService()).get();
   }
 
   @Test
@@ -182,8 +193,8 @@ public class RClassGeneratorTest {
             "int layout stubbable_activity 0x1");
     Path out = temp.resolve("classes");
     Files.createDirectories(out);
-    RClassGenerator writer = RClassGenerator.fromSymbols(out, symbolValues, finalFields);
-    writer.write("com.foo", symbolsInLibrary.asFilterMap());
+    RClassGenerator writer = RClassGenerator.with(out, symbolValues.asInitializers(), finalFields);
+    writer.write("com.foo", symbolsInLibrary.asInitializers());
 
     Path packageDir = out.resolve("com/foo");
     checkFilesInPackage(packageDir, "R.class", "R$layout.class");
@@ -208,8 +219,8 @@ public class RClassGeneratorTest {
     ResourceSymbols symbolsInLibrary = createSymbolFile("lib.R.txt");
     Path out = temp.resolve("classes");
     Files.createDirectories(out);
-    RClassGenerator writer = RClassGenerator.fromSymbols(out, symbolValues, finalFields);
-    writer.write("com.foo", symbolsInLibrary.asFilterMap());
+    RClassGenerator writer = RClassGenerator.with(out, symbolValues.asInitializers(), finalFields);
+    writer.write("com.foo", symbolsInLibrary.asInitializers());
 
     Path packageDir = out.resolve("com/foo");
    
@@ -251,8 +262,8 @@ public class RClassGeneratorTest {
     ResourceSymbols symbolsInLibrary = symbolValues;
     Path out = temp.resolve("classes");
     Files.createDirectories(out);
-    RClassGenerator writer = RClassGenerator.fromSymbols(out, symbolValues, finalFields);
-    writer.write("com.intArray", symbolsInLibrary.asFilterMap());
+    RClassGenerator writer = RClassGenerator.with(out, symbolValues.asInitializers(), finalFields);
+    writer.write("com.intArray", symbolsInLibrary.asInitializers());
 
     Path packageDir = out.resolve("com/intArray");
     checkFilesInPackage(packageDir, "R.class", "R$attr.class", "R$styleable.class");
@@ -304,8 +315,8 @@ public class RClassGeneratorTest {
     ResourceSymbols symbolsInLibrary = symbolValues;
     Path out = temp.resolve("classes");
     Files.createDirectories(out);
-    RClassGenerator writer = RClassGenerator.fromSymbols(out, symbolValues, finalFields);
-    writer.write("", symbolsInLibrary.asFilterMap());
+    RClassGenerator writer = RClassGenerator.with(out, symbolValues.asInitializers(), finalFields);
+    writer.write("", symbolsInLibrary.asInitializers());
 
     Path packageDir = out.resolve("");
     checkFilesInPackage(packageDir, "R.class", "R$string.class");

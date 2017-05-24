@@ -40,6 +40,7 @@ import com.google.devtools.build.lib.pkgcache.PackageManager;
 import com.google.devtools.build.lib.pkgcache.TargetPatternEvaluator;
 import com.google.devtools.build.lib.profiler.AutoProfiler;
 import com.google.devtools.build.lib.profiler.ProfilerTask;
+import com.google.devtools.build.lib.runtime.proto.InvocationPolicyOuterClass.InvocationPolicy;
 import com.google.devtools.build.lib.skyframe.SkyframeBuildView;
 import com.google.devtools.build.lib.skyframe.SkyframeExecutor;
 import com.google.devtools.build.lib.syntax.SkylarkSemanticsOptions;
@@ -92,6 +93,7 @@ public final class CommandEnvironment {
   private long commandStartTime;
   private OutputService outputService;
   private Path workingDirectory;
+  private String workspaceName;
 
   private String commandName;
   private OptionsProvider options;
@@ -144,6 +146,7 @@ public final class CommandEnvironment {
     // TODO(ulfjack): We don't call beforeCommand() in tests, but rely on workingDirectory being set
     // in setupPackageCache(). This leads to NPE if we don't set it here.
     this.workingDirectory = directories.getWorkspace();
+    this.workspaceName = null;
 
     workspace.getSkyframeExecutor().setEventBus(eventBus);
   }
@@ -311,13 +314,14 @@ public final class CommandEnvironment {
   }
 
   public String getWorkspaceName() {
-    Path workspace = getDirectories().getWorkspace();
-    if (workspace == null) {
-      return "";
-    }
-    return workspace.getBaseName();
+    Preconditions.checkNotNull(workspaceName);
+    return workspaceName;
   }
 
+  public void setWorkspaceName(String workspaceName) {
+    Preconditions.checkState(this.workspaceName == null, "workspace name can only be set once");
+    this.workspaceName = workspaceName;
+  }
   /**
    * Returns if the client passed a valid workspace to be used for the build.
    */
@@ -340,7 +344,8 @@ public final class CommandEnvironment {
    * build reside.
    */
   public Path getExecRoot() {
-    return getDirectories().getExecRoot();
+    Preconditions.checkNotNull(workspaceName);
+    return getDirectories().getExecRoot(workspaceName);
   }
 
   /**
@@ -531,14 +536,18 @@ public final class CommandEnvironment {
   }
 
   /**
-   * Hook method called by the BlazeCommandDispatcher prior to the dispatch of
-   * each command.
+   * Hook method called by the BlazeCommandDispatcher prior to the dispatch of each command.
    *
    * @param options The CommonCommandOptions used by every command.
    * @throws AbruptExitException if this command is unsuitable to be run as specified
    */
-  void beforeCommand(Command command, OptionsParser optionsParser,
-      CommonCommandOptions options, long execStartTimeNanos, long waitTimeInMs)
+  void beforeCommand(
+      Command command,
+      OptionsParser optionsParser,
+      CommonCommandOptions options,
+      long execStartTimeNanos,
+      long waitTimeInMs,
+      InvocationPolicy invocationPolicy)
       throws AbruptExitException {
     commandStartTime -= options.startupTime;
     if (runtime.getStartupOptionsProvider().getOptions(BlazeServerStartupOptions.class).watchFS) {
@@ -553,7 +562,8 @@ public final class CommandEnvironment {
     this.commandName = command.name();
     this.options = optionsParser;
 
-    eventBus.post(new GotOptionsEvent(runtime.getStartupOptionsProvider(), optionsParser));
+    eventBus.post(
+        new GotOptionsEvent(runtime.getStartupOptionsProvider(), optionsParser, invocationPolicy));
     throwPendingException();
 
     outputService = null;

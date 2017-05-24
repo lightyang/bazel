@@ -161,7 +161,7 @@ def _get_cpu_value(repository_ctx):
     return "x64_windows"
   # Use uname to figure out whether we are on x86_32 or x86_64
   result = repository_ctx.execute(["uname", "-m"])
-  if result.stdout.strip() in ["power", "ppc64le", "ppc"]:
+  if result.stdout.strip() in ["power", "ppc64le", "ppc", "ppc64"]:
     return "ppc"
   if result.stdout.strip() in ["arm", "armv7l", "aarch64"]:
     return "arm"
@@ -607,6 +607,28 @@ def _is_support_whole_archive(repository_ctx, vc_path):
   result = _execute(repository_ctx, [linker], expect_failure = True)
   return result.find("/WHOLEARCHIVE") != -1
 
+def _is_using_dynamic_crt(repository_ctx):
+  """Returns True if USE_DYNAMIC_CRT is set to 1."""
+  env = repository_ctx.os.environ
+  return "USE_DYNAMIC_CRT" in env and env["USE_DYNAMIC_CRT"] == "1"
+
+def _get_crt_option(repository_ctx, debug = False):
+  """Get the CRT option, default is /MT and /MTd."""
+  crt_option = "/MT"
+  if _is_using_dynamic_crt(repository_ctx):
+    crt_option = "/MD"
+  if debug:
+    crt_option += "d"
+  return crt_option
+
+def _get_crt_library(repository_ctx, debug = False):
+  """Get the CRT library to link, default is libcmt.lib and libcmtd.lib."""
+  crt_library = "libcmt"
+  if _is_using_dynamic_crt(repository_ctx):
+    crt_library = "msvcrt"
+  if debug:
+    crt_library += "d"
+  return crt_library + ".lib"
 
 def _escaped_cuda_compute_capabilities(repository_ctx):
   """Returns a %-escaped list of strings representing cuda compute capabilities."""
@@ -768,6 +790,10 @@ def _impl(repository_ctx):
         "%{msvc_env_include}": escaped_include_paths,
         "%{msvc_env_lib}": escaped_lib_paths,
         "%{content}": _get_escaped_windows_msys_crosstool_content(repository_ctx),
+        "%{crt_option}": _get_crt_option(repository_ctx),
+        "%{crt_debug_option}": _get_crt_option(repository_ctx, debug=True),
+        "%{crt_library}": _get_crt_library(repository_ctx),
+        "%{crt_debug_library}": _get_crt_library(repository_ctx, debug=True),
         "%{opt_content}": "",
         "%{dbg_content}": "",
         "%{cxx_builtin_include_directory}": "\n".join(escaped_cxx_include_directories),
@@ -788,6 +814,9 @@ def _impl(repository_ctx):
       repository_ctx.symlink(
           Label("@bazel_tools//tools/objc:make_hashed_objlist.py"),
           "make_hashed_objlist.py")
+      repository_ctx.symlink(
+          Label("@bazel_tools//tools/osx/crosstool:wrapped_ar.tpl"),
+          "wrapped_ar")
       repository_ctx.symlink(
           Label("@bazel_tools//tools/osx/crosstool:wrapped_clang.tpl"),
           "wrapped_clang")
@@ -841,6 +870,10 @@ def _impl(repository_ctx):
           "%{msvc_env_path}": "",
           "%{msvc_env_include}": "",
           "%{msvc_env_lib}": "",
+          "%{crt_option}": "",
+          "%{crt_debug_option}": "",
+          "%{crt_library}": "",
+          "%{crt_debug_library}": "",
       })
 
 cc_autoconf = repository_rule(
@@ -864,6 +897,7 @@ cc_autoconf = repository_rule(
         "CUDA_PATH",
         "HOMEBREW_RUBY_PATH",
         "NO_WHOLE_ARCHIVE_OPTION",
+        "USE_DYNAMIC_CRT",
         "SYSTEMROOT",
         "VS90COMNTOOLS",
         "VS100COMNTOOLS",

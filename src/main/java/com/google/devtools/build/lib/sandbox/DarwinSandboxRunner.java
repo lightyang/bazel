@@ -42,16 +42,19 @@ final class DarwinSandboxRunner extends SandboxRunner {
   private final Path sandboxExecRoot;
   private final Path sandboxConfigPath;
   private final Set<Path> writableDirs;
+  private final Set<Path> inaccessiblePaths;
 
   DarwinSandboxRunner(
       Path sandboxPath,
       Path sandboxExecRoot,
       Set<Path> writableDirs,
+      Set<Path> inaccessiblePaths,
       boolean verboseFailures) {
     super(verboseFailures);
     this.sandboxExecRoot = sandboxExecRoot;
     this.sandboxConfigPath = sandboxPath.getRelative("sandbox.sb");
     this.writableDirs = writableDirs;
+    this.inaccessiblePaths = inaccessiblePaths;
   }
 
   static boolean isSupported(CommandEnvironment cmdEnv) {
@@ -115,26 +118,28 @@ final class DarwinSandboxRunner extends SandboxRunner {
 
       if (!allowNetwork) {
         out.println("(deny network*)");
+        out.println("(allow network* (local ip \"localhost:*\"))");
+        out.println("(allow network* (remote ip \"localhost:*\"))");
       }
 
-      out.println("(allow network* (local ip \"localhost:*\"))");
-      out.println("(allow network* (remote ip \"localhost:*\"))");
+      // By default, everything is read-only.
+      out.println("(deny file-write*)");
 
-      // Almost everything else is read-only.
-      out.println("(deny file-write* (subpath \"/\"))");
-
-      allowWriteSubpath(out, sandboxExecRoot);
+      out.println("(allow file-write*");
       for (Path path : writableDirs) {
-        allowWriteSubpath(out, path);
+        out.println("    (subpath \"" + path.getPathString() + "\")");
       }
-    }
-  }
+      out.println(")");
 
-  private void allowWriteSubpath(PrintWriter out, Path path) throws IOException {
-    out.println("(allow file-write* (subpath \"" + path.getPathString() + "\"))");
-    Path resolvedPath = path.resolveSymbolicLinks();
-    if (!resolvedPath.equals(path)) {
-      out.println("(allow file-write* (subpath \"" + resolvedPath.getPathString() + "\"))");
+      if (!inaccessiblePaths.isEmpty()) {
+        out.println("(deny file-read*");
+        // The sandbox configuration file is not part of a cache key and sandbox-exec doesn't care
+        // about ordering of paths in expressions, so it's fine if the iteration order is random.
+        for (Path inaccessiblePath : inaccessiblePaths) {
+          out.println("    (subpath \"" + inaccessiblePath + "\")");
+        }
+        out.println(")");
+      }
     }
   }
 }

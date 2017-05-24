@@ -33,6 +33,7 @@ import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.runtime.CommandEnvironment;
 import com.google.devtools.build.lib.util.io.OutErr;
+import com.google.devtools.build.lib.vfs.FileSystem;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.io.IOException;
@@ -46,9 +47,10 @@ abstract class SandboxStrategy implements SandboxedSpawnActionContext {
   private final CommandEnvironment cmdEnv;
   private final BuildRequest buildRequest;
   private final Path execRoot;
+  private final Path sandboxBase;
   private final boolean verboseFailures;
   private final SandboxOptions sandboxOptions;
-  private final Path sandboxBase;
+  private final ImmutableSet<Path> inaccessiblePaths;
 
   public SandboxStrategy(
       CommandEnvironment cmdEnv,
@@ -62,6 +64,20 @@ abstract class SandboxStrategy implements SandboxedSpawnActionContext {
     this.sandboxBase = sandboxBase;
     this.verboseFailures = verboseFailures;
     this.sandboxOptions = sandboxOptions;
+
+    ImmutableSet.Builder<Path> inaccessiblePaths = ImmutableSet.builder();
+    FileSystem fileSystem = cmdEnv.getDirectories().getFileSystem();
+    for (String path : sandboxOptions.sandboxBlockPath) {
+      Path blockedPath = fileSystem.getPath(path);
+      try {
+        inaccessiblePaths.add(blockedPath.resolveSymbolicLinks());
+      } catch (IOException e) {
+        // It's OK to block access to an invalid symlink. In this case we'll just make the symlink
+        // itself inaccessible, instead of the target, though.
+        inaccessiblePaths.add(blockedPath);
+      }
+    }
+    this.inaccessiblePaths = inaccessiblePaths.build();
   }
 
   /** Executes the given {@code spawn}. */
@@ -177,10 +193,19 @@ abstract class SandboxStrategy implements SandboxedSpawnActionContext {
   protected ImmutableSet<Path> getWritableDirs(Path sandboxExecRoot, Map<String, String> env)
       throws IOException {
     // We have to make the TEST_TMPDIR directory writable if it is specified.
+    ImmutableSet.Builder<Path> writablePaths = ImmutableSet.builder();
+    writablePaths.add(sandboxExecRoot);
     if (env.containsKey("TEST_TMPDIR")) {
-      return ImmutableSet.of(sandboxExecRoot.getRelative(env.get("TEST_TMPDIR")));
+      // We add this even though it may be below sandboxExecRoot (and thus would already be writable
+      // as a subpath) to take advantage of the side-effect that SymlinkedExecRoot also creates this
+      // needed directory if it doesn't exist yet.
+      writablePaths.add(sandboxExecRoot.getRelative(env.get("TEST_TMPDIR")));
     }
-    return ImmutableSet.of();
+    return writablePaths.build();
+  }
+
+  protected ImmutableSet<Path> getInaccessiblePaths() {
+    return inaccessiblePaths;
   }
 
   @Override

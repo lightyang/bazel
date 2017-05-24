@@ -205,18 +205,13 @@ public final class ApplicationManifest {
   }
 
   public ApplicationManifest mergeWith(RuleContext ruleContext, ResourceDependencies resourceDeps) {
-    Map<Artifact, Label> mergeeManifests = getMergeeManifests(resourceDeps.getResources());
+    boolean legacy = useLegacyMerging(ruleContext);
+    return mergeWith(ruleContext, resourceDeps, legacy);
+  }
 
-    boolean legacy = true;
-    if (ruleContext.isLegalFragment(AndroidConfiguration.class)
-        && ruleContext.getRule().isAttrDefined("manifest_merger", STRING)) {
-      AndroidManifestMerger merger = AndroidManifestMerger.fromString(
-          ruleContext.attributes().get("manifest_merger", STRING));
-      if (merger == null) {
-        merger = ruleContext.getFragment(AndroidConfiguration.class).getManifestMerger();
-      }
-      legacy = merger == AndroidManifestMerger.LEGACY;
-    }
+  public ApplicationManifest mergeWith(
+      RuleContext ruleContext, ResourceDependencies resourceDeps, boolean legacy) {
+    Map<Artifact, Label> mergeeManifests = getMergeeManifests(resourceDeps.getResources());
 
     if (legacy) {
       if (!mergeeManifests.isEmpty()) {
@@ -248,6 +243,26 @@ public final class ApplicationManifest {
       }
     }
     return this;
+  }
+
+  private boolean useLegacyMerging(RuleContext ruleContext) {
+    boolean legacy = true;
+    if (ruleContext.isLegalFragment(AndroidConfiguration.class)
+        && ruleContext.getRule().isAttrDefined("manifest_merger", STRING)) {
+      AndroidManifestMerger merger = AndroidManifestMerger.fromString(
+          ruleContext.attributes().get("manifest_merger", STRING));
+      if (merger == null) {
+        merger = ruleContext.getFragment(AndroidConfiguration.class).getManifestMerger();
+      }
+      if (merger == AndroidManifestMerger.LEGACY) {
+        ruleContext.ruleWarning(
+            "manifest_merger 'legacy' is deprecated. Please update to 'android'.\n"
+                + "See https://developer.android.com/studio/build/manifest-merge.html for more "
+                + "information about the manifest merger.");
+      }
+      legacy = merger == AndroidManifestMerger.LEGACY;
+    }
+    return legacy;
   }
 
   private static Map<Artifact, Label> getMergeeManifests(

@@ -173,12 +173,13 @@ def replace_empty_path_with_dot(path):
 
 def sources_from_target(ctx):
   """Get the list of sources from a target as artifact locations."""
+  return artifacts_from_target_list_attr(ctx, "srcs")
 
-  if hasattr(ctx.rule.attr, "srcs"):
-    return [artifact_location(f)
-            for src in ctx.rule.attr.srcs
-            for f in src.files]
-  return []
+def artifacts_from_target_list_attr(ctx, attr_name):
+  """Converts a list of targets to a list of artifact locations."""
+  return [artifact_location(f)
+          for target in getattr(ctx.rule.attr, attr_name, [])
+          for f in target.files]
 
 def _collect_target_from_attr(rule_attrs, attr_name, result):
   """Collects the targets from the given attr into the result."""
@@ -266,7 +267,8 @@ def build_c_ide_info(target, ctx):
   if not hasattr(target, "cc"):
     return (None, set())
 
-  sources = sources_from_target(ctx)
+  sources = artifacts_from_target_list_attr(ctx, "srcs")
+  sources.extend(artifacts_from_target_list_attr(ctx, "hdrs"))
 
   target_includes = []
   if hasattr(ctx.rule.attr, "includes"):
@@ -337,18 +339,20 @@ def build_java_ide_info(target, ctx, semantics):
   """Build JavaIdeInfo."""
   java = get_java_provider(target)
   if not java:
-    return (None, set(), set())
+    return (None, set(), set(), set())
 
   java_semantics = semantics.java if hasattr(semantics, "java") else None
   if java_semantics and java_semantics.skip_target(target, ctx):
-    return (None, set(), set())
+    return (None, set(), set(), set())
 
   ide_info_files = set()
   sources = sources_from_target(ctx)
   java_jars = get_java_jars(java.outputs)
   jars = [library_artifact(output) for output in java_jars]
+  class_jars = [output.class_jar for output in java_jars if output and output.class_jar]
   output_jars = [jar for output in java_jars for jar in jars_from_output(output)]
   intellij_resolve_files = set(output_jars)
+  intellij_compile_files = set(class_jars)
 
   gen_jars = []
   if (hasattr(java, "annotation_processing") and
@@ -358,6 +362,9 @@ def build_java_ide_info(target, ctx, semantics):
     intellij_resolve_files = intellij_resolve_files | set([
         jar for jar in [java.annotation_processing.class_jar,
                         java.annotation_processing.source_jar]
+        if jar != None and not jar.is_source])
+    intellij_compile_files = intellij_compile_files | set([
+        jar for jar in [java.annotation_processing.class_jar]
         if jar != None and not jar.is_source])
 
   jdeps = None
@@ -394,7 +401,7 @@ def build_java_ide_info(target, ctx, semantics):
       filtered_gen_jar = filtered_gen_jar,
       main_class = ctx.rule.attr.main_class if hasattr(ctx.rule.attr, "main_class") else None,
   )
-  return (java_ide_info, ide_info_files, intellij_resolve_files)
+  return (java_ide_info, ide_info_files, intellij_resolve_files, intellij_compile_files)
 
 def _package_manifest_file_argument(f):
   artifact = artifact_location(f)
@@ -539,9 +546,11 @@ def build_java_toolchain_ide_info(target):
   if not hasattr(target, "java_toolchain"):
     return None
   toolchain_info = target.java_toolchain
+  javac_jar_file = toolchain_info.javac_jar if hasattr(toolchain_info, "javac_jar") else None
   return struct_omit_none(
       source_version = toolchain_info.source_version,
       target_version = toolchain_info.target_version,
+      javac_jar = artifact_location(javac_jar_file),
   )
 
 ##### Main aspect function
@@ -596,6 +605,7 @@ def intellij_info_aspect_impl(target, ctx, semantics):
   for dep in prerequisites:
     intellij_info_text = intellij_info_text | dep.intellij_info.intellij_info_text
     intellij_resolve_files = intellij_resolve_files | dep.intellij_info.intellij_resolve_files
+    intellij_compile_files = intellij_compile_files | dep.intellij_info.intellij_compile_files
 
   # Collect python-specific information
   (py_ide_info, py_resolve_files) = build_py_ide_info(target, ctx)
@@ -609,10 +619,11 @@ def intellij_info_aspect_impl(target, ctx, semantics):
   intellij_resolve_files = intellij_resolve_files | c_toolchain_resolve_files
 
   # Collect Java-specific information
-  (java_ide_info, java_ide_info_files, java_resolve_files) = build_java_ide_info(
-      target, ctx, semantics)
+  (java_ide_info, java_ide_info_files, java_resolve_files,
+   java_compile_files) = build_java_ide_info(target, ctx, semantics)
   intellij_info_text = intellij_info_text | java_ide_info_files
   intellij_resolve_files = intellij_resolve_files | java_resolve_files
+  intellij_compile_files = intellij_compile_files | java_compile_files
 
   # Collect Android-specific information
   (android_ide_info, android_resolve_files) = build_android_ide_info(
@@ -654,6 +665,7 @@ def intellij_info_aspect_impl(target, ctx, semantics):
       test_info = test_info,
       java_toolchain_ide_info = java_toolchain_ide_info,
       py_ide_info = py_ide_info,
+      features = ctx.features,
       **extra_ide_info
   )
 
@@ -673,6 +685,7 @@ def intellij_info_aspect_impl(target, ctx, semantics):
           target_key = target_key,
           intellij_info_text = intellij_info_text,
           intellij_resolve_files = intellij_resolve_files,
+          intellij_compile_files = intellij_compile_files,
           export_deps = export_deps,
       ),
   )

@@ -15,7 +15,6 @@ package com.google.devtools.build.android.resources;
 
 import java.io.IOException;
 import java.io.Writer;
-import java.util.Set;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.commons.InstructionAdapter;
 
@@ -29,22 +28,14 @@ public interface FieldInitializer {
    *
    * @return true if the initializer is deferred to clinit code.
    */
-  boolean writeFieldDefinition(ClassWriter cw, int accessLevel, boolean isFinal);
+  boolean writeFieldDefinition(String fieldName, ClassWriter cw, int accessLevel, boolean isFinal);
 
   /**
    * Write the bytecode for the clinit portion of initializer.
-   *
    * @return the number of stack slots needed for the code.
    */
-  int writeCLInit(InstructionAdapter insts, String className);
+  int writeCLInit(String fieldName, InstructionAdapter insts, String className);
 
-  /**
-   * Write the source code for the initializer to the given writer.
-   * Unlike {@link #writeFieldDefinition}, this assumes non-final fields, since we don't use this
-   * for final fields yet.
-   */
-  void writeInitSource(Writer writer) throws IOException;
-
-  /** Tests if the field's name is in the provided set. */
-  boolean nameIsIn(Set<String> fieldNames);
+  /** Write the source code for the initializer to the given writer. */
+  void writeInitSource(String fieldName, Writer writer, boolean finalFields) throws IOException;
 }

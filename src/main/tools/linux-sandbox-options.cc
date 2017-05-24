@@ -14,14 +14,6 @@
 
 #include "src/main/tools/linux-sandbox-options.h"
 
-#define DIE(args...)                                     \
-  {                                                      \
-    fprintf(stderr, __FILE__ ":" S__LINE__ ": \"" args); \
-    fprintf(stderr, "\": ");                             \
-    perror(nullptr);                                     \
-    exit(EXIT_FAILURE);                                  \
-  }
-
 #include <errno.h>
 #include <sched.h>
 #include <stdarg.h>
@@ -31,14 +23,14 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
-
 #include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "src/main/tools/linux-sandbox-utils.h"
+#include "src/main/tools/logging.h"
+#include "src/main/tools/process-tools.h"
 
 using std::ifstream;
 using std::unique_ptr;
@@ -200,7 +192,6 @@ static void ParseCommandLine(unique_ptr<vector<char *>> args) {
   if (optind < static_cast<int>(args->size())) {
     if (opt.args.empty()) {
       opt.args.assign(args->begin() + optind, args->end());
-      opt.args.push_back(nullptr);
     } else {
       Usage(args->front(), "Merging commands not supported.");
     }
@@ -252,7 +243,6 @@ static unique_ptr<vector<char *>> ExpandArguments(const vector<char *> &args) {
   return expanded;
 }
 
-// Handles parsing all command line flags and populates the global opt struct.
 void ParseOptions(int argc, char *argv[]) {
   vector<char *> args(argv, argv + argc);
   ParseCommandLine(ExpandArguments(args));
