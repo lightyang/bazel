@@ -13,9 +13,9 @@
 // limitations under the License.
 package com.google.devtools.build.lib.vfs;
 
+import static com.google.common.collect.ImmutableList.toImmutableList;
+
 import com.google.common.base.Predicate;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadSafe;
 import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.util.StringCanonicalizer;
@@ -505,7 +505,7 @@ public class Path implements Comparable<Path>, Serializable {
    */
   public Collection<Path> getDirectoryEntries(Predicate<? super Path> predicate)
       throws IOException, FileNotFoundException {
-    return ImmutableList.<Path>copyOf(Iterables.filter(getDirectoryEntries(), predicate));
+    return getDirectoryEntries().stream().filter(predicate).collect(toImmutableList());
   }
 
   /**
@@ -1043,34 +1043,6 @@ public class Path implements Comparable<Path>, Serializable {
    */
   public boolean isValidDigest(byte[] digest) {
     return fileSystem.isValidDigest(digest);
-  }
-
-  /**
-   * Returns the MD5 digest of the file denoted by the current path, following
-   * symbolic links.
-   *
-   * <p>This method runs in O(n) time where n is the length of the file, but
-   * certain implementations may be much faster than the worst case.
-   *
-   * @return a new 16-byte array containing the file's MD5 digest
-   * @throws IOException if the MD5 digest could not be computed for any reason
-   */
-  public byte[] getMD5Digest() throws IOException {
-    return fileSystem.getMD5Digest(this);
-  }
-
-  /**
-   * Returns the SHA1 digest of the file denoted by the current path, following
-   * symbolic links.
-   *
-   * <p>This method runs in O(n) time where n is the length of the file, but
-   * certain implementations may be much faster than the worst case.
-   *
-   * @return a new 20-byte array containing the file's SHA1 digest
-   * @throws IOException if the SHA1 digest could not be computed for any reason
-   */
-  public byte[] getSHA1Digest() throws IOException {
-    return fileSystem.getSHA1Digest(this);
   }
 
   /**

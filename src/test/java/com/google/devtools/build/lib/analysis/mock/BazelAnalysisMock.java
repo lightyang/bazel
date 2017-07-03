@@ -13,14 +13,18 @@
 // limitations under the License.
 package com.google.devtools.build.lib.analysis.mock;
 
+import static com.google.devtools.build.lib.bazel.rules.BazelRuleClassProvider.FEATURE_POLICY_FEATURES;
+
 import com.google.common.base.Functions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.analysis.ConfigurationCollectionFactory;
 import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider;
+import com.google.devtools.build.lib.analysis.PlatformConfigurationLoader;
 import com.google.devtools.build.lib.analysis.config.ConfigurationFactory;
 import com.google.devtools.build.lib.analysis.config.ConfigurationFragmentFactory;
+import com.google.devtools.build.lib.analysis.featurecontrol.FeaturePolicyLoader;
 import com.google.devtools.build.lib.analysis.util.AnalysisMock;
 import com.google.devtools.build.lib.bazel.rules.BazelConfiguration;
 import com.google.devtools.build.lib.bazel.rules.BazelConfigurationCollection;
@@ -138,7 +142,7 @@ public final class BazelAnalysisMock extends AnalysisMock {
 
     config.create("/bazel_tools_workspace/tools/test/BUILD",
         "filegroup(name = 'runtime', srcs = ['test-setup.sh'],)",
-        "filegroup(name='coverage_support', srcs=['collect_coverage.sh',':LcovMerger_deploy.jar'])",
+        "filegroup(name='coverage_support', srcs=['collect_coverage.sh','LcovMerger'])",
         "filegroup(name = 'coverage_report_generator', srcs = ['coverage_report_generator.sh'])");
 
     config.create(
@@ -183,7 +187,6 @@ public final class BazelAnalysisMock extends AnalysisMock {
         "    main_dex_classes = ':mainDexClasses.rules',",
         "    main_dex_list_creator = ':main_dex_list_creator',",
         "    proguard = ':ProGuard',",
-        "    resource_extractor = ':resource_extractor',",
         "    shrinked_android_jar = ':shrinkedAndroid.jar',",
         "    zipalign = ':zipalign',",
         ")",
@@ -230,6 +233,7 @@ public final class BazelAnalysisMock extends AnalysisMock {
         .add("            jars = [ 'idlclass.jar' ])")
         .add("exports_files(['adb', 'adb_static'])")
         .add("sh_binary(name = 'android_runtest', srcs = ['empty.sh'])")
+        .add("sh_binary(name = 'instrumentation_test_entry_point', srcs = ['empty.sh'])")
         .add("java_plugin(name = 'databinding_annotation_processor',")
         .add("    processor_class = 'android.databinding.annotationprocessor.ProcessDataBinding')");
 
@@ -270,7 +274,9 @@ public final class BazelAnalysisMock extends AnalysisMock {
         new J2ObjcConfiguration.Loader(),
         new ProtoConfiguration.Loader(),
         new ConfigFeatureFlagConfiguration.Loader(),
-        new AndroidConfiguration.Loader());
+        new FeaturePolicyLoader(FEATURE_POLICY_FEATURES),
+        new AndroidConfiguration.Loader(),
+        new PlatformConfigurationLoader());
   }
 
   @Override

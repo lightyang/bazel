@@ -15,7 +15,6 @@
 package com.google.devtools.build.lib.rules.cpp;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Predicate;
 import com.google.common.base.Verify;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ImmutableList;
@@ -40,9 +39,9 @@ import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.packages.OutputFile;
 import com.google.devtools.build.lib.packages.Target;
+import com.google.devtools.build.lib.rules.cpp.CppActionConfigs.CppPlatform;
 import com.google.devtools.build.lib.rules.cpp.CppConfigurationLoader.CppConfigurationParameters;
-import com.google.devtools.build.lib.rules.cpp.CppLinkActionConfigs.CppLinkPlatform;
-import com.google.devtools.build.lib.rules.cpp.Link.LinkTargetType;
+import com.google.devtools.build.lib.rules.cpp.transitions.ContextCollectorOwnerTransition;
 import com.google.devtools.build.lib.rules.cpp.transitions.DisableLipoTransition;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
@@ -52,7 +51,6 @@ import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig;
 import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig.CToolchain;
-import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig.CToolchain.ActionConfig;
 import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig.CToolchain.ArtifactNamePattern;
 import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig.LinkingModeFlags;
 import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig.LipoMode;
@@ -87,6 +85,9 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
    * target system name.
    */
   public static final String MAC_SYSTEM_NAME = "x86_64-apple-macosx";
+
+  /** String constant for CC_FLAGS make variable name */
+  public static final String CC_FLAGS_MAKE_VARIABLE_NAME = "CC_FLAGS";
 
   /**
    * An enumeration of all the tools that comprise a toolchain.
@@ -294,7 +295,6 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
 
   private final ImmutableList<String> objcopyOptions;
   private final ImmutableList<String> ldOptions;
-  private final ImmutableList<String> arOptions;
 
   private final ImmutableMap<String, String> additionalMakeVariables;
 
@@ -403,22 +403,19 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
       Iterable<Tool> neededTools =
           Iterables.filter(
               EnumSet.allOf(Tool.class),
-              new Predicate<Tool>() {
-                @Override
-                public boolean apply(Tool tool) {
-                  if (tool == Tool.DWP) {
-                    // When fission is unsupported, don't check for the dwp tool.
-                    return supportsFission();
-                  } else if (tool == Tool.LLVM_PROFDATA) {
-                    // TODO(tmsriram): Fix this to check if this is a llvm crosstool
-                    // and return true.  This needs changes to crosstool_config.proto.
-                    return false;
-                  } else if (tool == Tool.GCOVTOOL || tool == Tool.OBJCOPY) {
-                    // gcov-tool and objcopy are optional, don't check whether they're present
-                    return false;
-                  } else {
-                    return true;
-                  }
+              tool -> {
+                if (tool == Tool.DWP) {
+                  // When fission is unsupported, don't check for the dwp tool.
+                  return supportsFission();
+                } else if (tool == Tool.LLVM_PROFDATA) {
+                  // TODO(tmsriram): Fix this to check if this is a llvm crosstool
+                  // and return true.  This needs changes to crosstool_config.proto.
+                  return false;
+                } else if (tool == Tool.GCOVTOOL || tool == Tool.OBJCOPY) {
+                  // gcov-tool and objcopy are optional, don't check whether they're present
+                  return false;
+                } else {
+                  return true;
                 }
               });
       for (Tool tool : neededTools) {
@@ -485,7 +482,6 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
 
     this.objcopyOptions = ImmutableList.copyOf(toolchain.getObjcopyEmbedFlagList());
     this.ldOptions = ImmutableList.copyOf(toolchain.getLdEmbedFlagList());
-    this.arOptions = copyOrDefaultIfEmpty(toolchain.getArFlagList(), "rcsD");
 
     this.abi = toolchain.getAbiVersion();
     this.abiGlibcVersion = toolchain.getAbiLibcVersion();
@@ -576,7 +572,7 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
     // The following are to be used to allow some build rules to avoid the limits on stack frame
     // sizes and variable-length arrays. Ensure that these are always set.
     makeVariablesBuilder.put("STACK_FRAME_UNLIMITED", "");
-    makeVariablesBuilder.put("CC_FLAGS", "");
+    makeVariablesBuilder.put(CC_FLAGS_MAKE_VARIABLE_NAME, "");
     for (CrosstoolConfig.MakeVariable variable : toolchain.getMakeVariableList()) {
       makeVariablesBuilder.put(variable.getName(), variable.getValue());
     }
@@ -597,22 +593,12 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
 
     return result.build();
   }
-  
-  private boolean linkActionsAreConfigured(CToolchain toolchain) {
-    
-    for (LinkTargetType type : Link.MANDATORY_LINK_TARGET_TYPES) {
-      boolean typeIsConfigured = false;
-      for (ActionConfig actionConfig : toolchain.getActionConfigList()) {
-        if (actionConfig.getActionName().equals(type.getActionName())) {
-          typeIsConfigured = true;
-          break;
-        }
-      }
-      if (!typeIsConfigured) {
-        return false;
-      }
-    }
-    return true;
+
+  private static boolean actionsAreConfigured(CToolchain toolchain) {
+    return toolchain
+        .getActionConfigList()
+        .stream()
+        .anyMatch(actionConfig -> actionConfig.getActionName().contains("c++"));
   }
 
   // TODO(bazel-team): Remove this once bazel supports all crosstool flags through
@@ -646,27 +632,32 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
     Set<String> features = featuresBuilder.build();
     if (!features.contains(CppRuleClasses.NO_LEGACY_FEATURES)) {
       try {
-        if (!linkActionsAreConfigured(toolchain)) {
+        if (!actionsAreConfigured(toolchain)) {
+          String gccToolPath = "DUMMY_GCC_TOOL";
           String linkerToolPath = "DUMMY_LINKER_TOOL";
+          String arToolPath = "DUMMY_AR_TOOL";
           for (ToolPath tool : toolchain.getToolPathList()) {
             if (tool.getName().equals(Tool.GCC.getNamePart())) {
+              gccToolPath = tool.getPath();
               linkerToolPath =
                   crosstoolTopPathFragment
                       .getRelative(PathFragment.create(tool.getPath()))
                       .getPathString();
             }
+            if (tool.getName().equals(Tool.AR.getNamePart())) {
+              arToolPath = tool.getPath();
+            }
           }
-          if (getTargetLibc().equals("macosx")) {
-            TextFormat.merge(
-                CppLinkActionConfigs.getCppLinkActionConfigs(
-                    CppLinkPlatform.MAC, features, linkerToolPath, supportsEmbeddedRuntimes),
-                toolchainBuilder);
-          } else {
-            TextFormat.merge(
-                CppLinkActionConfigs.getCppLinkActionConfigs(
-                    CppLinkPlatform.LINUX, features, linkerToolPath, supportsEmbeddedRuntimes),
-                toolchainBuilder);
-          }
+          TextFormat.merge(
+              CppActionConfigs.getCppActionConfigs(
+                  getTargetLibc().equals("macosx") ? CppPlatform.MAC : CppPlatform.LINUX,
+                  features,
+                  gccToolPath,
+                  linkerToolPath,
+                  arToolPath,
+                  supportsEmbeddedRuntimes,
+                  toolchain.getSupportsInterfaceSharedObjects()),
+              toolchainBuilder);
         }
 
         if (!features.contains("dependency_file")) {
@@ -945,11 +936,6 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
 
     toolchainBuilder.mergeFrom(toolchain);
     return toolchainBuilder.build();
-  }
-
-  private static ImmutableList<String> copyOrDefaultIfEmpty(List<String> list,
-      String defaultValue) {
-    return list.isEmpty() ? ImmutableList.of(defaultValue) : ImmutableList.copyOf(list);
   }
 
   @VisibleForTesting
@@ -1262,13 +1248,6 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
   }
 
   /**
-   * Returns the ar flags to be used.
-   */
-  public ImmutableList<String> getArFlags() {
-    return arOptions;
-  }
-
-  /**
    * Returns the built-in list of system include paths for the toolchain compiler. All paths in this
    * list should be relative to the exec directory. They may be absolute if they are also installed
    * on the remote build nodes or for local compilation.
@@ -1388,10 +1367,14 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
       return unfilteredCompilerFlags.evaluate(features);
     } else {
       return ImmutableList.<String>builder()
-          .add("--sysroot=" + sysroot)
+          .add(getSysrootCompilerOption(sysroot))
           .addAll(unfilteredCompilerFlags.evaluate(features))
           .build();
     }
+  }
+
+  public String getSysrootCompilerOption(PathFragment sysroot) {
+    return "--sysroot=" + sysroot;
   }
 
   /**
@@ -1606,12 +1589,20 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
     return cppOptions.isFdo();
   }
 
+  public boolean isLLVMCompiler() {
+    // TODO(tmsriram): Checking for "llvm" does not handle all the cases.  This
+    // is temporary until the crosstool configuration is modified to add fields that
+    // indicate which flavor of fdo is being used.
+    return toolchainIdentifier.contains("llvm");
+  }
+
   /** Returns true if LLVM FDO Optimization should be applied for this configuration. */
   public boolean isLLVMOptimizedFdo() {
-    return cppOptions.isFdo()
-        && cppOptions.getFdoOptimize() != null
+    return cppOptions.getFdoOptimize() != null
         && (CppFileTypes.LLVM_PROFILE.matches(cppOptions.getFdoOptimize())
-            || CppFileTypes.LLVM_PROFILE_RAW.matches(cppOptions.getFdoOptimize()));
+            || CppFileTypes.LLVM_PROFILE_RAW.matches(cppOptions.getFdoOptimize())
+            || (isLLVMCompiler()
+                && cppOptions.getFdoOptimize().endsWith(".zip")));
   }
 
   /**
@@ -1989,12 +1980,19 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
     }
 
     if (cppOptions.lipoContextForBuild != null) {
-      if (cppOptions.getLipoMode() != LipoMode.BINARY || cppOptions.getFdoOptimize() == null) {
+      if (isLLVMCompiler()) {
+        reporter.handle(
+            Event.warn("LIPO options are not applicable with a LLVM compiler and will be "
+                + "converted to ThinLTO"));
+      } else if (cppOptions.getLipoMode() != LipoMode.BINARY
+          || cppOptions.getFdoOptimize() == null) {
         reporter.handle(Event.warn("The --lipo_context option can only be used together with "
             + "--fdo_optimize=<profile zip> and --lipo=binary. LIPO context will be ignored."));
       }
     } else {
-      if (cppOptions.getLipoMode() == LipoMode.BINARY && cppOptions.getFdoOptimize() != null) {
+      if (!isLLVMCompiler()
+          && cppOptions.getLipoMode() == LipoMode.BINARY
+          && cppOptions.getFdoOptimize() != null) {
         reporter.handle(Event.error("The --lipo_context option must be specified when using "
             + "--fdo_optimize=<profile zip> and --lipo=binary"));
       }
@@ -2134,7 +2132,12 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
       requestedFeatures.add(CppRuleClasses.AUTOFDO);
     }
     if (isLipoOptimizationOrInstrumentation()) {
-      requestedFeatures.add(CppRuleClasses.LIPO);
+      // Map LIPO to ThinLTO for LLVM builds.
+      if (isLLVMCompiler() && cppOptions.getFdoOptimize() != null) {
+        requestedFeatures.add(CppRuleClasses.THIN_LTO);
+      } else {
+        requestedFeatures.add(CppRuleClasses.LIPO);
+      }
     }
     if (ruleContext.getConfiguration().isCodeCoverageEnabled()) {
       requestedFeatures.add(CppRuleClasses.COVERAGE);
@@ -2156,6 +2159,11 @@ public class CppConfiguration extends BuildConfiguration.Fragment {
 
   public PathFragment getDefaultSysroot() {
     return defaultSysroot;
+  }
+
+  @Override
+  public PatchTransition getArtifactOwnerTransition() {
+    return isLipoContextCollector() ? ContextCollectorOwnerTransition.INSTANCE : null;
   }
 
   @Nullable

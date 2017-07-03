@@ -70,6 +70,8 @@ import com.google.devtools.build.lib.runtime.CommandEnvironment;
 import com.google.devtools.build.lib.util.AbruptExitException;
 import com.google.devtools.build.lib.util.ExitCode;
 import com.google.devtools.build.lib.util.Preconditions;
+import com.google.devtools.build.lib.util.RegexFilter;
+import com.google.devtools.common.options.OptionsParsingException;
 import java.util.Collection;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -168,6 +170,22 @@ public final class BuildTool {
         executionTool.init();
       }
 
+      // Compute the heuristic instrumentation filter if needed.
+      if (request.needsInstrumentationFilter()) {
+        String instrumentationFilter =
+            InstrumentationFilterSupport.computeInstrumentationFilter(
+                env.getReporter(), loadingResult.getTestsToRun());
+        try {
+          // We're modifying the buildOptions in place, which is not ideal, but we also don't want
+          // to pay the price for making a copy. Maybe reconsider later if this turns out to be a
+          // problem (and the performance loss may not be a big deal).
+          buildOptions.get(BuildConfiguration.Options.class).instrumentationFilter =
+              new RegexFilter.RegexFilterConverter().convert(instrumentationFilter);
+        } catch (OptionsParsingException e) {
+          throw new InvalidConfigurationException(e);
+        }
+      }
+
       // Exit if there are any pending exceptions from modules.
       env.throwPendingException();
 
@@ -243,15 +261,14 @@ public final class BuildTool {
       catastrophe = true;
       throw e;
     } finally {
+      if (executionTool != null) {
+        executionTool.shutdown();
+      }
       if (!catastrophe) {
         // Delete dirty nodes to ensure that they do not accumulate indefinitely.
         long versionWindow = request.getViewOptions().versionWindowForDirtyNodeGc;
         if (versionWindow != -1) {
           env.getSkyframeExecutor().deleteOldNodes(versionWindow);
-        }
-
-        if (executionTool != null) {
-          executionTool.shutdown();
         }
         // The workspace status actions will not run with certain flags, or if an error
         // occurs early in the build. Tell a lie so that the event is not missing.
@@ -309,16 +326,18 @@ public final class BuildTool {
       }
       SupportedEnvironmentsProvider provider =
           Verify.verifyNotNull(asProvider.getProvider(SupportedEnvironmentsProvider.class));
-        Collection<Label> missingEnvironments = ConstraintSemantics.getUnsupportedEnvironments(
-            provider.getRefinedEnvironments(), expectedEnvironments);
-        if (!missingEnvironments.isEmpty()) {
-          throw new ViewCreationFailedException(
-              String.format("This is a restricted-environment build. %s does not support"
-                  + " required environment%s %s",
-                  topLevelTarget.getLabel(),
-                  missingEnvironments.size() == 1 ? "" : "s",
-                  Joiner.on(", ").join(missingEnvironments)));
-        }
+      Collection<Label> missingEnvironments =
+          ConstraintSemantics.getUnsupportedEnvironments(
+              provider.getRefinedEnvironments(), expectedEnvironments);
+      if (!missingEnvironments.isEmpty()) {
+        throw new ViewCreationFailedException(
+            String.format(
+                "This is a restricted-environment build. %s does not support"
+                    + " required environment%s %s",
+                topLevelTarget.getLabel(),
+                missingEnvironments.size() == 1 ? "" : "s",
+                Joiner.on(", ").join(missingEnvironments)));
+      }
     }
   }
 

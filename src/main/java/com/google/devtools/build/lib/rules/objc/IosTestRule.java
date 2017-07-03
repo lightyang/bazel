@@ -173,7 +173,6 @@ public class IosTestRule implements RuleDefinition {
             BaseRuleClasses.TestBaseRule.class,
             ObjcRuleClasses.ReleaseBundlingRule.class,
             ObjcRuleClasses.LinkingRule.class,
-            ObjcRuleClasses.XcodegenRule.class,
             ObjcRuleClasses.SimulatorRule.class)
         .factoryClass(IosTest.class)
         .build();
@@ -181,6 +180,10 @@ public class IosTestRule implements RuleDefinition {
 }
 
 /*<!-- #BLAZE_RULE (NAME = ios_test, TYPE = TEST, FAMILY = Objective-C) -->
+
+<p><strong>This rule is deprecated.</strong> Please use the new Apple build rules
+(<a href="https://github.com/bazelbuild/rules_apple">https://github.com/bazelbuild/rules_apple</a>)
+to build Apple targets.</p>
 
 <p>This rule provides a way to build iOS unit tests written in KIF, GTM and XCTest test frameworks
 on both iOS simulator and real devices.

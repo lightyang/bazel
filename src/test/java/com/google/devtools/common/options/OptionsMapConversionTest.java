@@ -18,6 +18,7 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.fail;
 
 import com.google.common.collect.ImmutableMap;
+import com.google.devtools.common.options.proto.OptionFilters.OptionEffectTag;
 import java.lang.reflect.Field;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -51,16 +52,31 @@ public class OptionsMapConversionTest {
 
   /** Dummy options base class. */
   public static class FooOptions extends OptionsBase {
-    @Option(name = "foo", defaultValue = "false")
+    @Option(
+      name = "foo",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
+      defaultValue = "false"
+    )
     public boolean foo;
   }
 
   /** Dummy options derived class. */
   public static class BazOptions extends FooOptions {
-    @Option(name = "bar", defaultValue = "true")
+    @Option(
+      name = "bar",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
+      defaultValue = "true"
+    )
     public boolean bar;
 
-    @Option(name = "baz", defaultValue = "5")
+    @Option(
+      name = "baz",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
+      defaultValue = "5"
+    )
     public int baz;
   }
 
@@ -107,19 +123,44 @@ public class OptionsMapConversionTest {
    */
   public static class AlphaOptions extends OptionsBase {
 
-    @Option(name = "c", defaultValue = "0")
+    @Option(
+      name = "c",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
+      defaultValue = "0"
+    )
     public int v;
 
-    @Option(name = "d", defaultValue = "0")
+    @Option(
+      name = "d",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
+      defaultValue = "0"
+    )
     public int w;
 
-    @Option(name = "a", defaultValue = "0")
+    @Option(
+      name = "a",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
+      defaultValue = "0"
+    )
     public int x;
 
-    @Option(name = "e", defaultValue = "0")
+    @Option(
+      name = "e",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
+      defaultValue = "0"
+    )
     public int y;
 
-    @Option(name = "b", defaultValue = "0")
+    @Option(
+      name = "b",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
+      defaultValue = "0"
+    )
     public int z;
   }
 
@@ -147,16 +188,31 @@ public class OptionsMapConversionTest {
 
   /** Dummy subclass of foo. */
   public static class SubFooAOptions extends FooOptions {
-    @Option(name = "a", defaultValue = "false")
+    @Option(
+      name = "a",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
+      defaultValue = "false"
+    )
     public boolean a;
   }
 
   /** Dummy subclass of foo. */
   public static class SubFooBOptions extends FooOptions {
-    @Option(name = "b1", defaultValue = "false")
+    @Option(
+      name = "b1",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
+      defaultValue = "false"
+    )
     public boolean b1;
 
-    @Option(name = "b2", defaultValue = "false")
+    @Option(
+      name = "b2",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
+      defaultValue = "false"
+    )
     public boolean b2;
   }
 
@@ -168,9 +224,11 @@ public class OptionsMapConversionTest {
       OptionsParser.fromMap(SubFooBOptions.class, fieldMap);
       fail("Should have failed due to the given map's fields not matching the ones on the class");
     } catch (IllegalArgumentException e) {
-      assertThat(e.getMessage()).contains(
-          "Map keys do not match fields of options class; extra map keys: {'a'}; "
-          + "extra options class options: {'b1', 'b2'}");
+      assertThat(e)
+          .hasMessageThat()
+          .contains(
+              "Map keys do not match fields of options class; extra map keys: {'a'}; "
+                  + "extra options class options: {'b1', 'b2'}");
     }
   }
 
@@ -182,8 +240,9 @@ public class OptionsMapConversionTest {
       OptionsParser.fromMap(FooOptions.class, fieldMap);
       fail("Should have failed due to trying to assign a field value with the wrong type");
     } catch (IllegalArgumentException e) {
-      assertThat(e.getMessage()).matches(
-          "Can not set boolean field .*\\.foo to java\\.lang\\.Integer");
+      assertThat(e)
+          .hasMessageThat()
+          .matches("Can not set boolean field .*\\.foo to java\\.lang\\.Integer");
     }
   }
 

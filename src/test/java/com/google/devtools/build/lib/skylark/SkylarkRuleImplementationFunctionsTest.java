@@ -15,14 +15,11 @@
 package com.google.devtools.build.lib.skylark;
 
 import static com.google.common.truth.Truth.assertThat;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static com.google.common.truth.Truth.assertWithMessage;
 import static org.junit.Assert.fail;
 
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.ActionAnalysisMetadata;
 import com.google.devtools.build.lib.actions.Artifact;
@@ -157,7 +154,7 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
                 optionalKey);
           }
         };
-    assertFalse(mockFunc.isConfigured());
+    assertThat(mockFunc.isConfigured()).isFalse();
     mockFunc.configure(
         SkylarkRuleImplementationFunctionsTest.class
             .getDeclaredField("mockFunc")
@@ -187,20 +184,20 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
   public void testSkylarkFunctionPosArgs() throws Exception {
     setupSkylarkFunction("a = mock('a', 'b', mandatory_key='c')");
     Map<?, ?> params = (Map<?, ?>) lookup("a");
-    assertEquals("a", params.get("mandatory"));
-    assertEquals("b", params.get("optional"));
-    assertEquals("c", params.get("mandatory_key"));
-    assertEquals("x", params.get("optional_key"));
+    assertThat(params.get("mandatory")).isEqualTo("a");
+    assertThat(params.get("optional")).isEqualTo("b");
+    assertThat(params.get("mandatory_key")).isEqualTo("c");
+    assertThat(params.get("optional_key")).isEqualTo("x");
   }
 
   @Test
   public void testSkylarkFunctionKwArgs() throws Exception {
     setupSkylarkFunction("a = mock(optional='b', mandatory='a', mandatory_key='c')");
     Map<?, ?> params = (Map<?, ?>) lookup("a");
-    assertEquals("a", params.get("mandatory"));
-    assertEquals("b", params.get("optional"));
-    assertEquals("c", params.get("mandatory_key"));
-    assertEquals("x", params.get("optional_key"));
+    assertThat(params.get("mandatory")).isEqualTo("a");
+    assertThat(params.get("optional")).isEqualTo("b");
+    assertThat(params.get("mandatory_key")).isEqualTo("c");
+    assertThat(params.get("optional_key")).isEqualTo("x");
   }
 
   @Test
@@ -257,9 +254,9 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
     assertArtifactFilenames(action.getOutputs(), "a.txt", "b.img");
     MoreAsserts.assertContainsSublist(
         action.getArguments(), "-c", "dummy_command", "", "--a", "--b");
-    assertEquals("DummyMnemonic", action.getMnemonic());
-    assertEquals("dummy_message", action.getProgressMessage());
-    assertEquals(targetConfig.getLocalShellEnvironment(), action.getEnvironment());
+    assertThat(action.getMnemonic()).isEqualTo("DummyMnemonic");
+    assertThat(action.getProgressMessage()).isEqualTo("dummy_message");
+    assertThat(action.getEnvironment()).isEqualTo(targetConfig.getLocalShellEnvironment());
   }
 
   @Test
@@ -269,6 +266,26 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
         ruleContext,
         "ruleContext.action(",
         "  inputs = ruleContext.files.srcs,",
+        "  outputs = ruleContext.files.srcs,",
+        "  arguments = ['--a','--b'],",
+        "  executable = ruleContext.files.tools[0])");
+    SpawnAction action =
+        (SpawnAction)
+            Iterables.getOnlyElement(
+                ruleContext.getRuleContext().getAnalysisEnvironment().getRegisteredActions());
+    assertArtifactFilenames(action.getInputs(), "a.txt", "b.img", "t.exe");
+    assertArtifactFilenames(action.getOutputs(), "a.txt", "b.img");
+    MoreAsserts.assertContainsSublist(action.getArguments(), "foo/t.exe", "--a", "--b");
+  }
+
+  @Test
+  public void testCreateActionWithDepsetInput() throws Exception {
+    // Same test as above, with depset as inputs.
+    SkylarkRuleContext ruleContext = createRuleContext("//foo:foo");
+    evalRuleContextCode(
+        ruleContext,
+        "ruleContext.action(",
+        "  inputs = depset(ruleContext.files.srcs),",
         "  outputs = ruleContext.files.srcs,",
         "  arguments = ['--a','--b'],",
         "  executable = ruleContext.files.tools[0])");
@@ -331,8 +348,8 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
         (SpawnAction)
             Iterables.getOnlyElement(
                 ruleContext.getRuleContext().getAnalysisEnvironment().getRegisteredActions());
-    assertEquals(ImmutableMap.of("a", "b"), action.getEnvironment());
-    assertEquals(ImmutableMap.of("a", "b"), action.getExecutionInfo());
+    assertThat(action.getEnvironment()).containsExactly("a", "b");
+    assertThat(action.getExecutionInfo()).containsExactly("a", "b");
   }
 
   @Test
@@ -392,17 +409,18 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
     SkylarkRuleContext ruleContext = createRuleContext("//foo:foo");
     evalRuleContextCode(
         ruleContext,
-        "ruleContext.file_action(",
+        "ruleContext.actions.write(",
         "  output = ruleContext.files.srcs[0],",
         "  content = 'hello world',",
-        "  executable = False)");
+        "  is_executable = False)");
     FileWriteAction action =
         (FileWriteAction)
             Iterables.getOnlyElement(
                 ruleContext.getRuleContext().getAnalysisEnvironment().getRegisteredActions());
-    assertEquals("foo/a.txt", Iterables.getOnlyElement(action.getOutputs()).getExecPathString());
-    assertEquals("hello world", action.getFileContents());
-    assertFalse(action.makeExecutable());
+    assertThat(Iterables.getOnlyElement(action.getOutputs()).getExecPathString())
+        .isEqualTo("foo/a.txt");
+    assertThat(action.getFileContents()).isEqualTo("hello world");
+    assertThat(action.makeExecutable()).isFalse();
   }
 
   @Test
@@ -411,17 +429,18 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
 
     checkEmptyAction(ruleContext, "mnemonic = 'test'");
     checkEmptyAction(ruleContext, "mnemonic = 'test', inputs = ruleContext.files.srcs");
+    checkEmptyAction(ruleContext, "mnemonic = 'test', inputs = depset(ruleContext.files.srcs)");
 
     checkErrorContains(
         ruleContext,
-        "missing mandatory named-only argument 'mnemonic' while calling empty_action",
-        "ruleContext.empty_action(inputs = ruleContext.files.srcs)");
+        "parameter 'mnemonic' has no default value, in method do_nothing(list inputs) of 'actions'",
+        "ruleContext.actions.do_nothing(inputs = ruleContext.files.srcs)");
   }
 
   private void checkEmptyAction(SkylarkRuleContext ruleContext, String namedArgs) throws Exception {
     assertThat(
             evalRuleContextCode(
-                ruleContext, String.format("ruleContext.empty_action(%s)", namedArgs)))
+                ruleContext, String.format("ruleContext.actions.do_nothing(%s)", namedArgs)))
         .isEqualTo(Runtime.NONE);
   }
 
@@ -430,7 +449,7 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
     scratch.file(
         "test/empty.bzl",
         "def _impl(ctx):",
-        "  ctx.empty_action(",
+        "  ctx.actions.do_nothing(",
         "      inputs = ctx.files.srcs,",
         "      mnemonic = 'EA',",
         "  )",
@@ -509,10 +528,11 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
 
   private void assertMatches(String description, String expectedPattern, String computedValue)
       throws Exception {
-    assertTrue(
-        Printer.format(
-            "%s %r did not match pattern '%s'", description, computedValue, expectedPattern),
-        Pattern.matches(expectedPattern, computedValue));
+    assertWithMessage(
+            Printer.format(
+                "%s %r did not match pattern '%s'", description, computedValue, expectedPattern))
+        .that(Pattern.matches(expectedPattern, computedValue))
+        .isTrue();
   }
 
   @Test
@@ -601,12 +621,12 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
     SkylarkRuleContext ruleContext = createRuleContext("//foo:foo");
     checkErrorContains(
         ruleContext,
-        "method ctx.file_action(output: File, content: string, executable: bool) is not applicable "
-            + "for arguments (File, int, bool): 'content' is 'int', but should be 'string'",
-        "ruleContext.file_action(",
+        "Cannot convert parameter 'content' to type string, in method "
+            + "write(File output, int content, bool is_executable) of 'actions'",
+        "ruleContext.actions.write(",
         "  output = ruleContext.files.srcs[0],",
         "  content = 1,",
-        "  executable = False)");
+        "  is_executable = False)");
   }
 
   @Test
@@ -621,11 +641,13 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
                 "  output = ruleContext.files.srcs[1],",
                 "  substitutions = {'a': 'b'},",
                 "  executable = False)");
-    assertEquals("foo/a.txt", Iterables.getOnlyElement(action.getInputs()).getExecPathString());
-    assertEquals("foo/b.img", Iterables.getOnlyElement(action.getOutputs()).getExecPathString());
-    assertEquals("a", Iterables.getOnlyElement(action.getSubstitutions()).getKey());
-    assertEquals("b", Iterables.getOnlyElement(action.getSubstitutions()).getValue());
-    assertFalse(action.makeExecutable());
+    assertThat(Iterables.getOnlyElement(action.getInputs()).getExecPathString())
+        .isEqualTo("foo/a.txt");
+    assertThat(Iterables.getOnlyElement(action.getOutputs()).getExecPathString())
+        .isEqualTo("foo/b.img");
+    assertThat(Iterables.getOnlyElement(action.getSubstitutions()).getKey()).isEqualTo("a");
+    assertThat(Iterables.getOnlyElement(action.getSubstitutions()).getValue()).isEqualTo("b");
+    assertThat(action.makeExecutable()).isFalse();
   }
 
   /**
@@ -719,9 +741,8 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
             ruleContext,
             "artifacts = ruleContext.files.srcs",
             "ruleContext.runfiles(files = artifacts)");
-    assertEquals(
-        ActionsTestUtil.baseArtifactNames(getRunfileArtifacts(result)),
-        ImmutableList.of("a.txt", "b.img"));
+    assertThat(ImmutableList.of("a.txt", "b.img"))
+        .isEqualTo(ActionsTestUtil.baseArtifactNames(getRunfileArtifacts(result)));
   }
 
   @Test
@@ -732,9 +753,8 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
             ruleContext,
             "ftb = depset() + ruleContext.files.srcs",
             "ruleContext.runfiles(transitive_files = ftb)");
-    assertEquals(
-        ActionsTestUtil.baseArtifactNames(getRunfileArtifacts(result)),
-        ImmutableList.of("a.txt", "b.img"));
+    assertThat(ImmutableList.of("a.txt", "b.img"))
+        .isEqualTo(ActionsTestUtil.baseArtifactNames(getRunfileArtifacts(result)));
   }
 
   @Test
@@ -748,9 +768,8 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
             // is an ImmutableList and Skylark interprets it as a tuple.
             "ruleContext.runfiles(collect_default = True, files = artifacts)");
     // From DEFAULT only libjl.jar comes, see testRunfilesAddFromDependencies().
-    assertEquals(
-        ActionsTestUtil.baseArtifactNames(getRunfileArtifacts(result)),
-        ImmutableList.of("libjl.jar", "gl.a", "gl.gcgox"));
+    assertThat(ImmutableList.of("libjl.jar", "gl.a", "gl.gcgox"))
+        .isEqualTo(ActionsTestUtil.baseArtifactNames(getRunfileArtifacts(result)));
   }
 
   @Test
@@ -759,8 +778,8 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
         evalRuleContextCode(
             "artifacts = ruleContext.files.srcs",
             "ruleContext.runfiles(symlinks = {'sym1': artifacts[0]})");
-    assertEquals(
-        ActionsTestUtil.baseArtifactNames(getRunfileArtifacts(result)), ImmutableList.of("a.txt"));
+    assertThat(ImmutableList.of("a.txt"))
+        .isEqualTo(ActionsTestUtil.baseArtifactNames(getRunfileArtifacts(result)));
   }
 
   @Test
@@ -769,8 +788,8 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
         evalRuleContextCode(
             "artifacts = ruleContext.files.srcs",
             "ruleContext.runfiles(root_symlinks = {'sym1': artifacts[0]})");
-    assertEquals(
-        ActionsTestUtil.baseArtifactNames(getRunfileArtifacts(result)), ImmutableList.of("a.txt"));
+    assertThat(ImmutableList.of("a.txt"))
+        .isEqualTo(ActionsTestUtil.baseArtifactNames(getRunfileArtifacts(result)));
   }
 
   @Test
@@ -814,7 +833,7 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
     Object result =
         evalRuleContextCode(
             ruleContext, "f = depset(ruleContext.files.srcs)", "cmd_helper.join_paths(':', f)");
-    assertEquals("foo/a.txt:foo/b.img", result);
+    assertThat(result).isEqualTo("foo/a.txt:foo/b.img");
   }
 
   @Test
@@ -838,8 +857,8 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
   public void testFilesForRuleConfiguredTarget() throws Exception {
     Object result =
         evalRuleContextCode(createRuleContext("//foo:foo"), "ruleContext.attr.srcs[0].files");
-    assertEquals(
-        "a.txt", ActionsTestUtil.baseNamesOf(((SkylarkNestedSet) result).getSet(Artifact.class)));
+    assertThat(ActionsTestUtil.baseNamesOf(((SkylarkNestedSet) result).getSet(Artifact.class)))
+        .isEqualTo("a.txt");
   }
 
   @Test
@@ -1042,7 +1061,7 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
       getConfiguredTarget("//test:my_rule");
       fail();
     } catch (AssertionError expected) {
-      assertThat(expected.getMessage()).contains("Invalid key for default provider: foo");
+      assertThat(expected).hasMessageThat().contains("Invalid key for default provider: foo");
     }
   }
 
@@ -1178,8 +1197,9 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
       getConfiguredTarget("//test:my_rule");
       fail();
     } catch (AssertionError expected) {
-      assertThat(expected.getMessage()).contains("Object of type Target doesn't "
-          + "contain declared provider unused_provider");
+      assertThat(expected)
+          .hasMessageThat()
+          .contains("Object of type Target doesn't " + "contain declared provider unused_provider");
     }
   }
 
@@ -1222,8 +1242,10 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
       getConfiguredTarget("//test:my_rule");
       fail();
     } catch (AssertionError expected) {
-      assertThat(expected.getMessage()).contains("Type Target only supports indexing "
-          + "by object constructors, got string instead");
+      assertThat(expected)
+          .hasMessageThat()
+          .contains(
+              "Type Target only supports indexing " + "by object constructors, got string instead");
     }
   }
 
@@ -1251,8 +1273,9 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
       getConfiguredTarget("//test:my_rule");
       fail();
     } catch (AssertionError expected) {
-      assertThat(expected.getMessage()).contains("Object of type Target doesn't "
-          + "contain declared provider unused_provider");
+      assertThat(expected)
+          .hasMessageThat()
+          .contains("Object of type Target doesn't " + "contain declared provider unused_provider");
     }
   }
 
@@ -1332,8 +1355,10 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
       getConfiguredTarget("//test:my_rule");
       fail();
     } catch (AssertionError expected) {
-      assertThat(expected.getMessage()).contains("Type Target only supports querying by object "
-          + "constructors, got string instead");
+      assertThat(expected)
+          .hasMessageThat()
+          .contains(
+              "Type Target only supports querying by object " + "constructors, got string instead");
     }
   }
 
@@ -1341,9 +1366,8 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
   public void testFilesForFileConfiguredTarget() throws Exception {
     Object result =
         evalRuleContextCode(createRuleContext("//foo:bar"), "ruleContext.attr.srcs[0].files");
-    assertEquals(
-        "libjl.jar",
-        ActionsTestUtil.baseNamesOf(((SkylarkNestedSet) result).getSet(Artifact.class)));
+    assertThat(ActionsTestUtil.baseNamesOf(((SkylarkNestedSet) result).getSet(Artifact.class)))
+        .isEqualTo("libjl.jar");
   }
 
   @Test
@@ -1359,14 +1383,14 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
   public void testBinDirPath() throws Exception {
     SkylarkRuleContext ctx = createRuleContext("//foo:bar");
     Object result = evalRuleContextCode(ctx, "ruleContext.bin_dir.path");
-    assertEquals(ctx.getConfiguration().getBinFragment().getPathString(), result);
+    assertThat(result).isEqualTo(ctx.getConfiguration().getBinFragment().getPathString());
   }
 
   @Test
   public void testEmptyLabelListTypeAttrInCtx() throws Exception {
     SkylarkRuleContext ctx = createRuleContext("//foo:baz");
     Object result = evalRuleContextCode(ctx, "ruleContext.attr.srcs");
-    assertEquals(MutableList.EMPTY, result);
+    assertThat(result).isEqualTo(MutableList.EMPTY);
   }
 
   @Test
@@ -1375,7 +1399,7 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
     String java = (String) evalRuleContextCode(ctx, "ruleContext.var['JAVA']");
     // Get the last path segment
     java = java.substring(java.lastIndexOf('/'));
-    assertEquals("/java" + OsUtils.executableExtension(), java);
+    assertThat(java).isEqualTo("/java" + OsUtils.executableExtension());
   }
 
   @Test
@@ -1383,7 +1407,7 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
     SkylarkRuleContext ctx = createRuleContext("//foo:baz");
     boolean coverage =
         (Boolean) evalRuleContextCode(ctx, "ruleContext.configuration.coverage_enabled");
-    assertEquals(coverage, ctx.getRuleContext().getConfiguration().isCodeCoverageEnabled());
+    assertThat(ctx.getRuleContext().getConfiguration().isCodeCoverageEnabled()).isEqualTo(coverage);
   }
 
   @Override
@@ -1509,7 +1533,7 @@ public class SkylarkRuleImplementationFunctionsTest extends SkylarkTestCase {
         "  outs = ctx.outputs",
         "  for i in ctx.attr.srcs:",
         "    o = getattr(outs, 'foo_' + i.label.name)",
-        "    ctx.file_action(",
+        "    ctx.actions.write(",
         "      output = o,",
         "      content = 'hoho')",
         "",

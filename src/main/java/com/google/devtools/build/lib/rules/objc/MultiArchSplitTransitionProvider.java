@@ -14,7 +14,6 @@
 
 package com.google.devtools.build.lib.rules.objc;
 
-import static com.google.devtools.build.lib.syntax.Type.BOOLEAN;
 import static com.google.devtools.build.lib.syntax.Type.STRING;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -23,6 +22,7 @@ import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.analysis.RuleContext;
+import com.google.devtools.build.lib.analysis.config.BuildConfiguration.Options;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
 import com.google.devtools.build.lib.packages.Attribute.SplitTransition;
 import com.google.devtools.build.lib.packages.Attribute.SplitTransitionProvider;
@@ -30,11 +30,12 @@ import com.google.devtools.build.lib.packages.NonconfigurableAttributeMapper;
 import com.google.devtools.build.lib.packages.Rule;
 import com.google.devtools.build.lib.packages.RuleClass.ConfiguredTargetFactory.RuleErrorException;
 import com.google.devtools.build.lib.rules.apple.AppleCommandLineOptions;
+import com.google.devtools.build.lib.rules.apple.AppleConfiguration;
 import com.google.devtools.build.lib.rules.apple.AppleConfiguration.ConfigurationDistinguisher;
 import com.google.devtools.build.lib.rules.apple.DottedVersion;
 import com.google.devtools.build.lib.rules.apple.Platform;
 import com.google.devtools.build.lib.rules.apple.Platform.PlatformType;
-import com.google.devtools.build.lib.rules.objc.ObjcRuleClasses.MultiArchPlatformRule;
+import com.google.devtools.build.lib.rules.objc.ObjcRuleClasses.PlatformRule;
 import java.util.List;
 
 /**
@@ -52,7 +53,6 @@ public class MultiArchSplitTransitionProvider implements SplitTransitionProvider
       "Invalid version string \"%s\". Version must be of the form 'x.y' without alphabetic "
           + "characters, such as '4.3'.";
 
-  private static final String EXTENSION_COPT = "-application-extension";
   private static final ImmutableSet<PlatformType> SUPPORTED_PLATFORM_TYPES =
       ImmutableSet.of(
           PlatformType.IOS, PlatformType.WATCHOS, PlatformType.TVOS, PlatformType.MACOS);
@@ -65,11 +65,12 @@ public class MultiArchSplitTransitionProvider implements SplitTransitionProvider
    */
   public static PlatformType getPlatformType(RuleContext ruleContext) throws RuleErrorException {
     String attributeValue =
-        ruleContext.attributes().get(MultiArchPlatformRule.PLATFORM_TYPE_ATTR_NAME, STRING);
+        ruleContext.attributes().get(PlatformRule.PLATFORM_TYPE_ATTR_NAME, STRING);
     try {
       return getPlatformType(attributeValue);
     } catch (IllegalArgumentException exception) {
-      throw ruleContext.throwWithAttributeError(MultiArchPlatformRule.PLATFORM_TYPE_ATTR_NAME,
+      throw ruleContext.throwWithAttributeError(
+          PlatformRule.PLATFORM_TYPE_ATTR_NAME,
           String.format(UNSUPPORTED_PLATFORM_TYPE_ERROR_FORMAT, attributeValue));
     }
   }
@@ -81,18 +82,19 @@ public class MultiArchSplitTransitionProvider implements SplitTransitionProvider
    *     an invalid value
    */
   public static void validateMinimumOs(RuleContext ruleContext) throws RuleErrorException {
-    String attributeValue =
-        ruleContext.attributes().get(MultiArchPlatformRule.MINIMUM_OS_VERSION, STRING);
+    String attributeValue = ruleContext.attributes().get(PlatformRule.MINIMUM_OS_VERSION, STRING);
     // TODO(b/37096178): This should be a mandatory attribute.
     if (!Strings.isNullOrEmpty(attributeValue)) {
       try {
         DottedVersion minimumOsVersion = DottedVersion.fromString(attributeValue);
         if (minimumOsVersion.hasAlphabeticCharacters() || minimumOsVersion.numComponents() > 2) {
-          throw ruleContext.throwWithAttributeError(MultiArchPlatformRule.MINIMUM_OS_VERSION,
+          throw ruleContext.throwWithAttributeError(
+              PlatformRule.MINIMUM_OS_VERSION,
               String.format(INVALID_VERSION_STRING_ERROR_FORMAT, attributeValue));
         }
       } catch (IllegalArgumentException exception) {
-        throw ruleContext.throwWithAttributeError(MultiArchPlatformRule.MINIMUM_OS_VERSION,
+        throw ruleContext.throwWithAttributeError(
+            PlatformRule.MINIMUM_OS_VERSION,
             String.format(INVALID_VERSION_STRING_ERROR_FORMAT, attributeValue));
       }
     }
@@ -118,12 +120,8 @@ public class MultiArchSplitTransitionProvider implements SplitTransitionProvider
   @Override
   public SplitTransition<?> apply(Rule fromRule) {
     NonconfigurableAttributeMapper attrMapper = NonconfigurableAttributeMapper.of(fromRule);
-    String platformTypeString = 
-        attrMapper.get(MultiArchPlatformRule.PLATFORM_TYPE_ATTR_NAME, STRING);
-    String minimumOsVersionString = 
-        attrMapper.get(MultiArchPlatformRule.MINIMUM_OS_VERSION, STRING);
-    boolean isExtension = attrMapper.has(AppleBinaryRule.EXTENSION_SAFE_ATTR_NAME, BOOLEAN)
-        && attrMapper.get(AppleBinaryRule.EXTENSION_SAFE_ATTR_NAME, BOOLEAN);
+    String platformTypeString = attrMapper.get(PlatformRule.PLATFORM_TYPE_ATTR_NAME, STRING);
+    String minimumOsVersionString = attrMapper.get(PlatformRule.MINIMUM_OS_VERSION, STRING);
     PlatformType platformType;
     Optional<DottedVersion> minimumOsVersion;
     try {
@@ -142,7 +140,7 @@ public class MultiArchSplitTransitionProvider implements SplitTransitionProvider
       minimumOsVersion = Optional.absent();
     }
 
-    return new AppleBinaryTransition(platformType, minimumOsVersion, isExtension);
+    return new AppleBinaryTransition(platformType, minimumOsVersion);
   }
 
   /**
@@ -155,14 +153,11 @@ public class MultiArchSplitTransitionProvider implements SplitTransitionProvider
     private final PlatformType platformType;
     // TODO(b/37096178): This should be a mandatory attribute.
     private final Optional<DottedVersion> minimumOsVersion;
-    private final boolean isExtension;
 
     public AppleBinaryTransition(PlatformType platformType,
-        Optional<DottedVersion> minimumOsVersion,
-        boolean isExtension) {
+        Optional<DottedVersion> minimumOsVersion) {
       this.platformType = platformType;
       this.minimumOsVersion = minimumOsVersion;
-      this.isExtension = isExtension;
     }
 
     @Override
@@ -174,22 +169,22 @@ public class MultiArchSplitTransitionProvider implements SplitTransitionProvider
         case IOS:
           cpus = buildOptions.get(AppleCommandLineOptions.class).iosMultiCpus;
           if (cpus.isEmpty()) {
-            cpus = ImmutableList.of(buildOptions.get(AppleCommandLineOptions.class).iosCpu);
+            cpus =
+                ImmutableList.of(
+                    AppleConfiguration.iosCpuFromCpu(buildOptions.get(Options.class).cpu));
           }
-          configurationDistinguisher = isExtension
-              ? ConfigurationDistinguisher.APPLEBIN_IOS_EXT
-              : ConfigurationDistinguisher.APPLEBIN_IOS;
-          actualMinimumOsVersion = minimumOsVersion.isPresent() ? minimumOsVersion.get()
-              : buildOptions.get(AppleCommandLineOptions.class).iosMinimumOs;
+          configurationDistinguisher = ConfigurationDistinguisher.APPLEBIN_IOS;
+          actualMinimumOsVersion =
+              minimumOsVersion.isPresent()
+                  ? minimumOsVersion.get()
+                  : buildOptions.get(AppleCommandLineOptions.class).iosMinimumOs;
           break;
         case WATCHOS:
           cpus = buildOptions.get(AppleCommandLineOptions.class).watchosCpus;
           if (cpus.isEmpty()) {
             cpus = ImmutableList.of(AppleCommandLineOptions.DEFAULT_WATCHOS_CPU);
           }
-          configurationDistinguisher = isExtension
-              ? ConfigurationDistinguisher.APPLEBIN_WATCHOS_EXT
-              : ConfigurationDistinguisher.APPLEBIN_WATCHOS;
+          configurationDistinguisher = ConfigurationDistinguisher.APPLEBIN_WATCHOS;
           actualMinimumOsVersion = minimumOsVersion.isPresent() ? minimumOsVersion.get()
               : buildOptions.get(AppleCommandLineOptions.class).watchosMinimumOs;
           break;
@@ -198,9 +193,7 @@ public class MultiArchSplitTransitionProvider implements SplitTransitionProvider
           if (cpus.isEmpty()) {
             cpus = ImmutableList.of(AppleCommandLineOptions.DEFAULT_TVOS_CPU);
           }
-          configurationDistinguisher = isExtension
-              ? ConfigurationDistinguisher.APPLEBIN_TVOS_EXT
-              : ConfigurationDistinguisher.APPLEBIN_TVOS;
+          configurationDistinguisher = ConfigurationDistinguisher.APPLEBIN_TVOS;
           actualMinimumOsVersion = minimumOsVersion.isPresent() ? minimumOsVersion.get()
               : buildOptions.get(AppleCommandLineOptions.class).tvosMinimumOs;
           break;
@@ -209,9 +202,7 @@ public class MultiArchSplitTransitionProvider implements SplitTransitionProvider
           if (cpus.isEmpty()) {
             cpus = ImmutableList.of(AppleCommandLineOptions.DEFAULT_MACOS_CPU);
           }
-          configurationDistinguisher = isExtension
-              ? ConfigurationDistinguisher.APPLEBIN_MACOS_EXT
-              : ConfigurationDistinguisher.APPLEBIN_MACOS;
+          configurationDistinguisher = ConfigurationDistinguisher.APPLEBIN_MACOS;
           actualMinimumOsVersion = minimumOsVersion.isPresent() ? minimumOsVersion.get()
               : buildOptions.get(AppleCommandLineOptions.class).macosMinimumOs;
           break;
@@ -219,15 +210,9 @@ public class MultiArchSplitTransitionProvider implements SplitTransitionProvider
           throw new IllegalArgumentException("Unsupported platform type " + platformType);
       }
 
-      List<String> copts = buildOptions.get(ObjcCommandLineOptions.class).copts;
-      if (isExtension && !copts.contains(EXTENSION_COPT)) {
-        copts = ImmutableList.<String>builder()
-            .addAll(copts).add(EXTENSION_COPT).build();
-      }
       ImmutableList.Builder<BuildOptions> splitBuildOptions = ImmutableList.builder();
       for (String cpu : cpus) {
         BuildOptions splitOptions = buildOptions.clone();
-        splitOptions.get(ObjcCommandLineOptions.class).copts = copts;
 
         AppleCommandLineOptions appleCommandLineOptions =
             splitOptions.get(AppleCommandLineOptions.class);

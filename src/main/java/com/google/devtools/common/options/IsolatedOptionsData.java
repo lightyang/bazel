@@ -354,11 +354,9 @@ public class IsolatedOptionsData extends OpaqueOptionsData {
       Map<String, String> booleanAliasMap,
       String optionName) {
     // Check that the negating alias does not conflict with existing flags.
-    checkForCollisions(nameToFieldMap, "no_" + optionName, "boolean option alias");
     checkForCollisions(nameToFieldMap, "no" + optionName, "boolean option alias");
 
     // Record that the boolean option takes up additional namespace for its negating alias.
-    booleanAliasMap.put("no_" + optionName, optionName);
     booleanAliasMap.put("no" + optionName, optionName);
   }
 
@@ -410,6 +408,13 @@ public class IsolatedOptionsData extends OpaqueOptionsData {
         }
 
         Type fieldType = getFieldSingularType(field, annotation);
+        // For simple, static expansions, don't accept non-Void types.
+        if (annotation.expansion().length != 0 && !isVoidField(field)) {
+          throw new ConstructionException(
+              "Option "
+                  + optionName
+                  + " is an expansion flag with a static expansion, but does not have Void type.");
+        }
 
         // Get the converter return type.
         @SuppressWarnings("rawtypes")

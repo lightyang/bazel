@@ -14,9 +14,6 @@
 package com.google.devtools.build.lib.rules.config;
 
 import static com.google.common.truth.Truth.assertThat;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -34,7 +31,9 @@ import com.google.devtools.build.lib.packages.Rule;
 import com.google.devtools.build.lib.testutil.TestConstants;
 import com.google.devtools.build.lib.testutil.TestRuleClassProvider;
 import com.google.devtools.common.options.Option;
+import com.google.devtools.common.options.OptionDocumentationCategory;
 import com.google.devtools.common.options.OptionsParser.OptionUsageRestrictions;
+import com.google.devtools.common.options.proto.OptionFilters.OptionEffectTag;
 import java.util.Map;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -52,7 +51,12 @@ public class ConfigSettingTest extends BuildViewTestCase {
   public static class LateBoundTestOptions extends FragmentOptions {
     public LateBoundTestOptions() {}
 
-    @Option(name = "opt_with_default", defaultValue = "null")
+    @Option(
+      name = "opt_with_default",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
+      defaultValue = "null"
+    )
     public String optwithDefault;
   }
 
@@ -89,6 +93,8 @@ public class ConfigSettingTest extends BuildViewTestCase {
 
     @Option(
       name = "internal_option",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "super secret",
       optionUsageRestrictions = OptionUsageRestrictions.INTERNAL
     )
@@ -151,19 +157,19 @@ public class ConfigSettingTest extends BuildViewTestCase {
 
     // First flag mismatches:
     useConfiguration("-c", "opt", "--stamp");
-    assertFalse(getConfigMatchingProvider("//pkg:foo").matches());
+    assertThat(getConfigMatchingProvider("//pkg:foo").matches()).isFalse();
 
     // Second flag mismatches:
     useConfiguration("-c", "dbg", "--nostamp");
-    assertFalse(getConfigMatchingProvider("//pkg:foo").matches());
+    assertThat(getConfigMatchingProvider("//pkg:foo").matches()).isFalse();
 
     // Both flags mismatch:
     useConfiguration("-c", "opt", "--nostamp");
-    assertFalse(getConfigMatchingProvider("//pkg:foo").matches());
+    assertThat(getConfigMatchingProvider("//pkg:foo").matches()).isFalse();
 
     // Both flags match:
     useConfiguration("-c", "dbg", "--stamp");
-    assertTrue(getConfigMatchingProvider("//pkg:foo").matches());
+    assertThat(getConfigMatchingProvider("//pkg:foo").matches()).isTrue();
   }
 
   /**
@@ -172,9 +178,8 @@ public class ConfigSettingTest extends BuildViewTestCase {
   @Test
   public void labelGetter() throws Exception {
     writeSimpleExample();
-    assertEquals(
-        Label.parseAbsolute("//pkg:foo"),
-        getConfigMatchingProvider("//pkg:foo").label());
+    assertThat(getConfigMatchingProvider("//pkg:foo").label())
+        .isEqualTo(Label.parseAbsolute("//pkg:foo"));
   }
 
   /**
@@ -254,7 +259,7 @@ public class ConfigSettingTest extends BuildViewTestCase {
         "    name = 'match',",
         "    values = { 'opt_with_default': 'overridden' }",
         ")");
-    assertTrue(getConfigMatchingProvider("//test:match").matches());
+    assertThat(getConfigMatchingProvider("//test:match").matches()).isTrue();
   }
 
   /**
@@ -270,17 +275,17 @@ public class ConfigSettingTest extends BuildViewTestCase {
         "    })");
 
     useConfiguration("");
-    assertFalse(getConfigMatchingProvider("//test:match").matches());
+    assertThat(getConfigMatchingProvider("//test:match").matches()).isFalse();
     useConfiguration("--define", "foo=bar");
-    assertTrue(getConfigMatchingProvider("//test:match").matches());
+    assertThat(getConfigMatchingProvider("//test:match").matches()).isTrue();
     useConfiguration("--define", "foo=baz");
-    assertFalse(getConfigMatchingProvider("//test:match").matches());
+    assertThat(getConfigMatchingProvider("//test:match").matches()).isFalse();
     useConfiguration("--define", "foo=bar", "--define", "bar=baz");
-    assertTrue(getConfigMatchingProvider("//test:match").matches());
+    assertThat(getConfigMatchingProvider("//test:match").matches()).isTrue();
     useConfiguration("--define", "foo=bar", "--define", "bar=baz", "--define", "foo=nope");
-    assertFalse(getConfigMatchingProvider("//test:match").matches());
+    assertThat(getConfigMatchingProvider("//test:match").matches()).isFalse();
     useConfiguration("--define", "foo=nope", "--define", "bar=baz", "--define", "foo=bar");
-    assertTrue(getConfigMatchingProvider("//test:match").matches());
+    assertThat(getConfigMatchingProvider("//test:match").matches()).isTrue();
   }
 
   /**
@@ -296,15 +301,15 @@ public class ConfigSettingTest extends BuildViewTestCase {
         "    })");
 
     useConfiguration("");
-    assertFalse(getConfigMatchingProvider("//test:match").matches());
+    assertThat(getConfigMatchingProvider("//test:match").matches()).isFalse();
     useConfiguration("--copt", "-Dfoo");
-    assertTrue(getConfigMatchingProvider("//test:match").matches());
+    assertThat(getConfigMatchingProvider("//test:match").matches()).isTrue();
     useConfiguration("--copt", "-Dbar");
-    assertFalse(getConfigMatchingProvider("//test:match").matches());
+    assertThat(getConfigMatchingProvider("//test:match").matches()).isFalse();
     useConfiguration("--copt", "-Dfoo", "--copt", "-Dbar");
-    assertTrue(getConfigMatchingProvider("//test:match").matches());
+    assertThat(getConfigMatchingProvider("//test:match").matches()).isTrue();
     useConfiguration("--copt", "-Dbar", "--copt", "-Dfoo");
-    assertTrue(getConfigMatchingProvider("//test:match").matches());
+    assertThat(getConfigMatchingProvider("//test:match").matches()).isTrue();
   }
 
   @Test
@@ -936,6 +941,90 @@ public class ConfigSettingTest extends BuildViewTestCase {
   }
 
   @Test
+  public void matchesAliasedFlagsInFlagValues() throws Exception {
+    scratch.file(
+        "test/BUILD",
+        "config_setting(",
+        "    name = 'alias_matcher',",
+        "    flag_values = {",
+        "        ':alias': 'right',",
+        "    },",
+        ")",
+        "alias(",
+        "    name = 'alias',",
+        "    actual = 'flag',",
+        ")",
+        "config_feature_flag(",
+        "    name = 'flag',",
+        "    allowed_values = ['right', 'wrong'],",
+        "    default_value = 'right',",
+        ")");
+    assertThat(getConfigMatchingProvider("//test:alias_matcher").matches()).isTrue();
+  }
+
+  @Test
+  public void aliasedFlagsAreCountedInRefining() throws Exception {
+    scratch.file(
+        "test/BUILD",
+        "config_setting(",
+        "    name = 'refined',",
+        "    flag_values = {",
+        "        ':alias': 'right',",
+        "        ':flag2': 'good',",
+        "    },",
+        ")",
+        "config_setting(",
+        "    name = 'other',",
+        "    flag_values = {",
+        "        ':flag': 'right',",
+        "    },",
+        ")",
+        "alias(",
+        "    name = 'alias',",
+        "    actual = 'flag',",
+        ")",
+        "config_feature_flag(",
+        "    name = 'flag',",
+        "    allowed_values = ['right', 'wrong'],",
+        "    default_value = 'right',",
+        ")",
+        "config_feature_flag(",
+        "    name = 'flag2',",
+        "    allowed_values = ['good', 'bad'],",
+        "    default_value = 'good',",
+        ")");
+    assertThat(
+            getConfigMatchingProvider("//test:refined")
+                .refines(getConfigMatchingProvider("//test:other")))
+        .isTrue();
+  }
+
+  @Test
+  public void referencingSameFlagViaMultipleAliasesFails() throws Exception {
+    checkError(
+        "test",
+        "multialias",
+        "in flag_values attribute of config_setting rule //test:multialias: "
+            + "flag '//test:direct' referenced multiple times as ['//test:alias', '//test:direct']",
+        "config_setting(",
+        "    name = 'multialias',",
+        "    flag_values = {",
+        "        ':alias': 'right',",
+        "        ':direct': 'right',",
+        "    },",
+        ")",
+        "alias(",
+        "    name = 'alias',",
+        "    actual = 'direct',",
+        ")",
+        "config_feature_flag(",
+        "    name = 'direct',",
+        "    allowed_values = ['right', 'wrong'],",
+        "    default_value = 'right',",
+        ")");
+  }
+
+  @Test
   public void forbidsNonConfigFeatureFlagRulesForFlagValues() throws Exception {
     checkError("test", "invalid_flag",
         "in flag_values attribute of config_setting rule //test:invalid_flag: "
@@ -963,6 +1052,28 @@ public class ConfigSettingTest extends BuildViewTestCase {
         "    flag_values = {",
         "        ':flag': 'invalid',",
         "    })",
+        "config_feature_flag(",
+        "    name = 'flag',",
+        "    allowed_values = ['right', 'valid'],",
+        "    default_value = 'valid',",
+        ")");
+  }
+
+  @Test
+  public void usesAliasLabelWhenReportingErrorInFlagValues() throws Exception {
+    checkError("test", "invalid_flag",
+        "in flag_values attribute of config_setting rule //test:invalid_flag: "
+        + "error while parsing user-defined configuration values: "
+        + "'invalid' is not a valid value for '//test:alias'",
+        "config_setting(",
+        "    name = 'invalid_flag',",
+        "    flag_values = {",
+        "        ':alias': 'invalid',",
+        "    })",
+        "alias(",
+        "    name = 'alias',",
+        "    actual = ':flag',",
+        ")",
         "config_feature_flag(",
         "    name = 'flag',",
         "    allowed_values = ['right', 'valid'],",

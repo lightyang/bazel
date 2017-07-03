@@ -67,7 +67,7 @@ toolchain {
   abi_libc_version: "darwin_x86_64"
   tool_path {
     name: "ar"
-    path: "/usr/bin/libtool"
+    path: "wrapped_ar"
   }
   tool_path {
     name: "compat-ld"
@@ -299,7 +299,7 @@ toolchain {
     }
   }
   feature {
-    name: "cc_archiver_flags"
+    name: "archiver_flags"
     flag_set {
       action: "c++-link-static-library"
       action: "c++-link-alwayslink-static-library"
@@ -310,7 +310,7 @@ toolchain {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
-      expand_if_all_available: "uses_action_configs_for_cc_archiver"
+      expand_if_all_available: "uses_action_configs_for_cc_archiving"
     }
   }
   feature {
@@ -1178,7 +1178,7 @@ toolchain {
     config_name: "c++-link-executable"
     action_name: "c++-link-executable"
     tool {
-      tool_path: "DUMMY_TOOL"
+      tool_path: "cc_wrapper.sh"
     }
     implies: "symbol_counts"
     implies: "linkstamps"
@@ -1197,7 +1197,7 @@ toolchain {
     config_name: "c++-link-dynamic-library"
     action_name: "c++-link-dynamic-library"
     tool {
-      tool_path: "wrapped_clang"
+      tool_path: "cc_wrapper.sh"
     }
     implies: "has_configured_linker_path"
     implies: "symbol_counts"
@@ -1221,7 +1221,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -1234,7 +1234,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -1247,7 +1247,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -1260,7 +1260,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -1269,7 +1269,8 @@ toolchain {
     config_name: "c++-link-interface-dynamic-library"
     action_name: "c++-link-interface-dynamic-library"
     tool {
-      tool_path: "DUMMY_TOOL"
+      tool_path: "wrapped_clang"
+      execution_requirement: "requires-darwin"
     }
     implies: "strip_debug_symbols"
     implies: "apple_env"
@@ -1317,7 +1318,7 @@ toolchain {
   abi_libc_version: "local"
   tool_path {
     name: "ar"
-    path: "/usr/bin/libtool"
+    path: "wrapped_ar"
   }
   tool_path {
     name: "compat-ld"
@@ -1553,7 +1554,7 @@ toolchain {
     }
   }
   feature {
-    name: "cc_archiver_flags"
+    name: "archiver_flags"
     flag_set {
       action: "c++-link-static-library"
       action: "c++-link-alwayslink-static-library"
@@ -1564,7 +1565,7 @@ toolchain {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
-      expand_if_all_available: "uses_action_configs_for_cc_archiver"
+      expand_if_all_available: "uses_action_configs_for_cc_archiving"
     }
   }
   feature {
@@ -2439,7 +2440,7 @@ toolchain {
     config_name: "c++-link-executable"
     action_name: "c++-link-executable"
     tool {
-      tool_path: "DUMMY_TOOL"
+      tool_path: "cc_wrapper.sh"
     }
     implies: "symbol_counts"
     implies: "linkstamps"
@@ -2458,7 +2459,7 @@ toolchain {
     config_name: "c++-link-dynamic-library"
     action_name: "c++-link-dynamic-library"
     tool {
-      tool_path: "wrapped_clang"
+      tool_path: "cc_wrapper.sh"
     }
     implies: "has_configured_linker_path"
     implies: "symbol_counts"
@@ -2482,7 +2483,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -2495,7 +2496,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -2508,7 +2509,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -2521,7 +2522,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -2530,7 +2531,8 @@ toolchain {
     config_name: "c++-link-interface-dynamic-library"
     action_name: "c++-link-interface-dynamic-library"
     tool {
-      tool_path: "DUMMY_TOOL"
+      tool_path: "wrapped_clang"
+      execution_requirement: "requires-darwin"
     }
     implies: "strip_debug_symbols"
     implies: "apple_env"
@@ -2578,7 +2580,7 @@ toolchain {
   abi_libc_version: "local"
   tool_path {
     name: "ar"
-    path: "/usr/bin/libtool"
+    path: "wrapped_ar"
   }
   tool_path {
     name: "compat-ld"
@@ -2814,7 +2816,7 @@ toolchain {
     }
   }
   feature {
-    name: "cc_archiver_flags"
+    name: "archiver_flags"
     flag_set {
       action: "c++-link-static-library"
       action: "c++-link-alwayslink-static-library"
@@ -2825,7 +2827,7 @@ toolchain {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
-      expand_if_all_available: "uses_action_configs_for_cc_archiver"
+      expand_if_all_available: "uses_action_configs_for_cc_archiving"
     }
   }
   feature {
@@ -3702,7 +3704,7 @@ toolchain {
     config_name: "c++-link-executable"
     action_name: "c++-link-executable"
     tool {
-      tool_path: "DUMMY_TOOL"
+      tool_path: "cc_wrapper.sh"
     }
     implies: "symbol_counts"
     implies: "linkstamps"
@@ -3721,7 +3723,7 @@ toolchain {
     config_name: "c++-link-dynamic-library"
     action_name: "c++-link-dynamic-library"
     tool {
-      tool_path: "wrapped_clang"
+      tool_path: "cc_wrapper.sh"
     }
     implies: "has_configured_linker_path"
     implies: "symbol_counts"
@@ -3745,7 +3747,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -3758,7 +3760,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -3771,7 +3773,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -3784,7 +3786,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -3793,7 +3795,8 @@ toolchain {
     config_name: "c++-link-interface-dynamic-library"
     action_name: "c++-link-interface-dynamic-library"
     tool {
-      tool_path: "DUMMY_TOOL"
+      tool_path: "wrapped_clang"
+      execution_requirement: "requires-darwin"
     }
     implies: "strip_debug_symbols"
     implies: "apple_env"
@@ -3841,7 +3844,7 @@ toolchain {
   abi_libc_version: "local"
   tool_path {
     name: "ar"
-    path: "/usr/bin/libtool"
+    path: "wrapped_ar"
   }
   tool_path {
     name: "compat-ld"
@@ -4078,7 +4081,7 @@ toolchain {
     }
   }
   feature {
-    name: "cc_archiver_flags"
+    name: "archiver_flags"
     flag_set {
       action: "c++-link-static-library"
       action: "c++-link-alwayslink-static-library"
@@ -4089,7 +4092,7 @@ toolchain {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
-      expand_if_all_available: "uses_action_configs_for_cc_archiver"
+      expand_if_all_available: "uses_action_configs_for_cc_archiving"
     }
   }
   feature {
@@ -5000,7 +5003,7 @@ toolchain {
     config_name: "c++-link-executable"
     action_name: "c++-link-executable"
     tool {
-      tool_path: "DUMMY_TOOL"
+      tool_path: "cc_wrapper.sh"
     }
     implies: "symbol_counts"
     implies: "linkstamps"
@@ -5020,7 +5023,7 @@ toolchain {
     config_name: "c++-link-dynamic-library"
     action_name: "c++-link-dynamic-library"
     tool {
-      tool_path: "wrapped_clang"
+      tool_path: "cc_wrapper.sh"
     }
     implies: "has_configured_linker_path"
     implies: "symbol_counts"
@@ -5045,7 +5048,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -5058,7 +5061,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -5071,7 +5074,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -5084,7 +5087,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -5093,7 +5096,8 @@ toolchain {
     config_name: "c++-link-interface-dynamic-library"
     action_name: "c++-link-interface-dynamic-library"
     tool {
-      tool_path: "DUMMY_TOOL"
+      tool_path: "wrapped_clang"
+      execution_requirement: "requires-darwin"
     }
     implies: "strip_debug_symbols"
     implies: "apple_env"
@@ -5141,7 +5145,7 @@ toolchain {
   abi_libc_version: "local"
   tool_path {
     name: "ar"
-    path: "/usr/bin/libtool"
+    path: "wrapped_ar"
   }
   tool_path {
     name: "compat-ld"
@@ -5377,7 +5381,7 @@ toolchain {
     }
   }
   feature {
-    name: "cc_archiver_flags"
+    name: "archiver_flags"
     flag_set {
       action: "c++-link-static-library"
       action: "c++-link-alwayslink-static-library"
@@ -5388,7 +5392,7 @@ toolchain {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
-      expand_if_all_available: "uses_action_configs_for_cc_archiver"
+      expand_if_all_available: "uses_action_configs_for_cc_archiving"
     }
   }
   feature {
@@ -6263,7 +6267,7 @@ toolchain {
     config_name: "c++-link-executable"
     action_name: "c++-link-executable"
     tool {
-      tool_path: "DUMMY_TOOL"
+      tool_path: "cc_wrapper.sh"
     }
     implies: "symbol_counts"
     implies: "linkstamps"
@@ -6282,7 +6286,7 @@ toolchain {
     config_name: "c++-link-dynamic-library"
     action_name: "c++-link-dynamic-library"
     tool {
-      tool_path: "wrapped_clang"
+      tool_path: "cc_wrapper.sh"
     }
     implies: "has_configured_linker_path"
     implies: "symbol_counts"
@@ -6306,7 +6310,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -6319,7 +6323,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -6332,7 +6336,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -6345,7 +6349,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -6354,7 +6358,8 @@ toolchain {
     config_name: "c++-link-interface-dynamic-library"
     action_name: "c++-link-interface-dynamic-library"
     tool {
-      tool_path: "DUMMY_TOOL"
+      tool_path: "wrapped_clang"
+      execution_requirement: "requires-darwin"
     }
     implies: "strip_debug_symbols"
     implies: "apple_env"
@@ -6402,7 +6407,7 @@ toolchain {
   abi_libc_version: "local"
   tool_path {
     name: "ar"
-    path: "/usr/bin/libtool"
+    path: "wrapped_ar"
   }
   tool_path {
     name: "compat-ld"
@@ -6638,7 +6643,7 @@ toolchain {
     }
   }
   feature {
-    name: "cc_archiver_flags"
+    name: "archiver_flags"
     flag_set {
       action: "c++-link-static-library"
       action: "c++-link-alwayslink-static-library"
@@ -6649,7 +6654,7 @@ toolchain {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
-      expand_if_all_available: "uses_action_configs_for_cc_archiver"
+      expand_if_all_available: "uses_action_configs_for_cc_archiving"
     }
   }
   feature {
@@ -7509,7 +7514,7 @@ toolchain {
     config_name: "c++-link-executable"
     action_name: "c++-link-executable"
     tool {
-      tool_path: "DUMMY_TOOL"
+      tool_path: "cc_wrapper.sh"
     }
     implies: "symbol_counts"
     implies: "linkstamps"
@@ -7528,7 +7533,7 @@ toolchain {
     config_name: "c++-link-dynamic-library"
     action_name: "c++-link-dynamic-library"
     tool {
-      tool_path: "wrapped_clang"
+      tool_path: "cc_wrapper.sh"
     }
     implies: "has_configured_linker_path"
     implies: "symbol_counts"
@@ -7552,7 +7557,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -7565,7 +7570,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -7578,7 +7583,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -7591,7 +7596,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -7600,7 +7605,8 @@ toolchain {
     config_name: "c++-link-interface-dynamic-library"
     action_name: "c++-link-interface-dynamic-library"
     tool {
-      tool_path: "DUMMY_TOOL"
+      tool_path: "wrapped_clang"
+      execution_requirement: "requires-darwin"
     }
     implies: "strip_debug_symbols"
     implies: "apple_env"
@@ -7648,7 +7654,7 @@ toolchain {
   abi_libc_version: "local"
   tool_path {
     name: "ar"
-    path: "/usr/bin/libtool"
+    path: "wrapped_ar"
   }
   tool_path {
     name: "compat-ld"
@@ -7884,7 +7890,7 @@ toolchain {
     }
   }
   feature {
-    name: "cc_archiver_flags"
+    name: "archiver_flags"
     flag_set {
       action: "c++-link-static-library"
       action: "c++-link-alwayslink-static-library"
@@ -7895,7 +7901,7 @@ toolchain {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
-      expand_if_all_available: "uses_action_configs_for_cc_archiver"
+      expand_if_all_available: "uses_action_configs_for_cc_archiving"
     }
   }
   feature {
@@ -8757,7 +8763,7 @@ toolchain {
     config_name: "c++-link-executable"
     action_name: "c++-link-executable"
     tool {
-      tool_path: "DUMMY_TOOL"
+      tool_path: "cc_wrapper.sh"
     }
     implies: "symbol_counts"
     implies: "linkstamps"
@@ -8776,7 +8782,7 @@ toolchain {
     config_name: "c++-link-dynamic-library"
     action_name: "c++-link-dynamic-library"
     tool {
-      tool_path: "wrapped_clang"
+      tool_path: "cc_wrapper.sh"
     }
     implies: "has_configured_linker_path"
     implies: "symbol_counts"
@@ -8800,7 +8806,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -8813,7 +8819,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -8826,7 +8832,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -8839,7 +8845,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -8848,7 +8854,8 @@ toolchain {
     config_name: "c++-link-interface-dynamic-library"
     action_name: "c++-link-interface-dynamic-library"
     tool {
-      tool_path: "DUMMY_TOOL"
+      tool_path: "wrapped_clang"
+      execution_requirement: "requires-darwin"
     }
     implies: "strip_debug_symbols"
     implies: "apple_env"
@@ -8896,7 +8903,7 @@ toolchain {
   abi_libc_version: "local"
   tool_path {
     name: "ar"
-    path: "/usr/bin/libtool"
+    path: "wrapped_ar"
   }
   tool_path {
     name: "compat-ld"
@@ -9133,7 +9140,7 @@ toolchain {
     }
   }
   feature {
-    name: "cc_archiver_flags"
+    name: "archiver_flags"
     flag_set {
       action: "c++-link-static-library"
       action: "c++-link-alwayslink-static-library"
@@ -9144,7 +9151,7 @@ toolchain {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
-      expand_if_all_available: "uses_action_configs_for_cc_archiver"
+      expand_if_all_available: "uses_action_configs_for_cc_archiving"
     }
   }
   feature {
@@ -10040,7 +10047,7 @@ toolchain {
     config_name: "c++-link-executable"
     action_name: "c++-link-executable"
     tool {
-      tool_path: "DUMMY_TOOL"
+      tool_path: "cc_wrapper.sh"
     }
     implies: "symbol_counts"
     implies: "linkstamps"
@@ -10060,7 +10067,7 @@ toolchain {
     config_name: "c++-link-dynamic-library"
     action_name: "c++-link-dynamic-library"
     tool {
-      tool_path: "wrapped_clang"
+      tool_path: "cc_wrapper.sh"
     }
     implies: "has_configured_linker_path"
     implies: "symbol_counts"
@@ -10085,7 +10092,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -10098,7 +10105,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -10111,7 +10118,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -10124,7 +10131,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -10133,7 +10140,8 @@ toolchain {
     config_name: "c++-link-interface-dynamic-library"
     action_name: "c++-link-interface-dynamic-library"
     tool {
-      tool_path: "DUMMY_TOOL"
+      tool_path: "wrapped_clang"
+      execution_requirement: "requires-darwin"
     }
     implies: "strip_debug_symbols"
     implies: "apple_env"
@@ -10181,7 +10189,7 @@ toolchain {
   abi_libc_version: "local"
   tool_path {
     name: "ar"
-    path: "/usr/bin/libtool"
+    path: "wrapped_ar"
   }
   tool_path {
     name: "compat-ld"
@@ -10417,7 +10425,7 @@ toolchain {
     }
   }
   feature {
-    name: "cc_archiver_flags"
+    name: "archiver_flags"
     flag_set {
       action: "c++-link-static-library"
       action: "c++-link-alwayslink-static-library"
@@ -10428,7 +10436,7 @@ toolchain {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
-      expand_if_all_available: "uses_action_configs_for_cc_archiver"
+      expand_if_all_available: "uses_action_configs_for_cc_archiving"
     }
   }
   feature {
@@ -11288,7 +11296,7 @@ toolchain {
     config_name: "c++-link-executable"
     action_name: "c++-link-executable"
     tool {
-      tool_path: "DUMMY_TOOL"
+      tool_path: "cc_wrapper.sh"
     }
     implies: "symbol_counts"
     implies: "linkstamps"
@@ -11307,7 +11315,7 @@ toolchain {
     config_name: "c++-link-dynamic-library"
     action_name: "c++-link-dynamic-library"
     tool {
-      tool_path: "wrapped_clang"
+      tool_path: "cc_wrapper.sh"
     }
     implies: "has_configured_linker_path"
     implies: "symbol_counts"
@@ -11331,7 +11339,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -11344,7 +11352,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -11357,7 +11365,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -11370,7 +11378,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -11379,7 +11387,8 @@ toolchain {
     config_name: "c++-link-interface-dynamic-library"
     action_name: "c++-link-interface-dynamic-library"
     tool {
-      tool_path: "DUMMY_TOOL"
+      tool_path: "wrapped_clang"
+      execution_requirement: "requires-darwin"
     }
     implies: "strip_debug_symbols"
     implies: "apple_env"
@@ -11669,7 +11678,7 @@ toolchain {
     }
   }
   feature {
-    name: "cc_archiver_flags"
+    name: "archiver_flags"
     flag_set {
       action: "c++-link-static-library"
       action: "c++-link-alwayslink-static-library"
@@ -11680,7 +11689,7 @@ toolchain {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
-      expand_if_all_available: "uses_action_configs_for_cc_archiver"
+      expand_if_all_available: "uses_action_configs_for_cc_archiving"
     }
   }
   feature {
@@ -12540,7 +12549,7 @@ toolchain {
     config_name: "c++-link-executable"
     action_name: "c++-link-executable"
     tool {
-      tool_path: "DUMMY_TOOL"
+      tool_path: "cc_wrapper.sh"
     }
     implies: "symbol_counts"
     implies: "linkstamps"
@@ -12559,7 +12568,7 @@ toolchain {
     config_name: "c++-link-dynamic-library"
     action_name: "c++-link-dynamic-library"
     tool {
-      tool_path: "wrapped_clang"
+      tool_path: "cc_wrapper.sh"
     }
     implies: "has_configured_linker_path"
     implies: "symbol_counts"
@@ -12583,7 +12592,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -12596,7 +12605,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -12609,7 +12618,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -12622,7 +12631,7 @@ toolchain {
     }
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
-    implies: "cc_archiver_flags"
+    implies: "archiver_flags"
     implies: "input_param_flags"
     implies: "linker_param_file"
     implies: "apple_env"
@@ -12631,7 +12640,8 @@ toolchain {
     config_name: "c++-link-interface-dynamic-library"
     action_name: "c++-link-interface-dynamic-library"
     tool {
-      tool_path: "DUMMY_TOOL"
+      tool_path: "wrapped_clang"
+      execution_requirement: "requires-darwin"
     }
     implies: "strip_debug_symbols"
     implies: "apple_env"

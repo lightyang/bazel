@@ -16,8 +16,6 @@ package com.google.devtools.build.lib.skylark;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.devtools.build.lib.analysis.OutputGroupProvider.INTERNAL_SUFFIX;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import com.google.common.base.Joiner;
@@ -46,6 +44,7 @@ import com.google.devtools.build.lib.syntax.Runtime;
 import com.google.devtools.build.lib.syntax.SkylarkList;
 import com.google.devtools.build.lib.syntax.SkylarkList.MutableList;
 import com.google.devtools.build.lib.syntax.SkylarkNestedSet;
+import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.skyframe.InMemoryMemoizingEvaluator;
 import com.google.devtools.build.skyframe.SkyFunction;
 import com.google.devtools.build.skyframe.SkyFunctionName;
@@ -423,7 +422,7 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
 
     ConfiguredTarget target = getConfiguredTarget("//test/skylark:cr");
 
-    assertEquals("//test/skylark:cr", target.getLabel().toString());
+    assertThat(target.getLabel().toString()).isEqualTo("//test/skylark:cr");
     assertThat(
         ActionsTestUtil.baseArtifactNames(
             target.getProvider(FileProvider.class).getFilesToBuild()))
@@ -450,7 +449,7 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
 
     ConfiguredTarget target = getConfiguredTarget("//test/skylark:cr");
 
-    assertEquals("//test/skylark:cr", target.getLabel().toString());
+    assertThat(target.getLabel().toString()).isEqualTo("//test/skylark:cr");
     assertThat(
         ActionsTestUtil.baseArtifactNames(
             target.getProvider(RunfilesProvider.class).getDefaultRunfiles().getAllArtifacts()))
@@ -515,8 +514,8 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
 
     ConfiguredTarget target = getConfiguredTarget("//test/skylark:cr");
 
-    assertEquals("//test/skylark:cr", target.getLabel().toString());
-    assertTrue(target.getProvider(RunfilesProvider.class).getDefaultRunfiles().isEmpty());
+    assertThat(target.getLabel().toString()).isEqualTo("//test/skylark:cr");
+    assertThat(target.getProvider(RunfilesProvider.class).getDefaultRunfiles().isEmpty()).isTrue();
     assertThat(
         ActionsTestUtil.baseArtifactNames(
             target.getProvider(RunfilesProvider.class).getDataRunfiles().getAllArtifacts()))
@@ -528,7 +527,7 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
     scratch.file(
         "test/skylark/extension.bzl",
         "def custom_rule_impl(ctx):",
-        "  ctx.file_action(output = ctx.outputs.executable, content = 'echo hello')",
+        "  ctx.actions.write(output = ctx.outputs.executable, content = 'echo hello')",
         "  rf = ctx.runfiles(ctx.files.data)",
         "  return struct(runfiles = rf)",
         "",
@@ -543,7 +542,7 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
 
     ConfiguredTarget target = getConfiguredTarget("//test/skylark:cr");
 
-    assertEquals("//test/skylark:cr", target.getLabel().toString());
+    assertThat(target.getLabel().toString()).isEqualTo("//test/skylark:cr");
     assertThat(
         ActionsTestUtil.baseArtifactNames(
             target.getProvider(RunfilesProvider.class).getDefaultRunfiles().getAllArtifacts()))
@@ -601,7 +600,7 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
 
     ConfiguredTarget target = getConfiguredTarget("//test/skylark:cr");
 
-    assertEquals("//test/skylark:cr", target.getLabel().toString());
+    assertThat(target.getLabel().toString()).isEqualTo("//test/skylark:cr");
     InstrumentedFilesProvider provider = target.getProvider(InstrumentedFilesProvider.class);
     assertWithMessage("InstrumentedFilesProvider should be set.").that(provider).isNotNull();
     assertThat(ActionsTestUtil.baseArtifactNames(provider.getInstrumentedFiles())).isEmpty();
@@ -633,7 +632,7 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
 
     ConfiguredTarget target = getConfiguredTarget("//test/skylark:cr");
 
-    assertEquals("//test/skylark:cr", target.getLabel().toString());
+    assertThat(target.getLabel().toString()).isEqualTo("//test/skylark:cr");
     InstrumentedFilesProvider provider = target.getProvider(InstrumentedFilesProvider.class);
     assertWithMessage("InstrumentedFilesProvider should be set.").that(provider).isNotNull();
     assertThat(ActionsTestUtil.baseArtifactNames(provider.getInstrumentedFiles()))
@@ -694,27 +693,37 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
 
   @Test
   public void testSpecialMandatoryProviderMissing() throws Exception {
+    // Test that rules satisfy `providers = [...]` condition if a special provider that always
+    // exists for all rules is requested. Also check external rules.
+
+    FileSystemUtils.appendIsoLatin1(scratch.resolve("WORKSPACE"),
+        "bind(name = 'bar', actual = '//test/ext:bar')");
+    scratch.file(
+        "test/ext/BUILD",
+        "load('//test/skylark:extension.bzl', 'foobar')",
+        "",
+        "foobar(name = 'bar', visibility = ['//visibility:public'],)");
     scratch.file(
         "test/skylark/extension.bzl",
         "def rule_impl(ctx):",
         "  pass",
         "",
-        "dependent_rule = rule(implementation = rule_impl)",
+        "foobar = rule(implementation = rule_impl)",
         "main_rule = rule(implementation = rule_impl, attrs = {",
         "    'deps': attr.label_list(providers = [",
         "        'files', 'data_runfiles', 'default_runfiles',",
         "        'files_to_run', 'label', 'output_groups',",
         "    ])",
         "})");
-
     scratch.file(
         "test/skylark/BUILD",
-        "load('/test/skylark/extension', 'dependent_rule', 'main_rule')",
+        "load(':extension.bzl', 'foobar', 'main_rule')",
         "",
-        "dependent_rule(name = 'a')",
-        "main_rule(name = 'b', deps = [':a'])");
+        "foobar(name = 'foo')",
+        "main_rule(name = 'main', deps = [':foo', '//external:bar'])");
 
-    getConfiguredTarget("//test/skylark:b");
+    invalidatePackages();
+    getConfiguredTarget("//test/skylark:main");
   }
 
   @Test
@@ -923,8 +932,8 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
         "custom_rule(name = 'cr')");
 
     ConfiguredTarget target = getConfiguredTarget("//test/skylark:cr");
-    assertEquals(Runtime.NONE, target.get("o1"));
-    assertEquals(MutableList.EMPTY, target.get("o2"));
+    assertThat(target.get("o1")).isEqualTo(Runtime.NONE);
+    assertThat(target.get("o2")).isEqualTo(MutableList.EMPTY);
   }
 
   @Test
@@ -958,7 +967,7 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
         "    command = 'echo')",
         "  ftb = depset(files)",
         "  for i in ctx.outputs.out:",
-        "    ctx.file_action(output=i, content='hi there')",
+        "    ctx.actions.write(output=i, content='hi there')",
         "",
         "def output_func(attr1):",
         "  return {'o': attr1 + '.txt'}",
@@ -1112,7 +1121,7 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
 
     ConfiguredTarget target = getConfiguredTarget("//test/skylark:cr");
 
-    assertEquals("//test/skylark:cr", target.getLabel().toString());
+    assertThat(target.getLabel().toString()).isEqualTo("//test/skylark:cr");
     assertThat(
         ActionsTestUtil.baseArtifactNames(
             target.getProvider(FileProvider.class).getFilesToBuild()))
@@ -1353,9 +1362,9 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
       } catch (BuildFileContainsErrorsException e) {
         // The reason that this is an exception and not reported to the event handler is that the
         // error is reported by the parent sky function, which we don't have here.
-        assertThat(e.getMessage()).contains("Skylark import cycle");
-        assertThat(e.getMessage()).contains("test/skylark:ext1.bzl");
-        assertThat(e.getMessage()).contains("test/skylark:ext2.bzl");
+        assertThat(e).hasMessageThat().contains("Skylark import cycle");
+        assertThat(e).hasMessageThat().contains("test/skylark:ext1.bzl");
+        assertThat(e).hasMessageThat().contains("test/skylark:ext2.bzl");
       }
     }
 
@@ -1379,10 +1388,10 @@ public class SkylarkIntegrationTest extends BuildViewTestCase {
       } catch (BuildFileContainsErrorsException e) {
         // The reason that this is an exception and not reported to the event handler is that the
         // error is reported by the parent sky function, which we don't have here.
-        assertThat(e.getMessage()).contains("Skylark import cycle");
-        assertThat(e.getMessage()).contains("//test/skylark:ext2.bzl");
-        assertThat(e.getMessage()).contains("//test/skylark:ext3.bzl");
-        assertThat(e.getMessage()).contains("//test/skylark:ext4.bzl");
+        assertThat(e).hasMessageThat().contains("Skylark import cycle");
+        assertThat(e).hasMessageThat().contains("//test/skylark:ext2.bzl");
+        assertThat(e).hasMessageThat().contains("//test/skylark:ext3.bzl");
+        assertThat(e).hasMessageThat().contains("//test/skylark:ext4.bzl");
       }
     }
 

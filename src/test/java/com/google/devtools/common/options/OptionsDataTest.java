@@ -19,6 +19,7 @@ import static org.junit.Assert.fail;
 
 import com.google.common.collect.ImmutableList;
 import com.google.devtools.common.options.OptionsParser.ConstructionException;
+import com.google.devtools.common.options.proto.OptionFilters.OptionEffectTag;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
@@ -58,12 +59,16 @@ public class OptionsDataTest {
   public static class ExampleNameConflictOptions extends OptionsBase {
     @Option(
       name = "foo",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "1"
     )
     public int foo;
 
     @Option(
       name = "foo",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "I should conflict with foo"
     )
     public String anotherFoo;
@@ -75,8 +80,7 @@ public class OptionsDataTest {
       construct(ExampleNameConflictOptions.class);
       fail("foo should conflict with the previous flag foo");
     } catch (DuplicateOptionDeclarationException e) {
-      assertThat(e.getMessage()).contains(
-          "Duplicate option name, due to option: --foo");
+      assertThat(e).hasMessageThat().contains("Duplicate option name, due to option: --foo");
     }
   }
 
@@ -84,6 +88,8 @@ public class OptionsDataTest {
   public static class ExampleIntegerFooOptions extends OptionsBase {
     @Option(
       name = "foo",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "5"
     )
     public int foo;
@@ -93,6 +99,8 @@ public class OptionsDataTest {
   public static class ExampleBooleanFooOptions extends OptionsBase {
     @Option(
       name = "foo",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "false"
     )
     public boolean foo;
@@ -104,8 +112,7 @@ public class OptionsDataTest {
       construct(ExampleIntegerFooOptions.class, ExampleBooleanFooOptions.class);
       fail("foo should conflict with the previous flag foo");
     } catch (DuplicateOptionDeclarationException e) {
-      assertThat(e.getMessage()).contains(
-          "Duplicate option name, due to option: --foo");
+      assertThat(e).hasMessageThat().contains("Duplicate option name, due to option: --foo");
     }
   }
 
@@ -113,6 +120,8 @@ public class OptionsDataTest {
   public static class ExamplePrefixFooOptions extends OptionsBase {
     @Option(
       name = "nofoo",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "false"
     )
     public boolean noFoo;
@@ -127,9 +136,11 @@ public class OptionsDataTest {
       fail("nofoo should conflict with the previous flag foo, "
          + "since foo, as a boolean flag, can be written as --nofoo");
     } catch (DuplicateOptionDeclarationException e) {
-      assertThat(e.getMessage()).contains(
-          "Duplicate option name, due to option --nofoo, it "
-          + "conflicts with a negating alias for boolean flag --foo");
+      assertThat(e)
+          .hasMessageThat()
+          .contains(
+              "Duplicate option name, due to option --nofoo, it "
+                  + "conflicts with a negating alias for boolean flag --foo");
     }
 
     try {
@@ -137,8 +148,9 @@ public class OptionsDataTest {
       fail("nofoo should conflict with the previous flag foo, "
          + "since foo, as a boolean flag, can be written as --nofoo");
     } catch (DuplicateOptionDeclarationException e) {
-      assertThat(e.getMessage()).contains(
-          "Duplicate option name, due to boolean option alias: --nofoo");
+      assertThat(e)
+          .hasMessageThat()
+          .contains("Duplicate option name, due to boolean option alias: --nofoo");
     }
   }
 
@@ -147,6 +159,8 @@ public class OptionsDataTest {
     @Option(
       name = "bar",
       oldName = "foo",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "false"
     )
     public boolean bar;
@@ -161,8 +175,9 @@ public class OptionsDataTest {
       fail("nofoo should conflict with the previous flag foo, "
          + "since foo, as a boolean flag, can be written as --nofoo");
     } catch (DuplicateOptionDeclarationException e) {
-      assertThat(e.getMessage()).contains(
-          "Duplicate option name, due to boolean option alias: --nofoo");
+      assertThat(e)
+          .hasMessageThat()
+          .contains("Duplicate option name, due to boolean option alias: --nofoo");
     }
   }
 
@@ -171,6 +186,8 @@ public class OptionsDataTest {
     @Option(
       name = "bar",
       oldName = "nofoo",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "false"
     )
     public boolean bar;
@@ -185,9 +202,11 @@ public class OptionsDataTest {
       fail("nofoo, the old name for bar, should conflict with the previous flag foo, "
          + "since foo, as a boolean flag, can be written as --nofoo");
     } catch (DuplicateOptionDeclarationException e) {
-      assertThat(e.getMessage()).contains(
-          "Duplicate option name, due to old option name --nofoo, it conflicts with a "
-          + "negating alias for boolean flag --foo");
+      assertThat(e)
+          .hasMessageThat()
+          .contains(
+              "Duplicate option name, due to old option name --nofoo, it conflicts with a "
+                  + "negating alias for boolean flag --foo");
     }
   }
 
@@ -196,12 +215,16 @@ public class OptionsDataTest {
     @Option(
       name = "new_name",
       oldName = "old_name",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "defaultValue"
     )
     public String flag1;
 
     @Option(
       name = "old_name",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "defaultValue"
     )
     public String flag2;
@@ -234,6 +257,8 @@ public class OptionsDataTest {
     @Option(
       name = "foo",
       converter = StringConverter.class,
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "1"
     )
     public Integer foo;
@@ -255,6 +280,8 @@ public class OptionsDataTest {
     @Option(
       name = "foo",
       converter = StringConverter.class,
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "1",
       allowMultiple = true
     )
@@ -275,9 +302,11 @@ public class OptionsDataTest {
   /** Dummy options class using deprecated category. */
   public static class InvalidUndocumentedCategory extends OptionsBase {
     @Option(
-        name = "experimental_foo",
-        category = "undocumented",
-        defaultValue = "true"
+      name = "experimental_foo",
+      category = "undocumented",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
+      defaultValue = "true"
     )
     public boolean experimentalFoo;
   }
@@ -307,24 +336,32 @@ public class OptionsDataTest {
 
     @Option(
       name = "foo",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "0"
     )
     public int aFoo;
 
     @Option(
       name = "bar",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "0"
     )
     public int bBar;
 
     @Option(
       name = "baz",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "0"
     )
     public int cBaz;
 
     @Option(
       name = "qux",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "0"
     )
     public int dQux;
@@ -334,12 +371,16 @@ public class OptionsDataTest {
   public static class EndOfAlphabetOptions extends OptionsBase {
     @Option(
       name = "X",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "0"
     )
     public int x;
 
     @Option(
       name = "Y",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "0"
     )
     public int y;
@@ -349,18 +390,24 @@ public class OptionsDataTest {
   public static class ReverseOrderedOptions extends OptionsBase {
     @Option(
       name = "C",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "0"
     )
     public int c;
 
     @Option(
       name = "B",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "0"
     )
     public int b;
 
     @Option(
       name = "A",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "0"
     )
     public int a;
@@ -412,5 +459,62 @@ public class OptionsDataTest {
         .containsExactly("X", "Y").inOrder();
     assertThat(getOptionNames(data.getFieldsForClass(ReverseOrderedOptions.class)))
         .containsExactly("A", "B", "C").inOrder();
+  }
+
+  /** Dummy options class. */
+  public static class InvalidExpansionOptions extends OptionsBase {
+    @Option(
+      name = "foo",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
+      defaultValue = "1"
+    )
+    public int foo;
+
+    @Option(
+      name = "bar",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
+      defaultValue = "1",
+      expansion = {"--foo=42"}
+    )
+    public int bar;
+  }
+
+  @Test
+  public void staticExpansionOptionsShouldNotHaveValues() {
+    try {
+      construct(InvalidExpansionOptions.class);
+      fail();
+    } catch (ConstructionException e) {
+      // Expected exception
+      assertThat(e).hasMessageThat().contains(
+          "Option bar is an expansion flag with a static expansion, but does not have Void type.");
+    }
+  }
+
+  /** Dummy options class. */
+  public static class ValidExpansionOptions extends OptionsBase {
+    @Option(
+      name = "foo",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
+      defaultValue = "1"
+    )
+    public int foo;
+
+    @Option(
+      name = "bar",
+      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      effectTags = {OptionEffectTag.NO_OP},
+      defaultValue = "null",
+      expansion = {"--foo=42"}
+    )
+    public Void bar;
+  }
+
+  @Test
+  public void staticExpansionOptionsCanBeVoidType() {
+    construct(ValidExpansionOptions.class);
   }
 }

@@ -25,6 +25,7 @@ import com.google.common.eventbus.EventBus;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.cmdline.PackageIdentifier;
 import com.google.devtools.build.lib.events.Reporter;
+import com.google.devtools.build.lib.packages.AstAfterPreprocessing;
 import com.google.devtools.build.lib.packages.AttributeContainer;
 import com.google.devtools.build.lib.packages.BuildFileContainsErrorsException;
 import com.google.devtools.build.lib.packages.CachingPackageLocator;
@@ -33,7 +34,6 @@ import com.google.devtools.build.lib.packages.NoSuchPackageException;
 import com.google.devtools.build.lib.packages.Package;
 import com.google.devtools.build.lib.packages.PackageFactory;
 import com.google.devtools.build.lib.packages.PackageFactory.EnvironmentExtension;
-import com.google.devtools.build.lib.packages.Preprocessor;
 import com.google.devtools.build.lib.packages.RuleClassProvider;
 import com.google.devtools.build.lib.pkgcache.PathPackageLocator;
 import com.google.devtools.build.lib.skyframe.ASTFileLookupFunction;
@@ -50,8 +50,11 @@ import com.google.devtools.build.lib.skyframe.FileSymlinkCycleUniquenessFunction
 import com.google.devtools.build.lib.skyframe.FileSymlinkInfiniteExpansionUniquenessFunction;
 import com.google.devtools.build.lib.skyframe.GlobFunction;
 import com.google.devtools.build.lib.skyframe.PackageFunction;
+import com.google.devtools.build.lib.skyframe.PackageFunction.ActionOnIOExceptionReadingBuildFile;
 import com.google.devtools.build.lib.skyframe.PackageFunction.CacheEntryWithGlobDeps;
 import com.google.devtools.build.lib.skyframe.PackageLookupFunction;
+import com.google.devtools.build.lib.skyframe.PackageLookupFunction.CrossRepositoryLabelViolationStrategy;
+import com.google.devtools.build.lib.skyframe.PackageLookupValue.BuildFileName;
 import com.google.devtools.build.lib.skyframe.PackageValue;
 import com.google.devtools.build.lib.skyframe.PrecomputedFunction;
 import com.google.devtools.build.lib.skyframe.PrecomputedValue;
@@ -108,8 +111,6 @@ public abstract class AbstractPackageLoader implements PackageLoader {
   protected final ImmutableMap<SkyFunctionName, SkyFunction> extraSkyFunctions;
   protected final AtomicReference<PathPackageLocator> pkgLocatorRef;
   protected final ExternalFilesHelper externalFilesHelper;
-  protected final AtomicReference<ImmutableSet<PackageIdentifier>> deletedPackagesRef =
-      new AtomicReference<>(ImmutableSet.<PackageIdentifier>of());
   protected final CachingPackageLocator packageManager;
   protected final BlazeDirectories directories;
   private final int legacyGlobbingThreads;
@@ -307,7 +308,10 @@ public abstract class AbstractPackageLoader implements PackageLoader {
 
   protected abstract String getName();
   protected abstract ImmutableList<EnvironmentExtension> getEnvironmentExtensions();
-  protected abstract PackageLookupFunction makePackageLookupFunction();
+  protected abstract CrossRepositoryLabelViolationStrategy
+      getCrossRepositoryLabelViolationStrategy();
+  protected abstract ImmutableList<BuildFileName> getBuildFilesByPriority();
+  protected abstract ActionOnIOExceptionReadingBuildFile getActionOnIOExceptionReadingBuildFile();
   protected abstract ImmutableMap<SkyFunctionName, SkyFunction> getExtraExtraSkyFunctions();
 
   protected final ImmutableMap<SkyFunctionName, SkyFunction> makeFreshSkyFunctions() {
@@ -315,7 +319,7 @@ public abstract class AbstractPackageLoader implements PackageLoader {
         new AtomicReference<>(new TimestampGranularityMonitor(BlazeClock.instance()));
     Cache<PackageIdentifier, CacheEntryWithGlobDeps<Package.Builder>> packageFunctionCache =
         CacheBuilder.newBuilder().build();
-    Cache<PackageIdentifier, CacheEntryWithGlobDeps<Preprocessor.AstAfterPreprocessing>> astCache =
+    Cache<PackageIdentifier, CacheEntryWithGlobDeps<AstAfterPreprocessing>> astCache =
         CacheBuilder.newBuilder().build();
     PackageFactory pkgFactory = new PackageFactory(
         ruleClassProvider,
@@ -338,7 +342,12 @@ public abstract class AbstractPackageLoader implements PackageLoader {
             new FileSymlinkInfiniteExpansionUniquenessFunction())
         .put(SkyFunctions.FILE, new FileFunction(pkgLocatorRef))
         .put(SkyFunctions.DIRECTORY_LISTING, new DirectoryListingFunction())
-        .put(SkyFunctions.PACKAGE_LOOKUP, makePackageLookupFunction())
+        .put(
+            SkyFunctions.PACKAGE_LOOKUP,
+            new PackageLookupFunction(
+                /*deletedPackagesRef=*/ new AtomicReference<>(ImmutableSet.<PackageIdentifier>of()),
+                getCrossRepositoryLabelViolationStrategy(),
+                getBuildFilesByPriority()))
         .put(SkyFunctions.BLACKLISTED_PACKAGE_PREFIXES, new BlacklistedPackagePrefixesFunction())
         .put(SkyFunctions.CONTAINING_PACKAGE_LOOKUP, new ContainingPackageLookupFunction())
         .put(SkyFunctions.AST_FILE_LOOKUP, new ASTFileLookupFunction(ruleClassProvider))
@@ -361,7 +370,9 @@ public abstract class AbstractPackageLoader implements PackageLoader {
                 packageFunctionCache,
                 astCache,
                 /*numPackagesLoaded=*/ new AtomicInteger(0),
-                null))
+                /*skylarkImportLookupFunctionForInlining=*/ null,
+                /*packageProgress=*/ null,
+                getActionOnIOExceptionReadingBuildFile()))
         .putAll(extraSkyFunctions)
         .putAll(getExtraExtraSkyFunctions());
     return builder.build();

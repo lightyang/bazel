@@ -81,6 +81,7 @@ import com.google.devtools.build.lib.events.ExtendedEventHandler;
 import com.google.devtools.build.lib.events.Reporter;
 import com.google.devtools.build.lib.exec.OutputService;
 import com.google.devtools.build.lib.packages.AspectDescriptor;
+import com.google.devtools.build.lib.packages.AstAfterPreprocessing;
 import com.google.devtools.build.lib.packages.Attribute;
 import com.google.devtools.build.lib.packages.Attribute.ConfigurationTransition;
 import com.google.devtools.build.lib.packages.BuildFileContainsErrorsException;
@@ -89,7 +90,6 @@ import com.google.devtools.build.lib.packages.NoSuchThingException;
 import com.google.devtools.build.lib.packages.Package;
 import com.google.devtools.build.lib.packages.Package.Builder;
 import com.google.devtools.build.lib.packages.PackageFactory;
-import com.google.devtools.build.lib.packages.Preprocessor.AstAfterPreprocessing;
 import com.google.devtools.build.lib.packages.RuleClassProvider;
 import com.google.devtools.build.lib.packages.RuleVisibility;
 import com.google.devtools.build.lib.pkgcache.LoadingCallback;
@@ -108,6 +108,7 @@ import com.google.devtools.build.lib.profiler.AutoProfiler;
 import com.google.devtools.build.lib.skyframe.AspectValue.AspectValueKey;
 import com.google.devtools.build.lib.skyframe.DirtinessCheckerUtils.FileDirtinessChecker;
 import com.google.devtools.build.lib.skyframe.ExternalFilesHelper.ExternalFileAction;
+import com.google.devtools.build.lib.skyframe.PackageFunction.ActionOnIOExceptionReadingBuildFile;
 import com.google.devtools.build.lib.skyframe.PackageFunction.CacheEntryWithGlobDeps;
 import com.google.devtools.build.lib.skyframe.PackageLookupFunction.CrossRepositoryLabelViolationStrategy;
 import com.google.devtools.build.lib.skyframe.PackageLookupValue.BuildFileName;
@@ -284,6 +285,8 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
   
   private final List<BuildFileName> buildFilesByPriority;
 
+  private final ActionOnIOExceptionReadingBuildFile actionOnIOExceptionReadingBuildFile;
+
   private PerBuildSyscallCache perBuildSyscallCache;
   private int lastConcurrencyLevel = -1;
 
@@ -303,7 +306,8 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
       PathFragment blacklistedPackagePrefixesFile,
       String productName,
       CrossRepositoryLabelViolationStrategy crossRepositoryLabelViolationStrategy,
-      List<BuildFileName> buildFilesByPriority) {
+      List<BuildFileName> buildFilesByPriority,
+      ActionOnIOExceptionReadingBuildFile actionOnIOExceptionReadingBuildFile) {
     // Strictly speaking, these arguments are not required for initialization, but all current
     // callsites have them at hand, so we might as well set them during construction.
     this.evaluatorSupplier = evaluatorSupplier;
@@ -335,6 +339,7 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
     this.productName = productName;
     this.crossRepositoryLabelViolationStrategy = crossRepositoryLabelViolationStrategy;
     this.buildFilesByPriority = buildFilesByPriority;
+    this.actionOnIOExceptionReadingBuildFile = actionOnIOExceptionReadingBuildFile;
     this.removeActionsAfterEvaluation.set(false);
   }
 
@@ -472,7 +477,8 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
         astCache,
         numPackagesLoaded,
         null,
-        packageProgress);
+        packageProgress,
+        actionOnIOExceptionReadingBuildFile);
   }
 
   protected SkyFunction newSkylarkImportLookupFunction(
@@ -1466,10 +1472,17 @@ public abstract class SkyframeExecutor implements WalkableGraphFactory {
       BuildConfiguration configuration,
       Attribute.Transition transition) {
 
-    Preconditions.checkArgument(configuration == null
-        || configuration.useDynamicConfigurations()
-        || transition == ConfigurationTransition.NONE,
-        "Dynamic configurations required for test configuration using a transition");
+    if (configuration != null && !configuration.useDynamicConfigurations()
+        && transition != ConfigurationTransition.NONE) {
+      // It's illegal to apply this transition over a statically configured build. But C++ LIPO
+      // support works by applying a rule configurator for static configurations and a rule
+      // transition applier for dynamic configurations. Dynamically configured builds skip
+      // the configurator and this code makes statically configured builds skip the rule transition
+      // applier.
+      //
+      // This will all get a lot simpler once static configurations are removed entirely.
+      transition = ConfigurationTransition.NONE;
+    }
 
     if (memoizingEvaluator.getExistingValueForTesting(
         PrecomputedValue.WORKSPACE_STATUS_KEY.getKeyForTesting()) == null) {

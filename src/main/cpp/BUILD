@@ -4,6 +4,13 @@ package(
     default_visibility = ["//visibility:public"],
 )
 
+WIN_LINK_OPTS = [
+    "-DEFAULTLIB:advapi32.lib",  # GetUserNameW
+    "-DEFAULTLIB:ole32.lib",  # CoTaskMemFree
+    "-DEFAULTLIB:shell32.lib",  # SHGetKnownFolderPath
+    "-DEFAULTLIB:ws2_32.lib",  # grpc
+]
+
 cc_library(
     name = "blaze_util",
     srcs = [
@@ -50,12 +57,8 @@ cc_library(
         ],
         "//src:freebsd": [
         ],
-        "//src:windows_msvc": [
-            "-Wl,advapi32.lib",  # GetUserNameW
-            "-Wl,ole32.lib",  # CoTaskMemFree
-            "-Wl,shell32.lib",  # SHGetKnownFolderPath
-            "-Wl,ws2_32.lib",  # grpc
-        ],
+        "//src:windows": WIN_LINK_OPTS,
+        "//src:windows_msvc": WIN_LINK_OPTS,
         "//conditions:default": [
             "-lrt",
         ],
@@ -64,9 +67,9 @@ cc_library(
         "//src/main/cpp/util",
         "//src/main/cpp/util:blaze_exit_code",
     ] + select({
-        "//src:windows": ["//src/main/native:windows_jni_lib"],
-        "//src:windows_msys": ["//src/main/native:windows_jni_lib"],
-        "//src:windows_msvc": ["//src/main/native:windows_jni_lib"],
+        "//src:windows": ["//src/main/native/windows:lib-file"],
+        "//src:windows_msys": ["//src/main/native/windows:lib-file"],
+        "//src:windows_msvc": ["//src/main/native/windows:lib-file"],
         "//conditions:default": [],
     }),
 )
@@ -86,9 +89,11 @@ cc_binary(
         "workspace_layout.cc",
         "workspace_layout.h",
     ],
-    copts = [
-        "-Wno-sign-compare",
-    ],
+    copts = select({
+        "//src:windows": ["/wd4018"],
+        "//src:windows_msvc": ["/wd4018"],
+        "//conditions:default": ["-Wno-sign-compare"],
+    }),
     linkopts = select({
         "//src:darwin": [
         ],

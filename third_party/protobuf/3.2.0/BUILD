@@ -18,19 +18,20 @@ filegroup(
             "protobuf.bzl",
             "python/google/protobuf/**/*.py",
             "src/google/protobuf/**/*.proto",
-        ]) + [
-            "//third_party/protobuf/3.2.0/util/python:srcs"
         ],
+    ) + [
+        "//third_party/protobuf/3.2.0/util/python:srcs",
+    ],
     visibility = ["//visibility:public"],
 )
 
 java_import(
     name = "protobuf_java_util",
     jars = ["libprotobuf_java_util.jar"],
-    exports = [
-        "//third_party:gson",
-    ],
     visibility = ["//visibility:public"],
+    exports = [
+        "@//third_party:gson",
+    ],
 )
 
 java_import(
@@ -46,6 +47,95 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
+# Well Known Types
+
+proto_library(
+    name = "well_known_types_any_proto",
+    srcs = ["google/protobuf/any.proto"],
+    visibility = ["//visibility:public"],
+)
+
+proto_library(
+    name = "well_known_types_timestamp_proto",
+    srcs = ["google/protobuf/timestamp.proto"],
+    visibility = ["//visibility:public"],
+)
+
+proto_library(
+    name = "well_known_types_api_proto",
+    srcs = ["google/protobuf/api.proto"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":well_known_types_source_context_proto",
+        ":well_known_types_type_proto",
+    ],
+)
+
+proto_library(
+    name = "well_known_types_type_proto",
+    srcs = ["google/protobuf/type.proto"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":well_known_types_any_proto",
+        ":well_known_types_source_context_proto",
+    ],
+)
+
+proto_library(
+    name = "well_known_types_source_context_proto",
+    srcs = ["google/protobuf/source_context.proto"],
+    visibility = ["//visibility:public"],
+)
+
+proto_library(
+    name = "well_known_types_compiler_plugin_proto",
+    srcs = ["google/protobuf/compiler/plugin.proto"],
+    visibility = ["//visibility:public"],
+    deps = [":well_known_types_descriptor_proto"],
+)
+
+proto_library(
+    name = "well_known_types_descriptor_proto",
+    srcs = ["google/protobuf/descriptor.proto"],
+    visibility = ["//visibility:public"],
+)
+
+proto_library(
+    name = "well_known_types_duration_proto",
+    srcs = ["google/protobuf/duration.proto"],
+    visibility = ["//visibility:public"],
+)
+
+proto_library(
+    name = "well_known_types_empty_proto",
+    srcs = ["google/protobuf/empty.proto"],
+    visibility = ["//visibility:public"],
+)
+
+proto_library(
+    name = "well_known_types_field_mask_proto",
+    srcs = ["google/protobuf/field_mask.proto"],
+    visibility = ["//visibility:public"],
+)
+
+proto_library(
+    name = "well_known_types_struct_proto",
+    srcs = ["google/protobuf/struct.proto"],
+    visibility = ["//visibility:public"],
+)
+
+proto_library(
+    name = "well_known_types_wrappers_proto",
+    srcs = ["google/protobuf/wrappers.proto"],
+    visibility = ["//visibility:public"],
+)
+
+proto_library(
+    name = "well_known_types_compiler_profile_proto",
+    srcs = ["google/protobuf/compiler/profile.proto"],
+    visibility = ["//visibility:public"],
+)
+
 ################################################################################
 # The below build rules are a copy of the upstream protobuf BUILD file with
 # # Java support removed.
@@ -55,14 +145,34 @@ filegroup(
 # Protobuf Runtime Library
 ################################################################################
 
-COPTS = [
-    "-DHAVE_PTHREAD",
-    "-Wall",
-    "-Wwrite-strings",
-    "-Woverloaded-virtual",
-    "-Wno-sign-compare",
-    "-Wno-unused-function",
+WIN_COPTS = [
+    "/DHAVE_PTHREAD",
+    "/wd4018", # -Wno-sign-compare
+    "/wd4514", # -Wno-unused-function
 ]
+
+COPTS = select({
+    ":windows" : WIN_COPTS,
+    ":windows_msvc" : WIN_COPTS,
+    "//conditions:default": [
+        "-DHAVE_PTHREAD",
+        "-Wall",
+        "-Wwrite-strings",
+        "-Woverloaded-virtual",
+        "-Wno-sign-compare",
+        "-Wno-unused-function",
+    ],
+})
+
+config_setting(
+    name = "windows",
+    values = { "cpu": "x64_windows" },
+)
+
+config_setting(
+    name = "windows_msvc",
+    values = { "cpu": "x64_windows_msvc" },
+)
 
 config_setting(
     name = "android",
@@ -74,7 +184,10 @@ config_setting(
 # Android builds do not need to link in a separate pthread library.
 LINK_OPTS = select({
     ":android": [],
-    "//conditions:default": ["-lpthread", "-lm"],
+    "//conditions:default": [
+        "-lpthread",
+        "-lm",
+    ],
 })
 
 load(
@@ -107,7 +220,7 @@ config_setting(
     },
 )
 
-IOS_ARM_COPTS = COPTS + [
+IOS_ARM_COPTS = [
     "-DOS_IOS",
     "-miphoneos-version-min=7.0",
     "-arch armv7",
@@ -151,8 +264,8 @@ cc_library(
         ":ios_armv7": IOS_ARM_COPTS,
         ":ios_armv7s": IOS_ARM_COPTS,
         ":ios_arm64": IOS_ARM_COPTS,
-        "//conditions:default": COPTS,
-    }),
+        "//conditions:default": [],
+    }) + COPTS,
     includes = ["src/"],
     linkopts = LINK_OPTS,
     visibility = ["//visibility:public"],
@@ -223,8 +336,8 @@ cc_library(
         ":ios_armv7": IOS_ARM_COPTS,
         ":ios_armv7s": IOS_ARM_COPTS,
         ":ios_arm64": IOS_ARM_COPTS,
-        "//conditions:default": COPTS,
-    }),
+        "//conditions:default": [],
+    }) + COPTS,
     includes = ["src/"],
     linkopts = LINK_OPTS,
     visibility = ["//visibility:public"],
@@ -523,11 +636,14 @@ cc_binary(
 cc_test(
     name = "win32_test",
     srcs = ["src/google/protobuf/stubs/io_win32_unittest.cc"],
+    tags = [
+        "manual",
+        "windows",
+    ],
     deps = [
         ":protobuf_lite",
         "//external:gtest_main",
     ],
-    tags = ["manual", "windows"],
 )
 
 cc_test(

@@ -13,7 +13,7 @@ When it's configured to use a remote cache, Bazel computes a hash for each actio
 Starting at version 0.5.0, Bazel supports two caching protocols:
 
 1. a HTTP-based REST protocol
-2. [a gRPC-based protocol](https://github.com/bazelbuild/bazel/blob/master/src/main/protobuf/remote_protocol.proto)
+2. [a gRPC-based protocol](https://github.com/googleapis/googleapis/blob/master/google/devtools/remoteexecution/v1test/remote_execution.proto)
 
 ## Remote caching using the HTTP REST protocol
 
@@ -36,6 +36,11 @@ build --remote_rest_cache=REPLACE_THIS:http://server-address:port/cache
 build --strategy=Javac=remote
 build --strategy=Closure=remote
 ```
+
+#### Customizing The Digest Function
+
+Bazel currently supports the following digest functions with the remote worker: SHA1, SHA256, and MD5. The digest function is passed via the `--host_jvm_args=-Dbazel.DigestFunction=###` startup option. In the example above, SHA1 is used, but you can use any one of SHA1, SHA256, and MD5, provided that your remote execution server supports it and is configured to use the same one. For example, the provided remote worker (`//src/tools/remote_worker`) is configured to use SHA1 by default in the binary build rule. You can customize it there by modifying the `jvm_flags` attribute to use, for example, `"-Dbazel.DigestFunction=SHA256"` instead.
+
 
 ### Hazelcast with REST interface
 
@@ -101,7 +106,7 @@ this directory to include security control.
 
 ## Remote caching using the gRPC protocol
 
-We're working on a [gRPC protocol](https://github.com/bazelbuild/bazel/blob/master/src/main/protobuf/remote_protocol.proto)
+We're working on a [gRPC protocol](https://github.com/googleapis/googleapis/blob/master/google/devtools/remoteexecution/v1test/remote_execution.proto)
 that supports both remote caching and remote execution. As of this writing, there is only a single server-side implementation, which is not intended for production use.
 
 ### Bazel Setup

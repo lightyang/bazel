@@ -14,9 +14,6 @@
 
 package com.google.devtools.build.lib.rules.objc;
 
-import static com.google.devtools.build.lib.rules.objc.XcodeProductType.LIBRARY_STATIC;
-
-import com.google.common.base.Function;
 import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
 import com.google.common.base.Predicates;
@@ -33,8 +30,6 @@ import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.analysis.actions.FileWriteAction;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
-import com.google.devtools.build.lib.cmdline.Label;
-import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.packages.RuleClass.ConfiguredTargetFactory.RuleErrorException;
@@ -215,7 +210,8 @@ final class ProtobufSupport {
               intermediateArtifacts,
               new CompilationAttributes.Builder().build(),
               /*useDeps=*/ false,
-              new TreeMap<String, NestedSet<Artifact>>())
+              new TreeMap<String, NestedSet<Artifact>>(),
+              /*isTestRule=*/ false)
           .registerCompileAndArchiveActions(common, userHeaderSearchPaths);
 
       actionId++;
@@ -288,44 +284,6 @@ final class ProtobufSupport {
     return Optional.of(commonBuilder.build().getObjcProvider());
   }
 
-  /**
-   * Returns the XcodeProvider for this target or Optional.absent() if there were no protos to
-   * generate.
-   */
-  public Optional<XcodeProvider> getXcodeProvider() throws RuleErrorException {
-    if (inputsToOutputsMap.isEmpty()) {
-      return Optional.absent();
-    }
-
-    XcodeProvider.Builder xcodeProviderBuilder = new XcodeProvider.Builder();
-    new XcodeSupport(ruleContext, intermediateArtifacts, getXcodeLabel(getBundledProtosSuffix()))
-        .addXcodeSettings(xcodeProviderBuilder, getObjcProvider().get(), LIBRARY_STATIC);
-
-    int actionId = 0;
-    for (ImmutableSet<Artifact> inputProtos : inputsToOutputsMap.keySet()) {
-      ImmutableSet<Artifact> outputProtos = inputsToOutputsMap.get(inputProtos);
-      IntermediateArtifacts bundleIntermediateArtifacts = getUniqueIntermediateArtifacts(actionId);
-
-      CompilationArtifacts compilationArtifacts =
-          getCompilationArtifacts(bundleIntermediateArtifacts, inputProtos, outputProtos);
-
-      ObjcCommon common = getCommon(bundleIntermediateArtifacts, compilationArtifacts);
-
-      XcodeProvider bundleProvider =
-          getBundleXcodeProvider(
-              common, bundleIntermediateArtifacts, getUniqueBundledProtosSuffix(actionId));
-      if (isLinkingTarget()) {
-        xcodeProviderBuilder.addPropagatedDependencies(ImmutableSet.of(bundleProvider));
-      } else {
-        xcodeProviderBuilder.addPropagatedDependenciesWithStrictDependencyHeaders(
-            ImmutableSet.of(bundleProvider));
-      }
-      actionId++;
-    }
-
-    return Optional.of(xcodeProviderBuilder.build());
-  }
-
   private NestedSet<Artifact> getProtobufHeaders() {
     NestedSetBuilder<Artifact> protobufHeaders = NestedSetBuilder.stableOrder();
     for (ObjcProtoProvider objcProtoProvider : objcProtoProviders) {
@@ -394,32 +352,6 @@ final class ProtobufSupport {
     return inputsToOutputsMapBuilder.build();
   }
 
-  private XcodeProvider getBundleXcodeProvider(
-      ObjcCommon common, IntermediateArtifacts intermediateArtifacts, String labelSuffix)
-      throws RuleErrorException {
-    Iterable<PathFragment> userHeaderSearchPaths =
-        ImmutableList.of(getWorkspaceRelativeOutputDir());
-
-    XcodeProvider.Builder xcodeProviderBuilder =
-        new XcodeProvider.Builder()
-            .addUserHeaderSearchPaths(userHeaderSearchPaths)
-            .setCompilationArtifacts(common.getCompilationArtifacts().get());
-
-    XcodeSupport xcodeSupport =
-        new XcodeSupport(ruleContext, intermediateArtifacts, getXcodeLabel(labelSuffix))
-            .addXcodeSettings(xcodeProviderBuilder, common.getObjcProvider(), LIBRARY_STATIC);
-    if (isLinkingTarget()) {
-      xcodeProviderBuilder
-          .addHeaders(getProtobufHeaders())
-          .addUserHeaderSearchPaths(getProtobufHeaderSearchPaths());
-    } else {
-      xcodeSupport.addDependencies(
-          xcodeProviderBuilder, new Attribute(ObjcRuleClasses.PROTO_LIB_ATTR, Mode.TARGET));
-    }
-
-    return xcodeProviderBuilder.build();
-  }
-
   private String getBundledProtosSuffix() {
     return "_" + BUNDLED_PROTOS_IDENTIFIER;
   }
@@ -430,17 +362,6 @@ final class ProtobufSupport {
 
   private String getUniqueBundledProtosSuffix(int actionId) {
     return getBundledProtosSuffix() + "_" + actionId;
-  }
-
-  private Label getXcodeLabel(String suffix) throws RuleErrorException {
-    Label xcodeLabel = null;
-    try {
-      xcodeLabel =
-          ruleContext.getLabel().getLocalTargetLabel(ruleContext.getLabel().getName() + suffix);
-    } catch (LabelSyntaxException e) {
-      ruleContext.throwWithRuleError(e.getLocalizedMessage());
-    }
-    return xcodeLabel;
   }
 
   private IntermediateArtifacts getUniqueIntermediateArtifacts(int actionId) {
@@ -523,7 +444,7 @@ final class ProtobufSupport {
     return ruleContext.getUniqueDirectoryArtifact(
         "_protos",
         "_proto_input_files" + suffix,
-        ruleContext.getConfiguration().getGenfilesDirectory());
+        buildConfiguration.getGenfilesDirectory());
   }
 
   private String getProtoInputsFileContents(Iterable<Artifact> outputProtos) {
@@ -607,11 +528,12 @@ final class ProtobufSupport {
   /**
    * Returns a target specific generated artifact that represents a portable filter file.
    */
-  public static Artifact getGeneratedPortableFilter(RuleContext ruleContext) {
+  public static Artifact getGeneratedPortableFilter(RuleContext ruleContext,
+      BuildConfiguration buildConfiguration) {
     return ruleContext.getUniqueDirectoryArtifact(
         "_proto_filters",
         "generated_filter_file.pbascii",
-        ruleContext.getConfiguration().getGenfilesDirectory());
+        buildConfiguration.getGenfilesDirectory());
   }
 
   /**
@@ -644,13 +566,7 @@ final class ProtobufSupport {
 
     Iterable<String> filterLines =
         Iterables.transform(
-            protoFilePaths,
-            new Function<String, String>() {
-              @Override
-              public String apply(String protoFilePath) {
-                return String.format("allowed_file: \"%s\"", protoFilePath);
-              }
-            });
+            protoFilePaths, protoFilePath -> String.format("allowed_file: \"%s\"", protoFilePath));
 
     return String.format(
             "# Generated portable filter for %s\n\n", ruleContext.getLabel().getCanonicalForm())

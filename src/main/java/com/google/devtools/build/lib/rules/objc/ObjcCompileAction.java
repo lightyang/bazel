@@ -29,7 +29,6 @@ import com.google.devtools.build.lib.actions.ActionOwner;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.ArtifactResolver;
 import com.google.devtools.build.lib.actions.ExecException;
-import com.google.devtools.build.lib.actions.Executor;
 import com.google.devtools.build.lib.actions.ResourceSet;
 import com.google.devtools.build.lib.actions.RunfilesSupplier;
 import com.google.devtools.build.lib.actions.Spawn;
@@ -193,7 +192,7 @@ public class ObjcCompileAction extends SpawnAction {
       } catch (ExecException e) {
         throw e.toActionExecutionException(
             "Header thinning of rule '" + getOwner().getLabel() + "'",
-            actionExecutionContext.getExecutor().getVerboseFailures(),
+            actionExecutionContext.getVerboseFailures(),
             this);
       }
     } else {
@@ -213,11 +212,11 @@ public class ObjcCompileAction extends SpawnAction {
     super.execute(actionExecutionContext);
 
     if (dotdPruningPlan == HeaderDiscovery.DotdPruningMode.USE) {
-      Executor executor = actionExecutionContext.getExecutor();
-      IncludeScanningContext scanningContext = executor.getContext(IncludeScanningContext.class);
+      IncludeScanningContext scanningContext =
+          actionExecutionContext.getContext(IncludeScanningContext.class);
       NestedSet<Artifact> discoveredInputs =
           discoverInputsFromDotdFiles(
-              executor.getExecRoot(), scanningContext.getArtifactResolver());
+              actionExecutionContext.getExecRoot(), scanningContext.getArtifactResolver());
 
       updateActionInputs(discoveredInputs);
     } else {
@@ -350,6 +349,13 @@ public class ObjcCompileAction extends SpawnAction {
     public Builder addTools(Iterable<Artifact> artifacts) {
       super.addTools(artifacts);
       mandatoryInputs.addAll(artifacts);
+      return this;
+    }
+
+    @Override
+    public Builder addTransitiveTools(NestedSet<Artifact> artifacts) {
+      super.addTransitiveTools(artifacts);
+      mandatoryInputs.addTransitive(artifacts);
       return this;
     }
 

@@ -23,6 +23,7 @@ import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.packages.ClassObjectConstructor;
 import com.google.devtools.build.lib.packages.SkylarkClassObject;
 import com.google.devtools.build.lib.rules.apple.AppleToolchain;
+import com.google.devtools.build.lib.rules.apple.DottedVersion;
 import com.google.devtools.build.lib.rules.apple.Platform;
 import com.google.devtools.build.lib.rules.apple.Platform.PlatformType;
 import com.google.devtools.build.lib.rules.apple.XcodeVersionProperties;
@@ -164,6 +165,17 @@ public class AppleSkylarkCommon {
   }
 
   @SkylarkCallable(
+      name = AppleStaticLibraryProvider.SKYLARK_NAME,
+      doc =
+          "Returns the provider constructor for AppleStaticLibrary. If a target propagates "
+              + "the AppleStaticLibrary provider, use this as the key with which to retrieve it.",
+      structField = true
+    )
+    public ClassObjectConstructor getAppleStaticLibraryProvider() {
+      return AppleStaticLibraryProvider.SKYLARK_CONSTRUCTOR;
+    }
+
+  @SkylarkCallable(
     name = AppleDebugOutputsProvider.SKYLARK_NAME,
     doc =
         "Returns the provider constructor for AppleDebugOutputsProvider. If a target propagates "
@@ -190,8 +202,9 @@ public class AppleSkylarkCommon {
   @SkylarkCallable(
     name = IosDeviceProvider.SKYLARK_NAME,
     doc =
-        "Returns the provider constructor for IosDeviceProvider. Use this as a key to access the "
-            + "attributes exposed by ios_device.",
+        "[NOTE: This is deprecated and will be removed in the future. Use the new Skylark testing "
+            + "rules instead.] Returns the provider constructor for IosDeviceProvider. Use this as "
+            + "a key to access the attributes exposed by ios_device.",
     structField = true
   )
   public ClassObjectConstructor getIosDeviceProviderConstructor() {
@@ -361,6 +374,32 @@ public class AppleSkylarkCommon {
               : NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER);
           return new AppleDynamicFrameworkProvider(dylibBinary, depsObjcProvider,
               frameworkDirs, frameworkFiles);
+        }
+      };
+
+  @SkylarkSignature(
+    name = "dotted_version",
+    objectType = AppleSkylarkCommon.class,
+    returnType = DottedVersion.class,
+    doc = "Creates a new <a href=\"DottedVersion.html\">DottedVersion</a> instance.",
+    parameters = {
+      @Param(name = "self", type = AppleSkylarkCommon.class, doc = "The apple_common instance."),
+      @Param(
+        name = "version",
+        type = String.class,
+        named = false,
+        positional = false,
+        doc = "The string representation of the DottedVersion."
+      )
+    }
+  )
+  public static final BuiltinFunction DOTTED_VERSION =
+      new BuiltinFunction("dotted_version") {
+        @SuppressWarnings("unused")
+        // This method is registered statically for skylark, and never called directly.
+        public DottedVersion invoke(
+            AppleSkylarkCommon self, String version) {
+          return DottedVersion.fromString(version);
         }
       };
 

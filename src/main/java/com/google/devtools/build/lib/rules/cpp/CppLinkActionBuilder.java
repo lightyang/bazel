@@ -134,8 +134,18 @@ public class CppLinkActionBuilder {
   /** A build variable whose presence indicates that the debug symbols should be stripped. */
   public static final String STRIP_DEBUG_SYMBOLS_VARIABLE = "strip_debug_symbols";
 
-  /** A build variable whose presence indicates that this action is a cc_test linking action. */
+  @Deprecated
   public static final String IS_CC_TEST_LINK_ACTION_VARIABLE = "is_cc_test_link_action";
+
+  /** A build variable whose presence indicates that this action is a cc_test linking action. */
+  public static final String IS_CC_TEST_VARIABLE = "is_cc_test";
+
+  /**
+   * Temporary build variable for migrating osx crosstool.
+   * TODO(b/37271982): Remove after blaze with ar action_config release
+   */
+  public static final String USES_ACTION_CONFIG_FOR_AR_VARIABLE =
+      "uses_action_configs_for_cc_archiving";
 
   /**
    *  A build variable whose presence indicates that files were compiled with fission (debug
@@ -143,10 +153,7 @@ public class CppLinkActionBuilder {
    */
   public static final String IS_USING_FISSION_VARIABLE = "is_using_fission";
 
-  /**
-   * A (temporary) build variable whose presence indicates that this action is not a cc_test linking
-   * action.
-   */
+  @Deprecated
   public static final String IS_NOT_CC_TEST_LINK_ACTION_VARIABLE = "is_not_cc_test_link_action";
 
   // Builder-only
@@ -748,8 +755,13 @@ public class CppLinkActionBuilder {
             .setToolchain(toolchain)
             .setFdoSupport(fdoSupport.getFdoSupport())
             .setBuildVariables(buildVariables)
-            .setToolPath(getToolPath())
             .setFeatureConfiguration(featureConfiguration);
+
+    // TODO(b/62693279): Cleanup once internal crosstools specify ifso building correctly.
+    if (shouldUseLinkDynamicLibraryTool()) {
+      linkCommandLineBuilder.forceToolPath(
+          toolchain.getLinkDynamicLibraryTool().getExecPathString());
+    }
 
     if (!isLTOIndexing) {
       linkCommandLineBuilder
@@ -770,8 +782,11 @@ public class CppLinkActionBuilder {
     // Compute the set of inputs - we only need stable order here.
     NestedSetBuilder<Artifact> dependencyInputsBuilder = NestedSetBuilder.stableOrder();
     dependencyInputsBuilder.addTransitive(crosstoolInputs);
-    dependencyInputsBuilder.add(toolchain.getLinkDynamicLibraryTool());
     dependencyInputsBuilder.addTransitive(linkActionInputs.build());
+    // TODO(b/62693279): Cleanup once internal crosstools specify ifso building correctly.
+    if (shouldUseLinkDynamicLibraryTool()) {
+      dependencyInputsBuilder.add(toolchain.getLinkDynamicLibraryTool());
+    }
     if (runtimeMiddleman != null) {
       dependencyInputsBuilder.add(runtimeMiddleman);
     }
@@ -882,24 +897,10 @@ public class CppLinkActionBuilder {
         executionRequirements.build());
   }
 
-  /**
-   * Returns the tool path from feature configuration, if the tool in the configuration is sane, or
-   * builtin tool, if configuration has a dummy value.
-   */
-  private String getToolPath() {
-    if (!featureConfiguration.actionIsConfigured(linkType.getActionName())) {
-      return null;
-    }
-    String toolPath =
-        featureConfiguration
-            .getToolForAction(linkType.getActionName())
-            .getToolPath(cppConfiguration.getCrosstoolTopPathFragment())
-            .getPathString();
-    if (linkType.equals(LinkTargetType.DYNAMIC_LIBRARY)
-        && !featureConfiguration.hasConfiguredLinkerPathInActionConfig()) {
-      toolPath = toolchain.getLinkDynamicLibraryTool().getExecPathString();
-    }
-    return toolPath;
+  private boolean shouldUseLinkDynamicLibraryTool() {
+    return linkType.equals(LinkTargetType.DYNAMIC_LIBRARY)
+        && cppConfiguration.supportsInterfaceSharedObjects()
+        && !featureConfiguration.hasConfiguredLinkerPathInActionConfig();
   }
 
   /** The default heuristic on whether we need to use whole-archive for the link. */
@@ -1430,10 +1431,15 @@ public class CppLinkActionBuilder {
       }
 
       if (useTestOnlyFlags()) {
+        buildVariables.addIntegerVariable(IS_CC_TEST_VARIABLE, 1);
         buildVariables.addStringVariable(IS_CC_TEST_LINK_ACTION_VARIABLE, "");
       } else {
+        buildVariables.addIntegerVariable(IS_CC_TEST_VARIABLE, 0);
         buildVariables.addStringVariable(IS_NOT_CC_TEST_LINK_ACTION_VARIABLE, "");
       }
+
+      // TODO(b/37271982): Remove after blaze with ar action_config release
+      buildVariables.addStringVariable(USES_ACTION_CONFIG_FOR_AR_VARIABLE, "");
 
       if (linkArgCollector.getRuntimeLibrarySearchDirectories() != null) {
         buildVariables.addStringSequenceVariable(

@@ -53,7 +53,7 @@ public class ApkManifestActionTest {
         AndroidSdkProvider.create(
             "24.0.3",
             createArtifact("/workspace/androidsdk/frameworkAidl"),
-            null,  // aidlLib, optional
+            null, // aidlLib, optional
             createArtifact("/workspace/androidsdk/androidJar"),
             createArtifact("/workspace/androidsdk/shrinkedAndroidJar"),
             createArtifact("/workspace/androidsdk/annotationsJar"),
@@ -63,11 +63,11 @@ public class ApkManifestActionTest {
             createFilesToRunProvider("mainDexListCreator"),
             createFilesToRunProvider("aidl"),
             createFilesToRunProvider("aapt"),
-            /* apkBuilder = */ null,
+            createFilesToRunProvider("aapt2"),
+            null, // apkBuilder, optional
             createFilesToRunProvider("apkSigner"),
             createFilesToRunProvider("proguard"),
-            createFilesToRunProvider("zipalign"),
-            createFilesToRunProvider("resourceExtractor"));
+            createFilesToRunProvider("zipalign"));
 
     Iterable<Artifact> jars1 = ImmutableList.of(
         createArtifact("/workspace/java/test/output_jar1"),

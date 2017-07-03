@@ -21,8 +21,10 @@ filegroup(
         "//src/main/java/com/google/devtools/build/lib/bazel/repository/downloader:srcs",
         "//src/main/java/com/google/devtools/build/lib/buildeventstream/proto:srcs",
         "//src/main/java/com/google/devtools/build/lib/buildeventstream/transports:srcs",
+        "//src/main/java/com/google/devtools/build/lib/buildeventservice/client:srcs",
         "//src/main/java/com/google/devtools/build/lib/causes:srcs",
         "//src/main/java/com/google/devtools/build/lib/cmdline:srcs",
+        "//src/main/java/com/google/devtools/build/lib/exec/apple:srcs",
         "//src/main/java/com/google/devtools/build/lib/exec/local:srcs",
         "//src/main/java/com/google/devtools/build/lib/query2:srcs",
         "//src/main/java/com/google/devtools/build/lib/remote:srcs",
@@ -35,6 +37,7 @@ filegroup(
         "//src/main/java/com/google/devtools/build/lib/rules/genquery:srcs",
         "//src/main/java/com/google/devtools/build/lib/rules/genrule:srcs",
         "//src/main/java/com/google/devtools/build/lib/rules/objc:srcs",
+        "//src/main/java/com/google/devtools/build/lib/analysis/featurecontrol:srcs",
         "//src/main/java/com/google/devtools/build/lib/analysis/platform:srcs",
         "//src/main/java/com/google/devtools/build/lib/rules/platform:srcs",
         "//src/main/java/com/google/devtools/build/lib/sandbox:srcs",
@@ -125,25 +128,10 @@ java_library(
         "collect/nestedset/*.java",
     ]),
     deps = [
+        ":concurrent",
         ":preconditions",
         "//third_party:guava",
         "//third_party:jsr305",
-    ],
-)
-
-java_library(
-    name = "flags",
-    srcs = glob([
-        "flags/*.java",
-    ]),
-    deps = [
-        ":io",
-        ":preconditions",
-        "//src/main/java/com/google/devtools/common/options",
-        "//src/main/protobuf:invocation_policy_java_proto",
-        "//third_party:guava",
-        "//third_party:jsr305",
-        "//third_party/protobuf:protobuf_java",
     ],
 )
 
@@ -366,6 +354,54 @@ java_library(
     ],
 )
 
+java_library(
+    name = "buildeventservice",
+    srcs = glob(["buildeventservice/*.java"]),
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        ":vfs",
+        "//src/main/java/com/google/devtools/build/lib:auth_and_tls_options",
+        "//src/main/java/com/google/devtools/build/lib:buildeventstream",
+        "//src/main/java/com/google/devtools/build/lib:events",
+        "//src/main/java/com/google/devtools/build/lib:io",
+        "//src/main/java/com/google/devtools/build/lib:runtime",
+        "//src/main/java/com/google/devtools/build/lib:util",
+        "//src/main/java/com/google/devtools/build/lib/buildeventservice/client",
+        "//src/main/java/com/google/devtools/build/lib/buildeventstream/proto:build_event_stream_java_proto",
+        "//src/main/java/com/google/devtools/build/lib/buildeventstream/transports",
+        "//src/main/java/com/google/devtools/common/options",
+        "//src/main/protobuf:option_filters_java_proto",
+        "//third_party:guava",
+        "//third_party:joda_time",
+        "//third_party:jsr305",
+        "//third_party/grpc:grpc-jar",
+        "@com_google_protobuf//:protobuf_java",
+        "@com_google_protobuf//:protobuf_java_util",
+        "@com_google_protobuf//:well_known_types_any_proto",
+        "@googleapis//:google_devtools_build_v1_build_events_java_proto",
+        "@googleapis//:google_devtools_build_v1_build_status_java_proto",
+        "@googleapis//:google_devtools_build_v1_publish_build_event_java_proto",
+    ],
+)
+
+java_library(
+    name = "auth_and_tls_options",
+    srcs = ["authandtls/AuthAndTLSOptions.java"],
+    visibility = [
+        "//src/main/java/com/google/devtools/build/lib/remote:__pkg__",
+        "//src/test/java/com/google/devtools/build/lib:__pkg__",
+        "//src/test/java/com/google/devtools/build/lib/buildeventservice:__pkg__",
+        "//src/test/java/com/google/devtools/build/lib/remote:__pkg__",
+        "//src/tools/remote_worker/src/main/java/com/google/devtools/build/remote:__pkg__",
+    ],
+    deps = [
+        "//src/main/java/com/google/devtools/common/options",
+        "//src/main/protobuf:option_filters_java_proto",
+    ],
+)
+
 ########################################################################
 #
 # The "foundation" library (concurrent, events, util, vfs, inmemoryfs, options)
@@ -426,6 +462,7 @@ java_library(
         ":vfs",
         "//src/main/java/com/google/devtools/build/lib/cmdline",
         "//src/main/java/com/google/devtools/common/options",
+        "//src/main/protobuf:option_filters_java_proto",
         "//third_party:asm",
         "//third_party:asm-commons",
         "//third_party:asm-util",
@@ -481,6 +518,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/skyframe:skyframe-objects",
         "//src/main/java/com/google/devtools/common/options",
         "//src/main/protobuf:build_java_proto",
+        "//src/main/protobuf:option_filters_java_proto",
         "//third_party:guava",
         "//third_party:jsr305",
         "//third_party/protobuf:protobuf_java",
@@ -513,21 +551,17 @@ java_library(
 )
 
 java_library(
-    name = "execution-requirements",
-    srcs = ["analysis/actions/ExecutionRequirements.java"],
-    visibility = [
-        "//src/main/java/com/google/devtools/build/lib/rules:__subpackages__",
-    ],
-    deps = [
-        ":util",
-        "//third_party:auto_value",
-        "//third_party:guava",
-    ],
+    name = "transitive-info-provider",
+    srcs = ["analysis/TransitiveInfoProvider.java"],
 )
 
 java_library(
-    name = "transitive-info-provider",
-    srcs = ["analysis/TransitiveInfoProvider.java"],
+    name = "skylark-provider-collection",
+    srcs = ["analysis/SkylarkProviderCollection.java"],
+    deps = [
+        ":packages-internal",
+        "//third_party:jsr305",
+    ],
 )
 
 java_library(
@@ -578,12 +612,12 @@ java_library(
         ":concurrent",
         ":events",
         ":exitcode-external",
-        ":flags",
         ":graph",
         ":io",
         ":os_util",
         ":packages-internal",
         ":shell",
+        ":skylark-provider-collection",
         ":skylarkinterface",
         ":syntax",
         ":transitive-info-provider",
@@ -592,6 +626,7 @@ java_library(
         ":vfs",
         "//src/main/java/com/google/devtools/build/lib/actions",
         "//src/main/java/com/google/devtools/build/lib/analysis/platform",
+        "//src/main/java/com/google/devtools/build/lib/analysis/platform:utils",
         "//src/main/java/com/google/devtools/build/lib/buildeventstream/proto:build_event_stream_java_proto",
         "//src/main/java/com/google/devtools/build/lib/causes",
         "//src/main/java/com/google/devtools/build/lib/cmdline",
@@ -600,6 +635,7 @@ java_library(
         "//src/main/java/com/google/devtools/common/options",
         "//src/main/protobuf:extra_actions_base_java_proto",
         "//src/main/protobuf:invocation_policy_java_proto",
+        "//src/main/protobuf:option_filters_java_proto",
         "//src/main/protobuf:test_status_java_proto",
         "//third_party:auto_value",
         "//third_party:guava",
@@ -653,6 +689,7 @@ java_library(
         ":bazel-repository",
         ":build-base",
         ":build-info",
+        ":buildeventstream",
         ":collect",
         ":concurrent",
         ":events",
@@ -665,6 +702,8 @@ java_library(
         ":util",
         ":vfs",
         "//src/main/java/com/google/devtools/build/lib/actions",
+        "//src/main/java/com/google/devtools/build/lib/analysis/featurecontrol",
+        "//src/main/java/com/google/devtools/build/lib/buildeventstream/proto:build_event_stream_java_proto",
         "//src/main/java/com/google/devtools/build/lib/query2:query-output",
         "//src/main/java/com/google/devtools/build/lib/rules/apple",
         "//src/main/java/com/google/devtools/build/lib/rules/apple/cpp",
@@ -680,6 +719,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/skyframe:skyframe-objects",
         "//src/main/java/com/google/devtools/common/options",
         "//src/main/protobuf:crosstool_config_java_proto",
+        "//src/main/protobuf:option_filters_java_proto",
         "//third_party:android_common_25_0_0",
         "//third_party:auto_value",
         "//third_party:guava",
@@ -703,6 +743,7 @@ java_library(
         ":bazel-rules",
         ":build-base",
         ":build-info",
+        ":buildeventservice",
         ":clock",
         ":events",
         ":io",
@@ -720,6 +761,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/worker",
         "//src/main/java/com/google/devtools/build/skyframe:skyframe-objects",
         "//src/main/java/com/google/devtools/common/options",
+        "//src/main/protobuf:option_filters_java_proto",
         "//third_party:guava",
         "//third_party:jsr305",
     ],
@@ -740,6 +782,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/query2",
         "//src/main/java/com/google/devtools/build/lib/query2:query-engine",
         "//src/main/java/com/google/devtools/common/options",
+        "//src/main/protobuf:option_filters_java_proto",
         "//third_party:guava",
     ],
 )
@@ -784,6 +827,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/skyframe",
         "//src/main/java/com/google/devtools/build/skyframe:skyframe-objects",
         "//src/main/java/com/google/devtools/common/options",
+        "//src/main/protobuf:option_filters_java_proto",
         "//third_party:aether",
         "//third_party:apache_commons_compress",
         "//third_party:auto_value",
@@ -842,6 +886,7 @@ java_library(
         ":vfs",
         "//src/main/java/com/google/devtools/build/lib/actions",
         "//src/main/java/com/google/devtools/common/options",
+        "//src/main/protobuf:option_filters_java_proto",
         "//third_party:auto_value",
         "//third_party:guava",
         "//third_party:jsr305",
@@ -882,14 +927,12 @@ java_library(
         "rules/java/ProtoJavaApiInfoAspectProvider.java",
         "rules/java/ProtoJavaApiInfoProvider.java",
         "rules/java/proto/ActionReuser.java",
-        "rules/java/proto/JavaCompilationArgsAspectProvider.java",
         "rules/java/proto/JavaLiteProtoAspect.java",
         "rules/java/proto/JavaLiteProtoLibrary.java",
         "rules/java/proto/JavaProtoAspect.java",
         "rules/java/proto/JavaProtoLibrary.java",
-        "rules/java/proto/JavaProtoLibraryTransitiveFilesToBuildProvider.java",
+        "rules/java/proto/JavaProtoLibraryAspectProvider.java",
         "rules/java/proto/JavaProtoSkylarkCommon.java",
-        "rules/java/proto/JavaSourceJarsAspectProvider.java",
         "rules/java/proto/ProtoJavacOpts.java",
         "rules/java/proto/StrictDepsUtils.java",
     ],
@@ -995,6 +1038,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/rules/cpp",
         "//src/main/java/com/google/devtools/common/options",
         "//src/main/protobuf:extra_actions_base_java_proto",
+        "//src/main/protobuf:option_filters_java_proto",
         "//third_party:auto_value",
         "//third_party:guava",
         "//third_party:joda_time",
@@ -1014,7 +1058,9 @@ java_library(
     ),
     resources = [
         "rules/android/android_device_stub_template.txt",
+        "rules/android/android_instrumentation_test_template.txt",
         "rules/android/databinding_annotation_template.txt",
+        "rules/android/test_suite_property_name.txt",
     ],
     deps = [
         ":build-base",
@@ -1035,6 +1081,7 @@ java_library(
         "//src/main/java/com/google/devtools/common/options",
         "//src/main/protobuf:android_deploy_info_java_proto",
         "//src/main/protobuf:apk_manifest_java_proto",
+        "//src/main/protobuf:option_filters_java_proto",
         "//third_party:android_common_25_0_0",
         "//third_party:auto_value",
         "//third_party:guava",
@@ -1061,6 +1108,7 @@ java_library(
         "//src/main/java/com/google/devtools/common/options",
         "//src/main/protobuf:crosstool_config_java_proto",
         "//src/main/protobuf:extra_actions_base_java_proto",
+        "//src/main/protobuf:option_filters_java_proto",
         "//third_party:guava",
         "//third_party:jsr305",
         "//third_party/protobuf:protobuf_java",
@@ -1123,7 +1171,6 @@ java_library(
         ":concurrent",
         ":events",
         ":exitcode-external",
-        ":flags",
         ":io",
         ":packages-internal",
         ":process_util",
@@ -1138,8 +1185,8 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/actions",
         "//src/main/java/com/google/devtools/build/lib/bazel/repository/downloader",
         "//src/main/java/com/google/devtools/build/lib/buildeventstream/proto:build_event_stream_java_proto",
-        "//src/main/java/com/google/devtools/build/lib/buildeventstream/transports",
         "//src/main/java/com/google/devtools/build/lib/cmdline",
+        "//src/main/java/com/google/devtools/build/lib/exec/local",
         "//src/main/java/com/google/devtools/build/lib/query2",
         "//src/main/java/com/google/devtools/build/lib/query2:query-engine",
         "//src/main/java/com/google/devtools/build/lib/query2:query-output",
@@ -1147,8 +1194,10 @@ java_library(
         "//src/main/java/com/google/devtools/build/skyframe:skyframe-objects",
         "//src/main/java/com/google/devtools/common/options",
         "//src/main/protobuf:build_java_proto",
+        "//src/main/protobuf:command_server_java_grpc",
         "//src/main/protobuf:command_server_java_proto",
         "//src/main/protobuf:invocation_policy_java_proto",
+        "//src/main/protobuf:option_filters_java_proto",
         "//src/main/protobuf:test_status_java_proto",
         "//third_party:guava",
         "//third_party:joda_time",

@@ -40,8 +40,7 @@ function set_up() {
   XCODE_VERSION=$(cat xcode_versions | grep -m1 '7\|8')
 
   # Allow access to //external:xcrunwrapper.
-  rm WORKSPACE
-  ln -sv ${workspace_file} WORKSPACE
+  use_bazel_workspace_file
 }
 
 function make_app() {
@@ -389,11 +388,11 @@ EOF
       --ios_minimum_os=8.0 \
       //ios:app_test >$TEST_log 2>&1 || fail "should build"
 
-  otool -lv bazel-bin/ios/app_test_bin \
+  otool -lv bazel-out/ios_x86_64-fastbuild/bin/ios/app_test_bin \
       | grep @executable_path/Frameworks -sq \
       || fail "expected test binary to contain @executable_path in LC_RPATH"
 
-  otool -lv bazel-bin/ios/app_test_bin \
+  otool -lv bazel-out/ios_x86_64-fastbuild/bin/ios/app_test_bin \
       | grep @loader_path/Frameworks -sq \
       || fail "expected test binary to contain @loader_path in LC_RPATH"
 
@@ -766,8 +765,8 @@ EOF
 
   bazel build --verbose_failures --xcode_version=$XCODE_VERSION -s \
       //ios:bin >$TEST_log 2>&1 || fail "should build"
-  expect_log "-Xlinker -add_ast_path -Xlinker bazel-out/darwin_x86_64-fastbuild/genfiles/ios/dep/_objs/ios_dep.swiftmodule"
-  expect_log "-Xlinker -add_ast_path -Xlinker bazel-out/darwin_x86_64-fastbuild/genfiles/ios/swift_lib/_objs/ios_swift_lib.swiftmodule"
+  expect_log "-Xlinker -add_ast_path -Xlinker bazel-out/ios_x86_64-fastbuild/genfiles/ios/dep/_objs/ios_dep.swiftmodule"
+  expect_log "-Xlinker -add_ast_path -Xlinker bazel-out/ios_x86_64-fastbuild/genfiles/ios/swift_lib/_objs/ios_swift_lib.swiftmodule"
 }
 
 function test_swiftc_script_mode() {
@@ -960,7 +959,6 @@ std::string GetString() { return "h3ll0"; }
 EOF
 
   bazel build --verbose_failures //package:lipo_out \
-    --experimental_enable_objc_cc_deps \
     --experimental_objc_crosstool=all \
     --apple_crosstool_transition \
     --ios_multi_cpus=i386,x86_64 \
@@ -1033,7 +1031,6 @@ std::string GetString() { return "h3ll0"; }
 EOF
 
   bazel build --verbose_failures //package:lipo_out \
-      --experimental_enable_objc_cc_deps \
       --experimental_objc_crosstool=library \
       --apple_crosstool_transition \
       --watchos_cpus=armv7k \

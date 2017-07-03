@@ -36,6 +36,7 @@ import com.google.devtools.build.lib.rules.java.JavaRuleOutputJarsProvider;
 import com.google.devtools.build.lib.rules.java.JavaRuleOutputJarsProvider.OutputJar;
 import com.google.devtools.build.lib.rules.java.JavaRuntimeJarProvider;
 import com.google.devtools.build.lib.rules.java.JavaSemantics;
+import com.google.devtools.build.lib.rules.java.JavaSkylarkApiProvider;
 import com.google.devtools.build.lib.rules.java.JavaToolchainProvider;
 import com.google.devtools.build.lib.rules.java.Jvm;
 import com.google.devtools.build.lib.vfs.PathFragment;
@@ -100,7 +101,7 @@ public class AarImport implements RuleConfiguredTargetFactory {
         ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_RESOURCES_ZIP);
 
     ResourceApk resourceApk =
-        androidManifest.packWithDataAndResources(
+        androidManifest.packAarWithDataAndResources(
             ruleContext,
             new LocalResourceContainer.Builder(ruleContext)
                 .withResources(ImmutableList.of(resourcesProvider))
@@ -151,6 +152,8 @@ public class AarImport implements RuleConfiguredTargetFactory {
 
     return ruleBuilder
         .setFilesToBuild(filesToBuildBuilder.build())
+        .addSkylarkTransitiveInfo(
+            JavaSkylarkApiProvider.NAME, JavaSkylarkApiProvider.fromRuleContext())
         .addProvider(RunfilesProvider.class, RunfilesProvider.EMPTY)
         .addProvider(
             AndroidResourcesProvider.class, resourceApk.toResourceProvider(ruleContext.getLabel()))

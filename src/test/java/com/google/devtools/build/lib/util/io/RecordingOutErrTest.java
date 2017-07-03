@@ -13,9 +13,7 @@
 // limitations under the License.
 package com.google.devtools.build.lib.util.io;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static com.google.common.truth.Truth.assertThat;
 
 import java.io.PrintWriter;
 import org.junit.Test;
@@ -48,16 +46,16 @@ public class RecordingOutErrTest {
     writer.println("Testerr2");
     writer.flush();
 
-    assertEquals("Testout1\nTestout2\n", outErr.outAsLatin1());
-    assertEquals("Testerr1\nTesterr2\n", outErr.errAsLatin1());
+    assertThat(outErr.outAsLatin1()).isEqualTo("Testout1\nTestout2\n");
+    assertThat(outErr.errAsLatin1()).isEqualTo("Testerr1\nTesterr2\n");
 
-    assertTrue(outErr.hasRecordedOutput());
+    assertThat(outErr.hasRecordedOutput()).isTrue();
 
     outErr.reset();
 
-    assertEquals("", outErr.outAsLatin1());
-    assertEquals("", outErr.errAsLatin1());
-    assertFalse(outErr.hasRecordedOutput());
+    assertThat(outErr.outAsLatin1()).isEmpty();
+    assertThat(outErr.errAsLatin1()).isEmpty();
+    assertThat(outErr.hasRecordedOutput()).isFalse();
   }
 
 }

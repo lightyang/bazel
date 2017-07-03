@@ -57,7 +57,6 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
-import com.google.devtools.build.lib.packages.TargetUtils;
 import com.google.devtools.build.lib.rules.apple.AppleCommandLineOptions.AppleBitcodeMode;
 import com.google.devtools.build.lib.rules.apple.AppleConfiguration;
 import com.google.devtools.build.lib.rules.apple.AppleToolchain;
@@ -147,14 +146,16 @@ public class LegacyCompilationSupport extends CompilationSupport {
       IntermediateArtifacts intermediateArtifacts,
       CompilationAttributes compilationAttributes,
       boolean useDeps,
-      Map<String, NestedSet<Artifact>> outputGroupCollector) {
+      Map<String, NestedSet<Artifact>> outputGroupCollector,
+      boolean isTestRule) {
     super(
         ruleContext,
         buildConfiguration,
         intermediateArtifacts,
         compilationAttributes,
         useDeps,
-        outputGroupCollector);
+        outputGroupCollector,
+        isTestRule);
   }
 
   @Override
@@ -311,28 +312,10 @@ public class LegacyCompilationSupport extends CompilationSupport {
 
     // Add input source file arguments
     commandLine.add("-c");
-    if (!sourceFile.getExecPath().isAbsolute()
-        && objcConfiguration.getUseAbsolutePathsForActions()) {
-      String workspaceRoot = objcConfiguration.getXcodeWorkspaceRoot();
-
-      // If the source file is a tree artifact, it means the file is basically a directory that may
-      // contain multiple concrete source files at execution time. When constructing the command
-      // line, we insert the source tree artifact as a placeholder, which will be replaced with
-      // one of its contained source files of type {@link Artifact.TreeFileArtifact} at execution
-      // time.
-      //
-      // We also do something similar for the object file arguments below.
-      if (sourceFile.isTreeArtifact()) {
-        commandLine.addPlaceholderTreeArtifactFormattedExecPath(workspaceRoot + "/%s", sourceFile);
-      } else {
-        commandLine.addPaths(workspaceRoot + "/%s", sourceFile.getExecPath());
-      }
+    if (sourceFile.isTreeArtifact()) {
+      commandLine.addPlaceholderTreeArtifactExecPath(sourceFile);
     } else {
-      if (sourceFile.isTreeArtifact()) {
-        commandLine.addPlaceholderTreeArtifactExecPath(sourceFile);
-      } else {
-        commandLine.addPath(sourceFile.getExecPath());
-      }
+      commandLine.addPath(sourceFile.getExecPath());
     }
 
     // Add output object file arguments.
@@ -687,12 +670,9 @@ public class LegacyCompilationSupport extends CompilationSupport {
       commandLine.add(CLANG);
     }
 
-    // Do not perform code stripping on tests because XCTest binary is linked not as an executable
-    // but as a bundle without any entry point.
-    boolean isTestTarget = TargetUtils.isTestRule(ruleContext.getRule());
-    // TODO(b/36562173): Replace the "!isTestTarget" condition with the presence of "-bundle" in
+    // TODO(b/36562173): Replace the "!isTestRule" condition with the presence of "-bundle" in
     // the command line.
-    if (objcConfiguration.shouldStripBinary() && !isTestTarget) {
+    if (objcConfiguration.shouldStripBinary() && !isTestRule) {
       commandLine.add("-dead_strip").add("-no_dead_strip_inits_and_terms");
     }
 

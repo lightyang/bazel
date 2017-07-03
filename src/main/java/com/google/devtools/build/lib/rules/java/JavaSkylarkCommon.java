@@ -30,6 +30,7 @@ import com.google.devtools.build.lib.packages.ClassObjectConstructor;
 import com.google.devtools.build.lib.rules.SkylarkRuleContext;
 import com.google.devtools.build.lib.rules.java.proto.StrictDepsUtils;
 import com.google.devtools.build.lib.skylarkinterface.Param;
+import com.google.devtools.build.lib.skylarkinterface.ParamType;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
 import com.google.devtools.build.lib.syntax.EvalException;
@@ -63,7 +64,10 @@ public class JavaSkylarkCommon {
         name = "compile_time_jars",
         positional = false,
         named = true,
-        type = SkylarkNestedSet.class,
+        allowedTypes = {
+          @ParamType(type = SkylarkList.class),
+          @ParamType(type = SkylarkNestedSet.class),
+        },
         generic1 = Artifact.class,
         defaultValue = "[]"
       ),
@@ -71,17 +75,32 @@ public class JavaSkylarkCommon {
         name = "runtime_jars",
         positional = false,
         named = true,
-        type = SkylarkNestedSet.class,
+        allowedTypes = {
+          @ParamType(type = SkylarkList.class),
+          @ParamType(type = SkylarkNestedSet.class),
+        },
+        generic1 = Artifact.class,
+        defaultValue = "[]"
+      ),
+      @Param(
+        name = "source_jars",
+        positional = false,
+        named = true,
+        allowedTypes = {
+          @ParamType(type = SkylarkList.class),
+          @ParamType(type = SkylarkNestedSet.class),
+        },
         generic1 = Artifact.class,
         defaultValue = "[]"
       )
     }
   )
-  public JavaProvider create(SkylarkNestedSet compileTimeJars, SkylarkNestedSet runtimeJars) {
+  public JavaProvider create(Object compileTimeJars, Object runtimeJars, Object sourceJars)
+      throws EvalException {
     JavaCompilationArgs javaCompilationArgs =
         JavaCompilationArgs.builder()
-            .addTransitiveRuntimeJars(runtimeJars.getSet(Artifact.class))
-            .addTransitiveCompileTimeJars(compileTimeJars.getSet(Artifact.class))
+            .addTransitiveRuntimeJars(asArtifactNestedSet(runtimeJars))
+            .addTransitiveCompileTimeJars(asArtifactNestedSet(compileTimeJars))
             .build();
 
     JavaProvider javaProvider =
@@ -89,8 +108,25 @@ public class JavaSkylarkCommon {
             .addProvider(
                 JavaCompilationArgsProvider.class,
                 JavaCompilationArgsProvider.create(javaCompilationArgs, javaCompilationArgs))
+            .addProvider(
+                JavaSourceJarsProvider.class,
+                JavaSourceJarsProvider.create(
+                    NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER),
+                    asArtifactNestedSet(sourceJars)))
             .build();
     return javaProvider;
+  }
+
+  /**
+   * Takes an Object that is either a SkylarkNestedSet or a SkylarkList of Artifacts and returns it
+   * as a NestedSet.
+   */
+  private static NestedSet<Artifact> asArtifactNestedSet(Object o) throws EvalException {
+    return o instanceof SkylarkNestedSet
+        ? ((SkylarkNestedSet) o).getSet(Artifact.class)
+        : NestedSetBuilder.<Artifact>compileOrder()
+            .addAll(((SkylarkList<?>) o).getContents(Artifact.class, null))
+            .build();
   }
 
   @SkylarkCallable(
@@ -146,6 +182,15 @@ public class JavaSkylarkCommon {
         doc = "A list of dependencies. Optional."
       ),
       @Param(
+          name = "exports",
+          positional = false,
+          named = true,
+          type = SkylarkList.class,
+          generic1 = JavaProvider.class,
+          defaultValue = "[]",
+          doc = "A list of exports. Optional."
+      ),
+      @Param(
         name = "strict_deps",
         defaultValue = "'ERROR'",
         positional = false,
@@ -195,6 +240,7 @@ public class JavaSkylarkCommon {
       Artifact outputJar,
       SkylarkList<String> javacOpts,
       SkylarkList<JavaProvider> deps,
+      SkylarkList<JavaProvider> exports,
       String strictDepsMode,
       ConfiguredTarget javaToolchain,
       ConfiguredTarget hostJavabase,
@@ -210,9 +256,12 @@ public class JavaSkylarkCommon {
             .setSourcePathEntries(sourcepathEntries)
             .setJavacOpts(javacOpts);
 
-    List<JavaCompilationArgsProvider> compilationArgsProviders =
+    List<JavaCompilationArgsProvider> depsCompilationArgsProviders =
         JavaProvider.fetchProvidersFromList(deps, JavaCompilationArgsProvider.class);
-    helper.addAllDeps(compilationArgsProviders);
+    List<JavaCompilationArgsProvider> exportsCompilationArgsProviders =
+        JavaProvider.fetchProvidersFromList(exports, JavaCompilationArgsProvider.class);
+    helper.addAllDeps(depsCompilationArgsProviders);
+    helper.addAllExports(exportsCompilationArgsProviders);
     helper.setCompilationStrictDepsMode(getStrictDepsMode(strictDepsMode));
     MiddlemanProvider hostJavabaseProvider = hostJavabase.getProvider(MiddlemanProvider.class);
 
@@ -222,7 +271,7 @@ public class JavaSkylarkCommon {
             : hostJavabaseProvider.getMiddlemanArtifact();
     JavaToolchainProvider javaToolchainProvider =
         checkNotNull(javaToolchain.getProvider(JavaToolchainProvider.class));
-    JavaCompilationArgs artifacts =
+    JavaCompilationArtifacts artifacts =
         helper.build(
             javaSemantics,
             javaToolchainProvider,

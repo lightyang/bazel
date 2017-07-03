@@ -14,6 +14,7 @@
 
 package com.google.devtools.build.lib.rules.objc;
 
+import static com.google.common.collect.ImmutableSortedSet.toImmutableSortedSet;
 import static com.google.devtools.build.lib.rules.objc.ObjcProvider.DEFINE;
 import static com.google.devtools.build.lib.rules.objc.ObjcProvider.DYNAMIC_FRAMEWORK_FILE;
 import static com.google.devtools.build.lib.rules.objc.ObjcProvider.HEADER;
@@ -21,6 +22,7 @@ import static com.google.devtools.build.lib.rules.objc.ObjcProvider.IMPORTED_LIB
 import static com.google.devtools.build.lib.rules.objc.ObjcProvider.INCLUDE;
 import static com.google.devtools.build.lib.rules.objc.ObjcProvider.INCLUDE_SYSTEM;
 import static com.google.devtools.build.lib.rules.objc.ObjcProvider.STATIC_FRAMEWORK_FILE;
+import static java.util.Comparator.naturalOrder;
 
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicates;
@@ -29,6 +31,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSortedSet;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Streams;
 import com.google.devtools.build.lib.actions.ActionAnalysisMetadata;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.AnalysisEnvironment;
@@ -38,7 +41,6 @@ import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.packages.BuildType;
 import com.google.devtools.build.lib.packages.RuleClass.ConfiguredTargetFactory.RuleErrorException;
-import com.google.devtools.build.lib.packages.TargetUtils;
 import com.google.devtools.build.lib.rules.apple.AppleCommandLineOptions.AppleBitcodeMode;
 import com.google.devtools.build.lib.rules.apple.AppleConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CcLibraryHelper;
@@ -53,6 +55,7 @@ import com.google.devtools.build.lib.rules.cpp.CppLinkAction;
 import com.google.devtools.build.lib.rules.cpp.CppLinkActionBuilder;
 import com.google.devtools.build.lib.rules.cpp.CppRuleClasses;
 import com.google.devtools.build.lib.rules.cpp.FdoSupportProvider;
+import com.google.devtools.build.lib.rules.cpp.FeatureSpecification;
 import com.google.devtools.build.lib.rules.cpp.IncludeProcessing;
 import com.google.devtools.build.lib.rules.cpp.Link.LinkStaticness;
 import com.google.devtools.build.lib.rules.cpp.Link.LinkTargetType;
@@ -63,6 +66,7 @@ import com.google.devtools.build.lib.rules.objc.ObjcVariablesExtension.VariableC
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.Collection;
 import java.util.Map;
+import java.util.stream.Stream;
 import javax.annotation.Nullable;
 
 /**
@@ -133,7 +137,8 @@ public class CrosstoolCompilationSupport extends CompilationSupport {
         ObjcRuleClasses.intermediateArtifacts(ruleContext),
         CompilationAttributes.Builder.fromRuleContext(ruleContext).build(),
         /*useDeps=*/ true,
-        outputGroupCollector);
+        outputGroupCollector,
+        /*isTestRule=*/ false);
   }
 
   /**
@@ -151,14 +156,16 @@ public class CrosstoolCompilationSupport extends CompilationSupport {
       IntermediateArtifacts intermediateArtifacts,
       CompilationAttributes compilationAttributes,
       boolean useDeps,
-      Map<String, NestedSet<Artifact>> outputGroupCollector) {
+      Map<String, NestedSet<Artifact>> outputGroupCollector,
+      boolean isTestRule) {
     super(
         ruleContext,
         buildConfiguration,
         intermediateArtifacts,
         compilationAttributes,
         useDeps,
-        outputGroupCollector);
+        outputGroupCollector,
+        isTestRule);
   }
 
   @Override
@@ -238,7 +245,8 @@ public class CrosstoolCompilationSupport extends CompilationSupport {
             .setLinkStaticness(LinkStaticness.FULLY_STATIC)
             .setLibraryIdentifier(libraryIdentifier)
             .addVariablesExtension(extension)
-            .setFeatureConfiguration(getFeatureConfiguration(ruleContext, buildConfiguration))
+            .setFeatureConfiguration(
+                getFeatureConfiguration(ruleContext, ccToolchain, buildConfiguration))
             .build();
     ruleContext.registerAction(fullyLinkAction);
 
@@ -315,7 +323,8 @@ public class CrosstoolCompilationSupport extends CompilationSupport {
             .setLinkType(linkType)
             .setLinkStaticness(LinkStaticness.FULLY_STATIC)
             .addLinkopts(ImmutableList.copyOf(extraLinkArgs))
-            .setFeatureConfiguration(getFeatureConfiguration(ruleContext, buildConfiguration));
+            .setFeatureConfiguration(
+                getFeatureConfiguration(ruleContext, toolchain, buildConfiguration));
 
     if (objcConfiguration.generateDsym()) {
       Artifact dsymBundleZip = intermediateArtifacts.tempDsymBundleZip(dsymOutputType);
@@ -382,8 +391,11 @@ public class CrosstoolCompilationSupport extends CompilationSupport {
         ImmutableSortedSet.copyOf(compilationArtifacts.getNonArcSrcs());
     Collection<Artifact> privateHdrs =
         ImmutableSortedSet.copyOf(compilationArtifacts.getPrivateHdrs());
-    Collection<Artifact> publicHdrs = ImmutableSortedSet.copyOf(
-        Iterables.concat(attributes.hdrs(), compilationArtifacts.getAdditionalHdrs()));
+    Collection<Artifact> publicHdrs =
+        Stream.concat(
+                Streams.stream(attributes.hdrs()),
+                Streams.stream(compilationArtifacts.getAdditionalHdrs()))
+            .collect(toImmutableSortedSet(naturalOrder()));
     Artifact pchHdr = null;
     if (ruleContext.attributes().has("pch", BuildType.LABEL)) {
       pchHdr = ruleContext.getPrerequisiteArtifact("pch", Mode.TARGET);
@@ -399,7 +411,7 @@ public class CrosstoolCompilationSupport extends CompilationSupport {
         new CcLibraryHelper(
                 ruleContext,
                 semantics,
-                getFeatureConfiguration(ruleContext, buildConfiguration),
+                getFeatureConfiguration(ruleContext, ccToolchain, buildConfiguration),
                 CcLibraryHelper.SourceCategory.CC_AND_OBJC,
                 ccToolchain,
                 fdoSupport,
@@ -435,10 +447,12 @@ public class CrosstoolCompilationSupport extends CompilationSupport {
     return result;
   }
 
-  private static FeatureConfiguration getFeatureConfiguration(RuleContext ruleContext,
-      BuildConfiguration configuration) {
-    ImmutableList.Builder<String> activatedCrosstoolSelectables =
-        ImmutableList.<String>builder()
+  private FeatureConfiguration getFeatureConfiguration(RuleContext ruleContext,
+      CcToolchainProvider ccToolchain, BuildConfiguration configuration) {
+    boolean isHost = ruleContext.getConfiguration().isHostConfiguration();
+    ImmutableSet.Builder<String> activatedCrosstoolSelectables =
+        ImmutableSet.<String>builder()
+            .addAll(ccToolchain.getFeatures().getDefaultFeatures())
             .addAll(ACTIVATED_ACTIONS)
             .addAll(
                 ruleContext
@@ -453,6 +467,7 @@ public class CrosstoolCompilationSupport extends CompilationSupport {
             .add(CppRuleClasses.COMPILE_ACTION_FLAGS_IN_FLAG_SET)
             .add(CppRuleClasses.DEPENDENCY_FILE)
             .add(CppRuleClasses.INCLUDE_PATHS)
+            .add(isHost ? "host" : "nonhost")
             .add(configuration.getCompilationMode().toString());
 
     if (configuration.getFragment(ObjcConfiguration.class).moduleMapsEnabled()) {
@@ -476,7 +491,7 @@ public class CrosstoolCompilationSupport extends CompilationSupport {
     } else {
       activatedCrosstoolSelectables.add(GCC_COVERAGE_MAP_FORMAT);
     }
-    if (!TargetUtils.isTestRule(ruleContext.getRule())) {
+    if (!isTestRule) {
       activatedCrosstoolSelectables.add(IS_NOT_TEST_TARGET_FEATURE_NAME);
     }
     if (configuration.getFragment(ObjcConfiguration.class).generateDsym()) {
@@ -497,7 +512,9 @@ public class CrosstoolCompilationSupport extends CompilationSupport {
     return configuration
         .getFragment(CppConfiguration.class)
         .getFeatures()
-        .getFeatureConfiguration(activatedCrosstoolSelectables.build());
+        .getFeatureConfiguration(
+            FeatureSpecification.create(
+                activatedCrosstoolSelectables.build(), ImmutableSet.<String>of()));
   }
 
   private static ImmutableList<Artifact> getObjFiles(

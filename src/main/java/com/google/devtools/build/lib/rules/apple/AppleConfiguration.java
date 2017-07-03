@@ -14,6 +14,7 @@
 
 package com.google.devtools.build.lib.rules.apple;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
 import com.google.common.base.Strings;
@@ -66,6 +67,12 @@ public class AppleConfiguration extends BuildConfiguration.Fragment {
 
   private static final DottedVersion MINIMUM_BITCODE_XCODE_VERSION = DottedVersion.fromString("7");
 
+  /** Prefix for iOS cpu values. */
+  public static final String IOS_CPU_PREFIX = "ios_";
+
+  /** Default cpu for iOS builds. */
+  @VisibleForTesting static final String DEFAULT_IOS_CPU = "x86_64";
+
   @Nullable private final DottedVersion xcodeVersion;
   private final DottedVersion iosSdkVersion;
   private final DottedVersion iosMinimumOs;
@@ -89,9 +96,12 @@ public class AppleConfiguration extends BuildConfiguration.Fragment {
   @Nullable private final String xcodeToolchain;
   @Nullable private final Label defaultProvisioningProfileLabel;
 
-  AppleConfiguration(AppleCommandLineOptions appleOptions,
+  AppleConfiguration(
+      AppleCommandLineOptions appleOptions,
+      String cpu,
       @Nullable DottedVersion xcodeVersion,
       DottedVersion iosSdkVersion,
+      DottedVersion iosMinimumOs,
       DottedVersion watchosSdkVersion,
       DottedVersion watchosMinimumOs,
       DottedVersion tvosSdkVersion,
@@ -99,7 +109,7 @@ public class AppleConfiguration extends BuildConfiguration.Fragment {
       DottedVersion macosSdkVersion,
       DottedVersion macosMinimumOs) {
     this.iosSdkVersion = Preconditions.checkNotNull(iosSdkVersion, "iosSdkVersion");
-    this.iosMinimumOs = Preconditions.checkNotNull(appleOptions.iosMinimumOs, "iosMinimumOs");
+    this.iosMinimumOs = Preconditions.checkNotNull(iosMinimumOs, "iosMinimumOs");
     this.watchosSdkVersion =
         Preconditions.checkNotNull(watchosSdkVersion, "watchOsSdkVersion");
     this.watchosMinimumOs =
@@ -113,7 +123,7 @@ public class AppleConfiguration extends BuildConfiguration.Fragment {
     this.macosMinimumOs = Preconditions.checkNotNull(macosMinimumOs, "macOsMinimumOs");
 
     this.xcodeVersion = xcodeVersion;
-    this.iosCpu = Preconditions.checkNotNull(appleOptions.iosCpu, "iosCpu");
+    this.iosCpu = iosCpuFromCpu(cpu);
     this.appleSplitCpu = Preconditions.checkNotNull(appleOptions.appleSplitCpu, "appleSplitCpu");
     this.applePlatformType =
         Preconditions.checkNotNull(appleOptions.applePlatformType, "applePlatformType");
@@ -135,6 +145,15 @@ public class AppleConfiguration extends BuildConfiguration.Fragment {
     this.enableAppleCrosstool = appleOptions.enableAppleCrosstoolTransition;
     this.defaultProvisioningProfileLabel = appleOptions.defaultProvisioningProfile;
     this.xcodeToolchain = appleOptions.xcodeToolchain;
+  }
+
+  /** Determines cpu value from apple-specific toolchain identifier. */
+  public static String iosCpuFromCpu(String cpu) {
+    if (cpu.startsWith(IOS_CPU_PREFIX)) {
+      return cpu.substring(IOS_CPU_PREFIX.length());
+    } else {
+      return DEFAULT_IOS_CPU;
+    }
   }
 
   /**
@@ -593,12 +612,13 @@ public class AppleConfiguration extends BuildConfiguration.Fragment {
     public AppleConfiguration create(ConfigurationEnvironment env, BuildOptions buildOptions)
         throws InvalidConfigurationException, InterruptedException {
       AppleCommandLineOptions appleOptions = buildOptions.get(AppleCommandLineOptions.class);
+      String cpu = buildOptions.get(BuildConfiguration.Options.class).cpu;
       XcodeVersionProperties xcodeVersionProperties = getXcodeVersionProperties(env, appleOptions);
 
       DottedVersion iosSdkVersion = (appleOptions.iosSdkVersion != null)
           ? appleOptions.iosSdkVersion : xcodeVersionProperties.getDefaultIosSdkVersion();
-      // TODO(cparsons): Look into ios_minimum_os matching the defaulting behavior of the other
-      // platforms.
+      DottedVersion iosMinimumOsVersion = (appleOptions.iosMinimumOs != null)
+          ? appleOptions.iosMinimumOs : iosSdkVersion;
       DottedVersion watchosSdkVersion = (appleOptions.watchOsSdkVersion != null)
           ? appleOptions.watchOsSdkVersion : xcodeVersionProperties.getDefaultWatchosSdkVersion();
       DottedVersion watchosMinimumOsVersion = (appleOptions.watchosMinimumOs != null)
@@ -612,9 +632,18 @@ public class AppleConfiguration extends BuildConfiguration.Fragment {
       DottedVersion macosMinimumOsVersion = (appleOptions.macosMinimumOs != null)
           ? appleOptions.macosMinimumOs : macosSdkVersion;
       AppleConfiguration configuration =
-          new AppleConfiguration(appleOptions, xcodeVersionProperties.getXcodeVersion().orNull(),
-              iosSdkVersion, watchosSdkVersion, watchosMinimumOsVersion,
-              tvosSdkVersion, tvosMinimumOsVersion, macosSdkVersion, macosMinimumOsVersion);
+          new AppleConfiguration(
+              appleOptions,
+              cpu,
+              xcodeVersionProperties.getXcodeVersion().orNull(),
+              iosSdkVersion,
+              iosMinimumOsVersion,
+              watchosSdkVersion,
+              watchosMinimumOsVersion,
+              tvosSdkVersion,
+              tvosMinimumOsVersion,
+              macosSdkVersion,
+              macosMinimumOsVersion);
 
       validate(configuration);
       return configuration;
@@ -679,22 +708,14 @@ public class AppleConfiguration extends BuildConfiguration.Fragment {
     FRAMEWORK("framework"),
     /** Split transition distinguisher for {@code apple_watch1_extension} rule. */
     WATCH_OS1_EXTENSION("watch_os1_extension"),
-    /** Distinguisher for non-extension {@code apple_binary} rule with "ios" platform_type. */
+    /** Distinguisher for {@code apple_binary} rule with "ios" platform_type. */
     APPLEBIN_IOS("applebin_ios"),
-    /** Distinguisher for non-extension {@code apple_binary} rule with "watchos" platform_type. */
+    /** Distinguisher for {@code apple_binary} rule with "watchos" platform_type. */
     APPLEBIN_WATCHOS("applebin_watchos"),
-    /** Distinguisher for non-extension {@code apple_binary} rule with "tvos" platform_type. */
+    /** Distinguisher for {@code apple_binary} rule with "tvos" platform_type. */
     APPLEBIN_TVOS("applebin_tvos"),
-    /** Distinguisher for non-extension {@code apple_binary} rule with "macos" platform_type. */
+    /** Distinguisher for {@code apple_binary} rule with "macos" platform_type. */
     APPLEBIN_MACOS("applebin_macos"),
-    /** Distinguisher for extension {@code apple_binary} rule with "ios" platform_type. */
-    APPLEBIN_IOS_EXT("applebin_ios_ext"),
-    /** Distinguisher for extension {@code apple_binary} rule with "watchos" platform_type. */
-    APPLEBIN_WATCHOS_EXT("applebin_watchos_ext"),
-    /** Distinguisher for extension {@code apple_binary} rule with "tvos" platform_type. */
-    APPLEBIN_TVOS_EXT("applebin_tvos_ext"),
-    /** Distinguisher for extension {@code apple_binary} rule with "macos" platform_type. */
-    APPLEBIN_MACOS_EXT("applebin_macos_ext"),
 
     /**
      * Distinguisher for the apple crosstool configuration.  We use "apl" for output directory

@@ -106,6 +106,20 @@ java_test(
 )
 
 java_test(
+    name = "DataResourceXmlTest",
+    srcs = ["DataResourceXmlTest.java"],
+    deps = [
+        ":test_utils",
+        "//src/tools/android/java/com/google/devtools/build/android:android_builder_lib",
+        "//third_party:android_common_25_0_0",
+        "//third_party:guava",
+        "//third_party:jimfs",
+        "//third_party:junit4",
+        "//third_party:truth",
+    ],
+)
+
+java_test(
     name = "DensitySpecificManifestProcessorTest",
     srcs = ["DensitySpecificManifestProcessorTest.java"],
     tags = ["no_windows"],  # Test asserts forward slashes in android data xml files.
@@ -126,6 +140,7 @@ java_test(
         "//src/tools/android/java/com/google/devtools/build/android:android_builder_lib",
         "//third_party:guava",
         "//third_party:junit4",
+        "//third_party:truth",
     ],
 )
 

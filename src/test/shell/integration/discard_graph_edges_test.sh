@@ -69,8 +69,8 @@ function test_top_level_aspect() {
 def _simple_aspect_impl(target, ctx):
   result=depset()
   for orig_out in target.files:
-    aspect_out = ctx.new_file(orig_out.basename + ".aspect")
-    ctx.file_action(
+    aspect_out = ctx.actions.declare_file(orig_out.basename + ".aspect")
+    ctx.actions.write(
         output=aspect_out,
         content = "Hello from aspect for %s" % orig_out.basename)
     result += [aspect_out]
@@ -166,7 +166,8 @@ EOF
   echo "$histo_file"
 }
 
-function test_packages_cleared() {
+# TODO(b/62450749): This is flaky on CI, re-enable when we know what is wrong.
+function DISABLED_test_packages_cleared() {
   local histo_file="$(prepare_histogram "--nodiscard_analysis_cache")"
   local package_count="$(extract_histogram_count "$histo_file" \
       'devtools\.build\.lib\..*\.Package$')"
@@ -252,7 +253,7 @@ function test_action_conflict() {
   cat > conflict/conflict_rule.bzl <<EOF || fail "Couldn't write bzl file"
 def _create(ctx):
   files_to_build = set(ctx.outputs.outs)
-  intemediate_outputs = [ctx.new_file("bar")]
+  intemediate_outputs = [ctx.actions.declare_file("bar")]
   intermediate_cmd = "cat %s > %s" % (ctx.attr.name, intemediate_outputs[0].path)
   action_cmd = "touch " + list(files_to_build)[0].path
   ctx.action(outputs=list(intemediate_outputs),

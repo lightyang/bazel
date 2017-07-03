@@ -15,19 +15,16 @@
 package com.google.devtools.build.lib.rules.cpp;
 
 import static java.nio.charset.StandardCharsets.ISO_8859_1;
+import static java.util.stream.Collectors.joining;
 
-import com.google.common.base.Function;
-import com.google.common.base.Joiner;
 import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.ActionExecutionContext;
 import com.google.devtools.build.lib.actions.ActionExecutionException;
 import com.google.devtools.build.lib.actions.ActionOwner;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.ExecException;
-import com.google.devtools.build.lib.actions.Executor;
 import com.google.devtools.build.lib.actions.ResourceSet;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
@@ -50,7 +47,7 @@ import java.util.logging.Logger;
 @ThreadCompatible
 public class FakeCppCompileAction extends CppCompileAction {
 
-  private static final Logger LOG = Logger.getLogger(FakeCppCompileAction.class.getName());
+  private static final Logger log = Logger.getLogger(FakeCppCompileAction.class.getName());
 
   public static final UUID GUID = UUID.fromString("8ab63589-be01-4a39-b770-b98ae8b03493");
 
@@ -133,21 +130,22 @@ public class FakeCppCompileAction extends CppCompileAction {
   public void execute(ActionExecutionContext actionExecutionContext)
       throws ActionExecutionException, InterruptedException {
     setModuleFileFlags();
-    Executor executor = actionExecutionContext.getExecutor();
-
     // First, do a normal compilation, to generate the ".d" file. The generated object file is built
     // to a temporary location (tempOutputFile) and ignored afterwards.
-    LOG.info("Generating " + getDotdFile());
-    CppCompileActionContext context = executor.getContext(actionContext);
+    log.info("Generating " + getDotdFile());
+    CppCompileActionContext context = actionExecutionContext.getContext(actionContext);
     CppCompileActionContext.Reply reply = null;
     try {
       reply = context.execWithReply(this, actionExecutionContext);
     } catch (ExecException e) {
-      throw e.toActionExecutionException("C++ compilation of rule '" + getOwner().getLabel() + "'",
-          executor.getVerboseFailures(), this);
+      throw e.toActionExecutionException(
+          "C++ compilation of rule '" + getOwner().getLabel() + "'",
+          actionExecutionContext.getVerboseFailures(),
+          this);
     }
-    IncludeScanningContext scanningContext = executor.getContext(IncludeScanningContext.class);
-    Path execRoot = executor.getExecRoot();
+    IncludeScanningContext scanningContext =
+        actionExecutionContext.getContext(IncludeScanningContext.class);
+    Path execRoot = actionExecutionContext.getExecRoot();
 
     NestedSet<Artifact> discoveredInputs;
     if (getDotdFile() == null) {
@@ -184,11 +182,11 @@ public class FakeCppCompileAction extends CppCompileAction {
       validateInclusions(
           discoveredInputs,
           actionExecutionContext.getArtifactExpander(),
-          executor.getEventHandler());
+          actionExecutionContext.getEventHandler());
     } catch (ActionExecutionException e) {
       // TODO(bazel-team): (2009) make this into an error, once most of the current warnings
       // are fixed.
-      executor.getEventHandler().handle(Event.warn(
+      actionExecutionContext.getEventHandler().handle(Event.warn(
           getOwner().getLocation(),
           e.getMessage() + ";\n  this warning may eventually become an error"));
     }
@@ -197,7 +195,7 @@ public class FakeCppCompileAction extends CppCompileAction {
 
     // Generate a fake ".o" file containing the command line needed to generate
     // the real object file.
-    LOG.info("Generating " + outputFile);
+    log.info("Generating " + outputFile);
 
     // A cc_fake_binary rule generates fake .o files and a fake target file,
     // which merely contain instructions on building the real target. We need to
@@ -207,24 +205,26 @@ public class FakeCppCompileAction extends CppCompileAction {
     // runfiles directory (where writing is forbidden), we patch the command
     // line to write to $TEST_TMPDIR instead.
     final String outputPrefix = "$TEST_TMPDIR/";
-    String argv = Joiner.on(' ').join(
-      Iterables.transform(getArgv(outputFile.getExecPath()), new Function<String, String>() {
-        @Override
-        public String apply(String input) {
-          String result = ShellEscaper.escapeString(input);
-          // Once -c and -o options are added into action_config, the argument of
-          // getArgv(outputFile.getExecPath()) won't be used anymore. There will always be
-          // -c <tempOutputFile>, but here it has to be outputFile, so we replace it.
-          if (input.equals(tempOutputFile.getPathString())) {
-            result = outputPrefix + ShellEscaper.escapeString(outputFile.getExecPathString());
-          }
-          if (input.equals(outputFile.getExecPathString())
-              || input.equals(getDotdFile().getSafeExecPath().getPathString())) {
-            result = outputPrefix + ShellEscaper.escapeString(input);
-          }
-          return result;
-        }
-      }));
+    String argv =
+        getArgv(outputFile.getExecPath())
+            .stream()
+            .map(
+                input -> {
+                  String result = ShellEscaper.escapeString(input);
+                  // Once -c and -o options are added into action_config, the argument of
+                  // getArgv(outputFile.getExecPath()) won't be used anymore. There will always be
+                  // -c <tempOutputFile>, but here it has to be outputFile, so we replace it.
+                  if (input.equals(tempOutputFile.getPathString())) {
+                    result =
+                        outputPrefix + ShellEscaper.escapeString(outputFile.getExecPathString());
+                  }
+                  if (input.equals(outputFile.getExecPathString())
+                      || input.equals(getDotdFile().getSafeExecPath().getPathString())) {
+                    result = outputPrefix + ShellEscaper.escapeString(input);
+                  }
+                  return result;
+                })
+            .collect(joining(" "));
 
     // Write the command needed to build the real .o file to the fake .o file.
     // Generate a command to ensure that the output directory exists; otherwise

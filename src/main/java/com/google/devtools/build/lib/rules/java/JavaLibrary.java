@@ -203,15 +203,10 @@ public class JavaLibrary implements RuleConfiguredTargetFactory {
             compileTimeJavaDepArtifacts, runTimeJavaDepArtifacts);
     JavaSourceJarsProvider sourceJarsProvider = sourceJarsProviderBuilder.build();
     JavaRuleOutputJarsProvider ruleOutputJarsProvider = ruleOutputJarsProviderBuilder.build();
-    JavaSkylarkApiProvider.Builder skylarkApiProvider =
-        JavaSkylarkApiProvider.builder()
-            .setRuleOutputJarsProvider(ruleOutputJarsProvider)
-            .setSourceJarsProvider(sourceJarsProvider)
-            .setCompilationArgsProvider(compilationArgsProvider);
 
     NestedSet<Artifact> filesToBuild = filesBuilder.build();
-    common.addTransitiveInfoProviders(builder, skylarkApiProvider, filesToBuild, classJar);
-    common.addGenJarsProvider(builder, skylarkApiProvider, genClassJar, genSourceJar);
+    common.addTransitiveInfoProviders(builder, filesToBuild, classJar);
+    common.addGenJarsProvider(builder, genClassJar, genSourceJar);
 
     NestedSet<Artifact> proguardSpecs = new ProguardLibrary(ruleContext).collectProguardSpecs();
 
@@ -224,7 +219,8 @@ public class JavaLibrary implements RuleConfiguredTargetFactory {
         // java_library doesn't need to return JavaRunfilesProvider
         .build();
     builder
-        .addSkylarkTransitiveInfo(JavaSkylarkApiProvider.NAME, skylarkApiProvider.build())
+        .addSkylarkTransitiveInfo(
+            JavaSkylarkApiProvider.NAME, JavaSkylarkApiProvider.fromRuleContext())
         .addProvider(ruleOutputJarsProvider)
         .addProvider(new JavaRuntimeJarProvider(javaArtifacts.getRuntimeJars()))
         .addProvider(
@@ -243,6 +239,7 @@ public class JavaLibrary implements RuleConfiguredTargetFactory {
         // TODO(bazel-team): this should only happen for java_plugin
         .addProvider(JavaCommon.getTransitivePlugins(ruleContext))
         .addProvider(new ProguardSpecProvider(proguardSpecs))
+        .addProvider(sourceJarsProvider)
         .addOutputGroup(JavaSemantics.SOURCE_JARS_OUTPUT_GROUP, transitiveSourceJars)
         .addOutputGroup(OutputGroupProvider.HIDDEN_TOP_LEVEL, proguardSpecs);
 

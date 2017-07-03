@@ -81,7 +81,6 @@ OSX_DUMMY_TARGETS = [
     "src/tools/xcode/environment/environment_plist",
     "src/objc_tools/bundlemerge/bundlemerge_deploy.jar",
     "src/objc_tools/plmerge/plmerge_deploy.jar",
-    "src/objc_tools/xcodegen/xcodegen_deploy.jar",
     "src/tools/xcode/realpath/realpath",
     "src/tools/xcode/stdredirect/StdRedirect.dylib",
 ]
@@ -106,7 +105,6 @@ filegroup(
         "//src/tools/xcode/environment:environment_plist",
         "//src/objc_tools/bundlemerge:bundlemerge_deploy.jar",
         "//src/objc_tools/plmerge:plmerge_deploy.jar",
-        "//src/objc_tools/xcodegen:xcodegen_deploy.jar",
         "//src/tools/xcode/realpath:realpath",
         "//tools/osx:xcode_locator.m",
     ] + select({
@@ -126,9 +124,11 @@ filegroup(
 [genrule(
     name = "embedded_tools" + suffix,
     srcs = [
+        "BUILD.tools",
         ":create_embedded_tools.sh",
         "//tools:embedded_tools_srcs",
         "//third_party:gpl-srcs",
+        "//third_party/java/j2objc:embedded_tools_srcs",
         "//third_party/java/jarjar:embedded_tools_srcs",
         "//third_party/java/jdk/langtools:test-srcs",
         "//third_party/py/concurrent:srcs",
@@ -139,16 +139,20 @@ filegroup(
         "//src/tools/android/java/com/google/devtools/build/android/idlclass:embedded_tools",
         "//src/tools/android/java/com/google/devtools/build/android/dexer:embedded_tools",
         "//src/tools/android/java/com/google/devtools/build/android/ziputils:embedded_tools",
+        "//src/tools/singlejar:embedded_tools",
+        "//src/main/cpp/util:embedded_tools",
+        "//src/main/native:embedded_tools",
         "//src/main/protobuf:srcs",
         "//src/java_tools/buildjar:JavaBuilderDeploy",
         "//src/java_tools/buildjar:VanillaJavaBuilder_deploy.jar",
-        "//src/java_tools/singlejar:SingleJar_deploy.jar",
         "//src/java_tools/buildjar/java/com/google/devtools/build/buildjar/genclass:GenClass_deploy.jar",
         "//src/java_tools/junitrunner/java/com/google/testing/junit/runner:Runner_deploy.jar",
         "//src/java_tools/junitrunner/java/com/google/testing/junit/runner:ExperimentalRunner_deploy.jar",
         "//src/java_tools/junitrunner/java/com/google/testing/coverage:embedded_tools",
         "//third_party/ijar",
+        "//third_party/ijar:embedded_tools",
         "//third_party/java/jacoco:srcs",
+        "//third_party/zlib:embedded_tools",
     ] + select({
         ":darwin": [
             ":darwin_tools",
@@ -161,6 +165,21 @@ filegroup(
         "//conditions:default": [
             ":dummy_darwin_tools",
             "//third_party/ijar:zipper",
+        ],
+    }) + select({
+        # TODO(bazel-team): Once https://github.com/bazelbuild/bazel/issues/2241
+        # is resolved, use cc implementation of singlejar on windows
+        ":windows": [
+            "//src/java_tools/singlejar:SingleJar_deploy.jar",
+        ],
+        ":windows_msys": [
+            "//src/java_tools/singlejar:SingleJar_deploy.jar",
+        ],
+        ":windows_msvc": [
+            "//src/java_tools/singlejar:SingleJar_deploy.jar",
+        ],
+        "//conditions:default": [
+            "//src/tools/singlejar:singlejar",
         ],
     }) + select({
         "//tools/jdk:jdk7": [],
@@ -178,6 +197,9 @@ filegroup(
             "@openjdk_win//file",
         ],
         ":windows_msvc": [
+            "@openjdk_win//file",
+        ],
+        ":windows": [
             "@openjdk_win//file",
         ],
         "//conditions:default": [
@@ -340,8 +362,8 @@ filegroup(
         "//src/main/tools:srcs",
         "//src/objc_tools/bundlemerge:srcs",
         "//src/objc_tools/plmerge:srcs",
-        "//src/objc_tools/xcodegen:srcs",
         "//src/test/cpp:srcs",
+        "//src/test/docker:srcs",
         "//src/test/gen:srcs",
         "//src/test/native:srcs",
         "//src/test/java/com/google/devtools/build/android:srcs",
@@ -349,6 +371,7 @@ filegroup(
         "//src/test/java/com/google/devtools/build/lib:srcs",
         "//src/test/java/com/google/devtools/build/skyframe:srcs",
         "//src/test/java/com/google/devtools/common/options:srcs",
+        "//src/test/py/bazel:srcs",
         "//src/test/shell:srcs",
         "//src/tools/android/java/com/google/devtools/build/android:srcs",
         "//src/tools/benchmark:srcs",
@@ -373,6 +396,7 @@ genrule(
     srcs = [
         "//src/main/protobuf:dist_jars",
         "//src/main/java/com/google/devtools/build/lib/buildeventstream/proto:dist_jars",
+        "@googleapis//:dist_jars",
     ],
     outs = ["derived_java_srcs.zip"],
     cmd = "$(location :combine_derived_java_srcs.sh) $@ $(SRCS)",

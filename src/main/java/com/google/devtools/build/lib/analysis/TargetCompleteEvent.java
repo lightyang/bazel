@@ -37,6 +37,7 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetView;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.packages.AttributeMap;
+import com.google.devtools.build.lib.packages.TestSize;
 import com.google.devtools.build.lib.rules.test.TestProvider;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.Preconditions;
@@ -115,8 +116,10 @@ public final class TargetCompleteEvent
 
   @Override
   public BuildEventId getEventId() {
-    return BuildEventId.targetCompleted(
-        getTarget().getLabel(), getTarget().getConfiguration().getEventId());
+    BuildConfiguration config = getTarget().getConfiguration();
+    BuildEventId configId =
+        config == null ? BuildEventId.nullConfigurationId() : config.getEventId();
+    return BuildEventId.targetCompleted(getTarget().getLabel(), configId);
   }
 
   @Override
@@ -142,6 +145,21 @@ public final class TargetCompleteEvent
     return childrenBuilder.build();
   }
 
+  private BuildEventStreamProtos.TestSize bepTestSize(TestSize size) {
+    switch (size) {
+      case SMALL:
+        return BuildEventStreamProtos.TestSize.SMALL;
+      case MEDIUM:
+        return BuildEventStreamProtos.TestSize.MEDIUM;
+      case LARGE:
+        return BuildEventStreamProtos.TestSize.LARGE;
+      case ENORMOUS:
+        return BuildEventStreamProtos.TestSize.ENORMOUS;
+      default:
+        return BuildEventStreamProtos.TestSize.UNKNOWN;
+    }
+  }
+
   @Override
   public BuildEventStreamProtos.BuildEvent asStreamProto(BuildEventConverters converters) {
     BuildEventStreamProtos.TargetComplete.Builder builder =
@@ -152,12 +170,17 @@ public final class TargetCompleteEvent
     builder.addAllTag(getTags());
     builder.addAllOutputGroup(getOutputFilesByGroup(converters.artifactGroupNamer()));
 
+    if (isTest) {
+      builder.setTestSize(
+          bepTestSize(TestSize.getTestSize(target.getTarget().getAssociatedRule())));
+    }
+
     // TODO(aehlig): remove direct reporting of artifacts as soon as clients no longer
     // need it.
     for (ArtifactsInOutputGroup group : outputs) {
       if (group.areImportant()) {
         for (Artifact artifact : group.getArtifacts()) {
-          String name = artifact.getFilename();
+          String name = artifact.getPath().relativeTo(artifact.getRoot().getPath()).getPathString();
           String uri = converters.pathConverter().apply(artifact.getPath());
           builder.addImportantOutput(File.newBuilder().setName(name).setUri(uri).build());
         }

@@ -155,14 +155,6 @@ public class FdoSupport {
   }
 
   /**
-   * Returns true if the given fdoFile represents an LLVM profile.
-   */
-  public static final boolean isLLVMFdo(String fdoFile) {
-    return (CppFileTypes.LLVM_PROFILE.matches(fdoFile)
-        || CppFileTypes.LLVM_PROFILE_RAW.matches(fdoFile));
-  }
-
-  /**
    * Coverage information output directory passed to {@code --fdo_instrument},
    * or {@code null} if FDO instrumentation is disabled.
    */
@@ -262,12 +254,13 @@ public class FdoSupport {
       PathFragment fdoInstrument,
       Path fdoProfile,
       LipoMode lipoMode,
+      boolean llvmFdo,
       Path execRoot)
       throws IOException, FdoException, InterruptedException {
     FdoMode fdoMode;
     if (fdoProfile != null && isAutoFdo(fdoProfile.getBaseName())) {
       fdoMode = FdoMode.AUTO_FDO;
-    } else if (fdoProfile != null && isLLVMFdo(fdoProfile.getBaseName())) {
+    } else if (fdoProfile != null && llvmFdo) {
       fdoMode = FdoMode.LLVM_FDO;
     } else if (fdoProfile != null) {
       fdoMode = FdoMode.VANILLA;
@@ -579,12 +572,14 @@ public class FdoSupport {
   private Iterable<Artifact> getAuxiliaryInputs(
       RuleContext ruleContext, PathFragment sourceName, PathFragment sourceExecPath, boolean usePic,
       FdoSupportProvider fdoSupportProvider) {
-    LipoContextProvider lipoContextProvider = CppHelper.getLipoContextProvider(ruleContext);
+    CppConfiguration cppConfig = ruleContext.getFragment(CppConfiguration.class);
+    LipoContextProvider lipoContextProvider =
+        cppConfig.isLLVMCompiler() ? null : CppHelper.getLipoContextProvider(ruleContext);
 
     // If --fdo_optimize was not specified, we don't have any additional inputs.
     if (fdoProfile == null) {
       return ImmutableSet.of();
-    } else if (fdoMode == FdoMode.AUTO_FDO || fdoMode == FdoMode.LLVM_FDO) {
+    } else if (fdoMode == FdoMode.LLVM_FDO || fdoMode == FdoMode.AUTO_FDO) {
       ImmutableSet.Builder<Artifact> auxiliaryInputs = ImmutableSet.builder();
       auxiliaryInputs.add(fdoSupportProvider.getProfileArtifact());
       if (lipoContextProvider != null) {
@@ -610,7 +605,9 @@ public class FdoSupport {
                 getGcdaArtifactsForGcdaPath(fdoSupportProvider, importedFile);
             if (gcdaArtifact == null) {
               ruleContext.ruleError(String.format(
-                  ".gcda file %s is not in the FDO zip (referenced by source file %s)",
+                  ".gcda file %s is not in the FDO zip (referenced by source file %s). Check if "
+                  + "your profile is generated from the same sources you are building the "
+                  + "optimized binary from",
                   importedFile, sourceName));
             } else {
               auxiliaryInputs.add(gcdaArtifact);
@@ -622,7 +619,10 @@ public class FdoSupport {
               auxiliaryInputs.add(importedArtifact);
             } else {
               ruleContext.ruleError(String.format(
-                  "cannot find source file '%s' referenced from '%s'", importedFile, objectName));
+                  "cannot find source file '%s' referenced from '%s' by LIPO inclusion. Check if "
+                  + "your profile is generated from the same sources you are building the "
+                  + "optimized binary from",
+                  importedFile, objectName));
             }
           }
         }

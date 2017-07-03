@@ -14,12 +14,8 @@
 package com.google.devtools.build.lib.analysis.util;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.devtools.build.lib.actions.util.ActionsTestUtil.getFirstArtifactEndingWith;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertSame;
-import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import com.google.common.base.Function;
@@ -95,7 +91,6 @@ import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.ExtendedEventHandler;
 import com.google.devtools.build.lib.events.StoredEventHandler;
 import com.google.devtools.build.lib.exec.ExecutionOptions;
-import com.google.devtools.build.lib.flags.InvocationPolicyEnforcer;
 import com.google.devtools.build.lib.packages.AspectClass;
 import com.google.devtools.build.lib.packages.AspectDescriptor;
 import com.google.devtools.build.lib.packages.AspectParameters;
@@ -128,8 +123,6 @@ import com.google.devtools.build.lib.skyframe.AspectValue;
 import com.google.devtools.build.lib.skyframe.ConfiguredTargetKey;
 import com.google.devtools.build.lib.skyframe.DiffAwareness;
 import com.google.devtools.build.lib.skyframe.LegacyLoadingPhaseRunner;
-import com.google.devtools.build.lib.skyframe.PackageLookupFunction.CrossRepositoryLabelViolationStrategy;
-import com.google.devtools.build.lib.skyframe.PackageLookupValue.BuildFileName;
 import com.google.devtools.build.lib.skyframe.PrecomputedValue;
 import com.google.devtools.build.lib.skyframe.SequencedSkyframeExecutor;
 import com.google.devtools.build.lib.skyframe.SkyValueDirtinessChecker;
@@ -146,6 +139,7 @@ import com.google.devtools.build.lib.vfs.ModifiedFileSet;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.skyframe.SkyFunction;
+import com.google.devtools.common.options.InvocationPolicyEnforcer;
 import com.google.devtools.common.options.Options;
 import com.google.devtools.common.options.OptionsParser;
 import java.io.ByteArrayOutputStream;
@@ -229,7 +223,7 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
             .build(ruleClassProvider, scratch.getFileSystem());
     tsgm = new TimestampGranularityMonitor(BlazeClock.instance());
     skyframeExecutor =
-        SequencedSkyframeExecutor.create(
+        SequencedSkyframeExecutor.createForTesting(
             pkgFactory,
             directories,
             binTools,
@@ -240,9 +234,7 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
             analysisMock.getSkyFunctions(),
             getPrecomputedValues(),
             ImmutableList.<SkyValueDirtinessChecker>of(),
-            analysisMock.getProductName(),
-            CrossRepositoryLabelViolationStrategy.ERROR,
-            ImmutableList.of(BuildFileName.BUILD_DOT_BAZEL, BuildFileName.BUILD));
+            analysisMock.getProductName());
     skyframeExecutor.injectExtraPrecomputedValues(extraPrecomputedValues);
     packageCacheOptions.defaultVisibility = ConstantRuleVisibility.PUBLIC;
     packageCacheOptions.showLoadingProgress = true;
@@ -552,7 +544,7 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
   protected void assertConfigurationsEqual(BuildConfiguration config1, BuildConfiguration config2) {
     // BuildOptions and crosstool files determine a configuration's content. Within the context
     // of these tests only the former actually change.
-    assertEquals(config1.cloneOptions(), config2.cloneOptions());
+    assertThat(config2.cloneOptions()).isEqualTo(config1.cloneOptions());
   }
 
   /**
@@ -848,8 +840,10 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
     reporter.removeHandler(failFastHandler); // expect errors
     ConfiguredTarget target = scratchConfiguredTarget(packageName, ruleName, lines);
     if (target != null) {
-      assertTrue("Rule '" + "//" + packageName + ":" + ruleName + "' did not contain an error",
-          view.hasErrors(target));
+      assertWithMessage(
+              "Rule '" + "//" + packageName + ":" + ruleName + "' did not contain an error")
+          .that(view.hasErrors(target))
+          .isTrue();
     }
     return assertContainsEvent(expectedErrorMessage);
   }
@@ -892,9 +886,9 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
     eventCollector.clear();
     ConfiguredTarget target = scratchConfiguredTarget(packageName, ruleName,
         lines);
-    assertFalse(
-        "Rule '" + "//" + packageName + ":" + ruleName + "' did contain an error",
-        view.hasErrors(target));
+    assertWithMessage("Rule '" + "//" + packageName + ":" + ruleName + "' did contain an error")
+        .that(view.hasErrors(target))
+        .isFalse();
     return assertContainsEvent(expectedWarningMessage);
   }
 
@@ -921,21 +915,23 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
       Target outTarget = getTarget(expectedOut);
       if (!(outTarget instanceof OutputFile)) {
         fail("Target " + outTarget + " is not an output");
-        assertSame(ruleTarget, ((OutputFile) outTarget).getGeneratingRule());
+        assertThat(((OutputFile) outTarget).getGeneratingRule()).isSameAs(ruleTarget);
         // This ensures that the output artifact is wired up in the action graph
         getConfiguredTarget(expectedOut);
       }
     }
 
     Collection<OutputFile> outs = ruleTarget.getOutputFiles();
-    assertEquals("Mismatched outputs: " + outs, expectedOuts.length, outs.size());
+    assertWithMessage("Mismatched outputs: " + outs)
+        .that(outs.size())
+        .isEqualTo(expectedOuts.length);
   }
 
   /**
    * Asserts that there exists a configured target file for the given label.
    */
   protected void assertConfiguredTargetExists(String label) throws Exception {
-    assertNotNull(getFileConfiguredTarget(label));
+    assertThat(getFileConfiguredTarget(label)).isNotNull();
   }
 
   /**
@@ -944,10 +940,9 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
    */
   protected void assertSameGeneratingAction(String labelA, String labelB)
       throws Exception {
-    assertSame(
-        "Action for " + labelA + " did not match " + labelB,
-        getGeneratingActionForLabel(labelA),
-        getGeneratingActionForLabel(labelB));
+    assertWithMessage("Action for " + labelA + " did not match " + labelB)
+        .that(getGeneratingActionForLabel(labelB))
+        .isSameAs(getGeneratingActionForLabel(labelA));
   }
 
   protected Artifact getSourceArtifact(PathFragment rootRelativePath, Root root) {
@@ -1248,14 +1243,14 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
       String... expectedMessages) throws Exception{
     ConfiguredTarget target = getConfiguredTarget(targetName);
     if (expectedError) {
-      assertTrue(view.hasErrors(target));
+      assertThat(view.hasErrors(target)).isTrue();
       for (String expectedMessage : expectedMessages) {
         String message = "in srcs attribute of " + ruleType + " rule " + targetName + ": "
             + expectedMessage;
         assertContainsEvent(message);
       }
     } else {
-      assertFalse(view.hasErrors(target));
+      assertThat(view.hasErrors(target)).isFalse();
       for (String expectedMessage : expectedMessages) {
         String message = "in srcs attribute of " + ruleType + " rule " + target.getLabel() + ": "
             + expectedMessage;
@@ -1433,16 +1428,16 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
     return target.getProvider(FilesToRunProvider.class).getExecutable();
   }
 
-  protected ImmutableList<Artifact> getFilesToRun(TransitiveInfoCollection target) {
+  protected NestedSet<Artifact> getFilesToRun(TransitiveInfoCollection target) {
     return target.getProvider(FilesToRunProvider.class).getFilesToRun();
   }
 
-  protected ImmutableList<Artifact> getFilesToRun(Label label) throws Exception {
+  protected NestedSet<Artifact> getFilesToRun(Label label) throws Exception {
     return getConfiguredTarget(label, targetConfig)
         .getProvider(FilesToRunProvider.class).getFilesToRun();
   }
 
-  protected ImmutableList<Artifact> getFilesToRun(String label) throws Exception {
+  protected NestedSet<Artifact> getFilesToRun(String label) throws Exception {
     return getConfiguredTarget(label).getProvider(FilesToRunProvider.class).getFilesToRun();
   }
 
@@ -1466,12 +1461,8 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
     return Iterables.getOnlyElement(masterConfig.getTargetConfigurations());
   }
 
-  protected BuildConfiguration getDataConfiguration() {
-    BuildConfiguration targetConfig = getTargetConfiguration();
-    // TODO(bazel-team): do a proper data transition for dynamic configurations.
-    return targetConfig.useDynamicConfigurations()
-        ? targetConfig
-        : targetConfig.getConfiguration(ConfigurationTransition.DATA);
+  protected BuildConfiguration getDataConfiguration() throws InterruptedException {
+    return getConfiguration(getTargetConfiguration(), ConfigurationTransition.DATA);
   }
 
   protected BuildConfiguration getHostConfiguration() {
@@ -1501,7 +1492,6 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
 
   /**
    * Returns an attribute value retriever for the given rule for the target configuration.
-
    */
   protected AttributeMap attributes(RuleConfiguredTarget ct) {
     return ConfiguredAttributeMapper.of(ct);
@@ -1824,7 +1814,7 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
     ConfiguredTarget target = getConfiguredTarget(targetLabel);
     List<Action> actions = getExtraActionActions(target);
 
-    assertNotNull(actions);
+    assertThat(actions).isNotNull();
     assertThat(actions).hasSize(2);
 
     ExtraAction extraAction = null;
@@ -1836,15 +1826,16 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
       }
     }
 
-    assertNotNull(actions.toString(), extraAction);
+    assertWithMessage(actions.toString()).that(extraAction).isNotNull();
 
     Action pseudoAction = extraAction.getShadowedAction();
 
     assertThat(pseudoAction).isInstanceOf(PseudoAction.class);
-    assertEquals(
-        String.format("%s%s.extra_action_dummy", targetConfig.getGenfilesFragment(),
-            convertLabelToPath(targetLabel)),
-        pseudoAction.getPrimaryOutput().getExecPathString());
+    assertThat(pseudoAction.getPrimaryOutput().getExecPathString())
+        .isEqualTo(
+            String.format(
+                "%s%s.extra_action_dummy",
+                targetConfig.getGenfilesFragment(), convertLabelToPath(targetLabel)));
 
     return (PseudoAction<?>) pseudoAction;
   }

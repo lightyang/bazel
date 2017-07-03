@@ -169,6 +169,8 @@ public final class SkylarkRuleContext implements SkylarkValue {
   // after this object has been nullified.
   private final String ruleLabelCanonicalName;
 
+  private final SkylarkActionFactory actionFactory;
+
   // The fields below intended to be final except that they can be cleared by calling `nullify()`
   // when the object becomes featureless.
   private RuleContext ruleContext;
@@ -195,6 +197,7 @@ public final class SkylarkRuleContext implements SkylarkValue {
   public SkylarkRuleContext(RuleContext ruleContext,
       @Nullable AspectDescriptor aspectDescriptor)
       throws EvalException, InterruptedException {
+    this.actionFactory = new SkylarkActionFactory(this, ruleContext);
     this.ruleContext = Preconditions.checkNotNull(ruleContext);
     this.ruleLabelCanonicalName = ruleContext.getLabel().getCanonicalForm();
     this.fragments = new FragmentCollection(ruleContext, ConfigurationTransition.NONE);
@@ -262,7 +265,6 @@ public final class SkylarkRuleContext implements SkylarkValue {
               this, attributes, ruleContext, attributeValueExtractorForRule(ruleContext));
       this.splitAttributes = buildSplitAttributeInfo(attributes, ruleContext);
       this.ruleAttributesCollection = null;
-      toolchains = ruleContext.getToolchainContext().collectToolchains();
     } else { // ASPECT
       this.artifactsLabelMap = ImmutableMap.of();
       this.outputsObject = null;
@@ -279,11 +281,13 @@ public final class SkylarkRuleContext implements SkylarkValue {
               ruleContext.getRule().getAttributes(),
               ruleContext,
               attributeValueExtractorForRule(ruleContext));
-      // TODO(katre): Collect toolchains for aspects.
-      toolchains = null;
     }
 
     makeVariables = ruleContext.getConfigurationMakeVariableContext().collectMakeVariables();
+    toolchains =
+        ruleContext.getToolchainContext() == null
+            ? SkylarkDict.<ClassObjectConstructor.Key, ToolchainInfo>of(null)
+            : ruleContext.getToolchainContext().collectToolchains();
   }
 
   /**
@@ -292,6 +296,7 @@ public final class SkylarkRuleContext implements SkylarkValue {
    * rule implementation function has exited).
    */
   public void nullify() {
+    actionFactory.nullify();
     ruleContext = null;
     fragments = null;
     hostFragments = null;
@@ -403,7 +408,7 @@ public final class SkylarkRuleContext implements SkylarkValue {
         List<? extends TransitiveInfoCollection> allPrereq =
             ruleContext.getPrerequisites(a.getName(), Mode.DONT_CHECK);
         for (TransitiveInfoCollection prereq : allPrereq) {
-          builder.put(prereq, original.get(prereq.getLabel()));
+          builder.put(prereq, original.get(AliasProvider.getDependencyLabel(prereq)));
         }
         attrBuilder.put(skyname, SkylarkType.convertToSkylark(builder.build(), null));
       } else if (type == BuildType.LABEL_DICT_UNARY) {
@@ -608,6 +613,15 @@ public final class SkylarkRuleContext implements SkylarkValue {
     doc = "Deprecated. Use <a href=\"globals.html#DefaultInfo\">DefaultInfo</a> instead.")
   public static ClassObjectConstructor getDefaultProvider() {
     return DefaultProvider.SKYLARK_CONSTRUCTOR;
+  }
+
+  @SkylarkCallable(
+      name = "actions",
+      structField = true,
+      doc = "Functions to declare files and create actions."
+  )
+  public SkylarkActionFactory actions() {
+    return actionFactory;
   }
 
   @SkylarkCallable(name = "created_actions",
@@ -866,14 +880,15 @@ public final class SkylarkRuleContext implements SkylarkValue {
     }
   }
 
-  private boolean isForAspect() {
+  boolean isForAspect() {
     return ruleAttributesCollection != null;
   }
 
   @SkylarkCallable(
     name = "new_file",
     doc =
-        "Creates a file object with the given filename, in the current package. "
+        "DEPRECATED. Use <a href=\"actions.html#declare_file\">ctx.actions.declare_file</a>. <br>"
+            + "Creates a file object with the given filename, in the current package. "
             + DOC_NEW_FILE_TAIL,
     parameters = {
       @Param(
@@ -885,13 +900,7 @@ public final class SkylarkRuleContext implements SkylarkValue {
   )
   public Artifact newFile(String filename) throws EvalException {
     checkMutable("new_file");
-    return newFile(newFileRoot(), filename);
-  }
-
-  private Root newFileRoot() throws EvalException {
-    return isForAspect()
-        ? getConfiguration().getBinDirectory(ruleContext.getRule().getRepository())
-        : ruleContext.getBinOrGenfilesDirectory();
+    return actionFactory.declareFile(filename, Runtime.NONE);
   }
 
   // Kept for compatibility with old code.
@@ -921,9 +930,7 @@ public final class SkylarkRuleContext implements SkylarkValue {
     )
   public Artifact newFile(Artifact baseArtifact, String newBaseName) throws EvalException {
     checkMutable("new_file");
-    PathFragment original = baseArtifact.getRootRelativePath();
-    PathFragment fragment = original.replaceName(newBaseName);
-    return ruleContext.getDerivedArtifact(fragment, newFileRoot());
+    return actionFactory.declareFile(newBaseName, baseArtifact);
   }
 
   // Kept for compatibility with old code.
@@ -935,7 +942,6 @@ public final class SkylarkRuleContext implements SkylarkValue {
     return ruleContext.getDerivedArtifact(fragment, root);
   }
 
-  // TODO(b/36548861): Document this when it's ready to be made publicly available.
   @SkylarkCallable(
     name = "experimental_new_directory",
     documented = false,
@@ -952,13 +958,7 @@ public final class SkylarkRuleContext implements SkylarkValue {
   )
   public Artifact newDirectory(String name, Object siblingArtifactUnchecked) throws EvalException {
     checkMutable("experimental_new_directory");
-    if (siblingArtifactUnchecked == Runtime.NONE) {
-      return ruleContext.getPackageRelativeTreeArtifact(PathFragment.create(name), newFileRoot());
-    }
-    Artifact siblingArtifact = (Artifact) siblingArtifactUnchecked;
-    PathFragment original = siblingArtifact.getRootRelativePath();
-    PathFragment fragment = original.replaceName(name);
-    return ruleContext.getTreeArtifact(fragment, newFileRoot());
+    return actionFactory.declareDirectory(name, siblingArtifactUnchecked);
   }
 
   @SkylarkCallable(documented = false)
@@ -984,7 +984,8 @@ public final class SkylarkRuleContext implements SkylarkValue {
   }
 
   @SkylarkCallable(doc =
-        "Returns a string after expanding all references to \"Make variables\". The variables "
+        "<b>Deprecated.</b> Use <code>ctx.var</code> to access the variables instead.<br>"
+      + "Returns a string after expanding all references to \"Make variables\". The variables "
       + "must have the following format: <code>$(VAR_NAME)</code>. Also, <code>$$VAR_NAME"
       + "</code> expands to <code>$VAR_NAME</code>. Parameters:"
       + "<ul><li>The name of the attribute (<code>string</code>). It's only used for error "
@@ -1009,11 +1010,11 @@ public final class SkylarkRuleContext implements SkylarkValue {
         new ConfigurationMakeVariableContext(
             ruleContext, ruleContext.getRule().getPackage(), ruleContext.getConfiguration()) {
           @Override
-          public String lookupMakeVariable(String name) throws ExpansionException {
-            if (additionalSubstitutions.containsKey(name)) {
-              return additionalSubstitutions.get(name);
+          public String lookupMakeVariable(String variableName) throws ExpansionException {
+            if (additionalSubstitutions.containsKey(variableName)) {
+              return additionalSubstitutions.get(variableName);
             } else {
-              return super.lookupMakeVariable(name);
+              return super.lookupMakeVariable(variableName);
             }
           }
         });

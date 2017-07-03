@@ -15,12 +15,11 @@
 package com.google.devtools.build.lib.sandbox;
 
 import com.google.common.collect.ImmutableList;
-import com.google.devtools.build.lib.actions.Executor.ActionContext;
+import com.google.devtools.build.lib.actions.ActionContext;
 import com.google.devtools.build.lib.buildtool.BuildRequest;
 import com.google.devtools.build.lib.exec.ActionContextProvider;
 import com.google.devtools.build.lib.exec.ExecutionOptions;
 import com.google.devtools.build.lib.runtime.CommandEnvironment;
-import com.google.devtools.build.lib.util.OS;
 import com.google.devtools.build.lib.vfs.Path;
 import java.io.IOException;
 
@@ -28,8 +27,6 @@ import java.io.IOException;
  * Provides the sandboxed spawn strategy.
  */
 final class SandboxActionContextProvider extends ActionContextProvider {
-
-  @SuppressWarnings("unchecked")
   private final ImmutableList<ActionContext> contexts;
 
   private SandboxActionContextProvider(ImmutableList<ActionContext> contexts) {
@@ -43,36 +40,32 @@ final class SandboxActionContextProvider extends ActionContextProvider {
     boolean verboseFailures = buildRequest.getOptions(ExecutionOptions.class).verboseFailures;
     String productName = cmdEnv.getRuntime().getProductName();
 
-    // The ProcessWrapperSandboxedStrategy works on all POSIX-compatible operating systems.
-    if (OS.isPosixCompatible()) {
+    // This works on most platforms, but isn't the best choice, so we put it first and let later
+    // platform-specific sandboxing strategies become the default.
+    if (ProcessWrapperSandboxedStrategy.isSupported(cmdEnv)) {
       contexts.add(
           new ProcessWrapperSandboxedStrategy(
               cmdEnv, buildRequest, sandboxBase, verboseFailures, productName));
     }
 
-    switch (OS.getCurrent()) {
-      case LINUX:
-        if (LinuxSandboxedStrategy.isSupported(cmdEnv)) {
-          contexts.add(
-              LinuxSandboxedStrategy.create(cmdEnv, buildRequest, sandboxBase, verboseFailures));
-        }
-        break;
-      case DARWIN:
-        if (DarwinSandboxRunner.isSupported(cmdEnv)) {
-          contexts.add(
-              DarwinSandboxedStrategy.create(
-                  cmdEnv, buildRequest, sandboxBase, verboseFailures, productName));
-        }
-        break;
-      default:
-        // No additional platform-specific sandboxing available.
+    // This is the preferred sandboxing strategy on Linux.
+    if (LinuxSandboxedStrategy.isSupported(cmdEnv)) {
+      contexts.add(
+          LinuxSandboxedStrategy.create(cmdEnv, buildRequest, sandboxBase, verboseFailures));
+    }
+
+    // This is the preferred sandboxing strategy on macOS.
+    if (DarwinSandboxedStrategy.isSupported(cmdEnv)) {
+      contexts.add(
+          DarwinSandboxedStrategy.create(
+              cmdEnv, buildRequest, sandboxBase, verboseFailures, productName));
     }
 
     return new SandboxActionContextProvider(contexts.build());
   }
 
   @Override
-  public Iterable<ActionContext> getActionContexts() {
+  public Iterable<? extends ActionContext> getActionContexts() {
     return contexts;
   }
 }

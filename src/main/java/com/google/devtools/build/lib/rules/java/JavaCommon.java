@@ -13,11 +13,13 @@
 // limitations under the License.
 package com.google.devtools.build.lib.rules.java;
 
-import com.google.common.base.Function;
+import static com.google.common.collect.ImmutableList.toImmutableList;
+
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableList.Builder;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Streams;
 import com.google.devtools.build.lib.actions.ActionAnalysisMetadata;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.AnalysisEnvironment;
@@ -66,14 +68,6 @@ import javax.annotation.Nullable;
  * A helper class to create configured targets for Java rules.
  */
 public class JavaCommon {
-  private static final Function<TransitiveInfoCollection, Label> GET_COLLECTION_LABEL =
-      new Function<TransitiveInfoCollection, Label>() {
-        @Override
-        public Label apply(TransitiveInfoCollection collection) {
-          return collection.getLabel();
-        }
-      };
-
   public static final InstrumentationSpec JAVA_COLLECTION_SPEC = new InstrumentationSpec(
       FileTypeSet.of(JavaSemantics.JAVA_SOURCE))
       .withSourceAttributes("srcs")
@@ -436,7 +430,7 @@ public class JavaCommon {
     NestedSetBuilder<Label> builder = NestedSetBuilder.stableOrder();
     List<TransitiveInfoCollection> currentRuleExports = getExports(ruleContext);
 
-    builder.addAll(Iterables.transform(currentRuleExports, GET_COLLECTION_LABEL));
+    builder.addAll(Iterables.transform(currentRuleExports, TransitiveInfoCollection::getLabel));
 
     for (TransitiveInfoCollection dep : currentRuleExports) {
       JavaExportsProvider exportsProvider = dep.getProvider(JavaExportsProvider.class);
@@ -464,10 +458,11 @@ public class JavaCommon {
   }
 
   private ImmutableList<String> computeJavacOpts(Iterable<String> extraJavacOpts) {
-    return ImmutableList.copyOf(Iterables.concat(
-        JavaToolchainProvider.fromRuleContext(ruleContext).getJavacOptions(),
-        extraJavacOpts,
-        ruleContext.getTokenizedStringListAttr("javacopts")));
+    return Streams.concat(
+            JavaToolchainProvider.fromRuleContext(ruleContext).getJavacOptions().stream(),
+            Streams.stream(extraJavacOpts),
+            ruleContext.getTokenizedStringListAttr("javacopts").stream())
+        .collect(toImmutableList());
   }
 
   /**
@@ -656,26 +651,19 @@ public class JavaCommon {
 
   public void addTransitiveInfoProviders(
       RuleConfiguredTargetBuilder builder,
-      JavaSkylarkApiProvider.Builder skylarkApiProvider,
       NestedSet<Artifact> filesToBuild,
       @Nullable Artifact classJar) {
-    addTransitiveInfoProviders(
-        builder, skylarkApiProvider, filesToBuild, classJar, JAVA_COLLECTION_SPEC);
+    addTransitiveInfoProviders(builder, filesToBuild, classJar, JAVA_COLLECTION_SPEC);
   }
 
   public void addTransitiveInfoProviders(
       RuleConfiguredTargetBuilder builder,
-      JavaSkylarkApiProvider.Builder skylarkApiProvider,
       NestedSet<Artifact> filesToBuild,
       @Nullable Artifact classJar,
       InstrumentationSpec instrumentationSpec) {
 
     JavaCompilationInfoProvider compilationInfoProvider = createCompilationInfoProvider();
     JavaExportsProvider exportsProvider = collectTransitiveExports();
-
-    skylarkApiProvider
-        .setCompilationInfoProvider(compilationInfoProvider)
-        .setExportsProvider(exportsProvider);
 
     builder
         .add(
@@ -700,7 +688,6 @@ public class JavaCommon {
 
   public void addGenJarsProvider(
       RuleConfiguredTargetBuilder builder,
-      JavaSkylarkApiProvider.Builder javaSkylarkApiProvider,
       @Nullable Artifact genClassJar,
       @Nullable Artifact genSourceJar) {
     JavaGenJarsProvider genJarsProvider = collectTransitiveGenJars(
@@ -711,7 +698,6 @@ public class JavaCommon {
     genJarsBuilder.addTransitive(genJarsProvider.getTransitiveGenClassJars());
     genJarsBuilder.addTransitive(genJarsProvider.getTransitiveGenSourceJars());
 
-    javaSkylarkApiProvider.setGenJarsProvider1(genJarsProvider);
     builder
         .add(JavaGenJarsProvider.class, genJarsProvider)
         .addOutputGroup(JavaSemantics.GENERATED_JARS_OUTPUT_GROUP, genJarsBuilder.build());

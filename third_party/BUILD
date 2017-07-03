@@ -31,6 +31,7 @@ filegroup(
         "//third_party/py/six:srcs",
         "//third_party/zlib:srcs",
         "//third_party/nanopb:srcs",
+        "//third_party/googleapis:srcs",
     ],
 )
 
@@ -129,12 +130,13 @@ java_import(
 
 java_import(
     name = "apache_httpclient",
-    jars = ["apache_httpclient/httpclient-4.2.5.jar"],
+    jars = ["apache_httpclient/httpclient-4.5.3.jar"],
+    deps = [":apache_commons_logging"],
 )
 
 java_import(
     name = "apache_httpcore",
-    jars = ["apache_httpcore/httpcore-4.2.4.jar"],
+    jars = ["apache_httpcore/httpcore-4.4.6.jar"],
 )
 
 java_import(
@@ -409,6 +411,13 @@ java_import(
     }),
 )
 
+java_import(
+    name = "instrumentation",
+    jars = [
+        "instrumentation/instrumentation-api-0.3.0.jar",
+    ],
+)
+
 # For bootstrapping JavaBuilder
 filegroup(
     name = "guava-jars",
@@ -468,7 +477,7 @@ java_import(
 
 java_import(
     name = "netty",
-    jars = ["netty/netty-all-4.1.0.CR6.jar"],
+    jars = ["netty/netty-all-4.1.8.Final.jar"],
 )
 
 java_import(

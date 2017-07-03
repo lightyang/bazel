@@ -24,6 +24,8 @@ import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration.StrictDepsMode;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
+import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
+import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.rules.java.JavaConfiguration.JavaClasspathMode;
 import com.google.devtools.build.lib.util.Preconditions;
 import java.util.ArrayList;
@@ -50,6 +52,7 @@ public final class JavaLibraryHelper {
    * Contains all the dependencies; these are treated as both compile-time and runtime dependencies.
    */
   private final List<JavaCompilationArgsProvider> deps = new ArrayList<>();
+  private final List<JavaCompilationArgsProvider> exports = new ArrayList<>();
   private ImmutableList<String> javacOpts = ImmutableList.of();
   private ImmutableList<Artifact> sourcePathEntries = ImmutableList.of();
   private StrictDepsMode strictDepsMode = StrictDepsMode.OFF;
@@ -111,6 +114,11 @@ public final class JavaLibraryHelper {
     return this;
   }
 
+  public JavaLibraryHelper addAllExports(Iterable<JavaCompilationArgsProvider> providers) {
+    Iterables.addAll(exports, providers);
+    return this;
+  }
+
   /**
    * Sets the compiler options.
    */
@@ -140,10 +148,8 @@ public final class JavaLibraryHelper {
     return this;
   }
 
-  /**
-   * Creates the compile actions.
-   */
-  public JavaCompilationArgs build(
+  /** Creates the compile actions. */
+  public JavaCompilationArtifacts build(
       JavaSemantics semantics,
       JavaToolchainProvider javaToolchainProvider,
       NestedSet<Artifact> hostJavabase,
@@ -184,7 +190,7 @@ public final class JavaLibraryHelper {
     helper.createCompileTimeJarAction(output, artifactsBuilder);
     artifactsBuilder.addRuntimeJar(output);
 
-    return JavaCompilationArgs.builder().merge(artifactsBuilder.build()).build();
+    return artifactsBuilder.build();
   }
 
   /**
@@ -199,7 +205,11 @@ public final class JavaLibraryHelper {
    *     compilation. Contrast this with {@link #setCompilationStrictDepsMode}.
    */
   public JavaCompilationArgsProvider buildCompilationArgsProvider(
-      JavaCompilationArgs directArgs, boolean isReportedAsStrict) {
+      JavaCompilationArtifacts artifacts, boolean isReportedAsStrict) {
+    JavaCompilationArgs directArgs = JavaCompilationArgs.builder()
+        .merge(artifacts)
+        .addTransitiveDependencies(exports, true /* recursive */)
+        .build();
     JavaCompilationArgs transitiveArgs =
         JavaCompilationArgs.builder()
             .addTransitiveArgs(directArgs, BOTH)
@@ -207,7 +217,10 @@ public final class JavaLibraryHelper {
             .build();
 
     return JavaCompilationArgsProvider.create(
-        isReportedAsStrict ? directArgs : transitiveArgs, transitiveArgs);
+        isReportedAsStrict ? directArgs : transitiveArgs,
+        transitiveArgs,
+        NestedSetBuilder.create(Order.STABLE_ORDER, artifacts.getCompileTimeDependencyArtifact()),
+        NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER));
   }
 
   private void addDepsToAttributes(JavaTargetAttributes.Builder attributes) {

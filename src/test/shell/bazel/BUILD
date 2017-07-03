@@ -30,7 +30,6 @@ filegroup(
         "//src:bazel",
         "//src/java_tools/buildjar/java/com/google/devtools/build/buildjar/genclass:GenClass_deploy.jar",
         "//src/java_tools/junitrunner/java/com/google/testing/junit/runner:Runner_deploy.jar",
-        "//src/java_tools/singlejar:SingleJar_deploy.jar",
         "//src/main/tools:linux-sandbox",
         "//src/main/tools:process-wrapper",
         "//src/test/shell:bashunit",
@@ -45,7 +44,14 @@ filegroup(
         # TODO(cushon): migrate to extclasspath and delete
         "@local_jdk//:extdir",
         "@local_jdk//:jdk",
-    ],
+    ] + select({
+        # TODO(bazel-team): Once https://github.com/bazelbuild/bazel/issues/2241
+        # is resolved, use cc implementation of singlejar on windows
+        "//src:windows": ["//src/java_tools/singlejar:SingleJar_deploy.jar"],
+        "//src:windows_msys": ["//src/java_tools/singlejar:SingleJar_deploy.jar"],
+        "//src:windows_msvc": ["//src/java_tools/singlejar:SingleJar_deploy.jar"],
+        "//conditions:default": ["//src/tools/singlejar:singlejar"],
+    }),
     visibility = [
         "//src/test/shell:__subpackages__",
     ],
@@ -373,6 +379,16 @@ sh_test(
 )
 
 sh_test(
+    name = "remote_execution_sandboxing_test",
+    size = "large",
+    srcs = ["remote_execution_sandboxing_test.sh"],
+    data = [
+        ":test-deps",
+        "//src/tools/remote_worker",
+    ],
+)
+
+sh_test(
     name = "client_test",
     size = "medium",
     srcs = ["client_test.sh"],
@@ -441,6 +457,14 @@ sh_test(
     name = "toolchain_test",
     size = "medium",
     srcs = ["toolchain_test.sh"],
+    data = [":test-deps"],
+)
+
+sh_test(
+    name = "java_launcher_test",
+    size = "medium",
+    srcs = ["java_launcher_test.sh"],
+    args = ["$(JAVABASE)"],
     data = [":test-deps"],
 )
 

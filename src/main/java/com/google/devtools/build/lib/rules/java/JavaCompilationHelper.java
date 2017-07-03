@@ -22,6 +22,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.actions.ExecutionRequirements;
 import com.google.devtools.build.lib.analysis.AnalysisEnvironment;
 import com.google.devtools.build.lib.analysis.FileProvider;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
@@ -71,16 +72,18 @@ public final class JavaCompilationHelper {
   private boolean translationsFrozen;
   private final JavaSemantics semantics;
   private final ImmutableList<Artifact> additionalJavaBaseInputs;
+  private final StrictDepsMode strictJavaDeps;
 
   private static final String DEFAULT_ATTRIBUTES_SUFFIX = "";
   private static final PathFragment JAVAC = PathFragment.create("_javac");
 
-  public JavaCompilationHelper(RuleContext ruleContext, JavaSemantics semantics,
+  private JavaCompilationHelper(RuleContext ruleContext, JavaSemantics semantics,
       ImmutableList<String> javacOpts, JavaTargetAttributes.Builder attributes,
       JavaToolchainProvider javaToolchainProvider,
       NestedSet<Artifact> hostJavabase,
       Iterable<Artifact> jacocoInstrumentation,
-      ImmutableList<Artifact> additionalJavaBaseInputs) {
+      ImmutableList<Artifact> additionalJavaBaseInputs,
+      boolean disableStrictDeps) {
     this.ruleContext = ruleContext;
     this.javaToolchain = javaToolchainProvider;
     this.hostJavabase = hostJavabase;
@@ -90,6 +93,9 @@ public final class JavaCompilationHelper {
     this.customJavacJvmOpts = javaToolchain.getJvmOptions();
     this.semantics = semantics;
     this.additionalJavaBaseInputs = additionalJavaBaseInputs;
+    this.strictJavaDeps = disableStrictDeps
+        ? StrictDepsMode.OFF
+        : getJavaConfiguration().getFilteredStrictJavaDeps();
   }
 
   public JavaCompilationHelper(RuleContext ruleContext, JavaSemantics semantics,
@@ -98,7 +104,7 @@ public final class JavaCompilationHelper {
       NestedSet<Artifact> hostJavabase,
       Iterable<Artifact> jacocoInstrumentation) {
     this(ruleContext, semantics, javacOpts, attributes, javaToolchainProvider, hostJavabase,
-        jacocoInstrumentation, ImmutableList.<Artifact>of());
+        jacocoInstrumentation, ImmutableList.<Artifact>of(), false);
   }
 
   public JavaCompilationHelper(RuleContext ruleContext, JavaSemantics semantics,
@@ -115,7 +121,7 @@ public final class JavaCompilationHelper {
 
   public JavaCompilationHelper(RuleContext ruleContext, JavaSemantics semantics,
       ImmutableList<String> javacOpts, JavaTargetAttributes.Builder attributes,
-      ImmutableList<Artifact> additionalJavaBaseInputs) {
+      ImmutableList<Artifact> additionalJavaBaseInputs, boolean disableStrictDeps) {
     this(
         ruleContext,
         semantics,
@@ -124,10 +130,12 @@ public final class JavaCompilationHelper {
         getJavaToolchainProvider(ruleContext),
         getHostJavabaseInputs(ruleContext),
         getInstrumentationJars(ruleContext),
-        additionalJavaBaseInputs);
+        additionalJavaBaseInputs,
+        disableStrictDeps);
   }
 
-  public JavaCompilationHelper(RuleContext ruleContext, JavaSemantics semantics,
+  @VisibleForTesting
+  JavaCompilationHelper(RuleContext ruleContext, JavaSemantics semantics,
       JavaTargetAttributes.Builder attributes) {
     this(ruleContext, semantics, getDefaultJavacOptsFromRule(ruleContext), attributes);
   }
@@ -233,7 +241,7 @@ public final class JavaCompilationHelper {
 
   private ImmutableMap<String, String> getExecutionInfo() {
     if (javaToolchain.getJavacSupportsWorkers()) {
-      return ImmutableMap.of("supports-workers", "1");
+      return ExecutionRequirements.WORKER_MODE_ENABLED;
     }
     return ImmutableMap.of();
   }
@@ -691,7 +699,7 @@ public final class JavaCompilationHelper {
    * @return filtered command line flag value, defaulting to ERROR
    */
   public StrictDepsMode getStrictJavaDeps() {
-    return getJavaConfiguration().getFilteredStrictJavaDeps();
+    return strictJavaDeps;
   }
 
   /**

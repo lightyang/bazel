@@ -14,8 +14,6 @@
 package com.google.devtools.build.lib.syntax;
 
 import static com.google.common.truth.Truth.assertThat;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
 
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
@@ -882,6 +880,30 @@ public class SkylarkEvaluationTest extends EvaluationTest {
   }
 
   @Test
+  public void testSetIsNotIterable() throws Exception {
+    new SkylarkTest("--incompatible_depset_is_not_iterable=true")
+        .testIfErrorContains("not iterable", "list(depset(['a', 'b']))")
+        .testIfErrorContains("not iterable", "max(depset([1, 2, 3]))")
+        .testIfErrorContains("not iterable", "1 in depset([1, 2, 3])")
+        .testIfErrorContains("not iterable", "sorted(depset(['a', 'b']))")
+        .testIfErrorContains("not iterable", "tuple(depset(['a', 'b']))")
+        .testIfErrorContains("not iterable", "[x for x in depset()]")
+        .testIfErrorContains("not iterable", "len(depset(['a']))");
+  }
+
+  @Test
+  public void testSetIsIterable() throws Exception {
+    new SkylarkTest("--incompatible_depset_is_not_iterable=false")
+        .testStatement("str(list(depset(['a', 'b'])))", "[\"a\", \"b\"]")
+        .testStatement("max(depset([1, 2, 3]))", 3)
+        .testStatement("1 in depset([1, 2, 3])", true)
+        .testStatement("str(sorted(depset(['b', 'a'])))", "[\"a\", \"b\"]")
+        .testStatement("str(tuple(depset(['a', 'b'])))", "(\"a\", \"b\")")
+        .testStatement("str([x for x in depset()])", "[]")
+        .testStatement("len(depset(['a']))", 1);
+  }
+
+  @Test
   public void testClassObjectCannotAccessNestedSet() throws Exception {
     new SkylarkTest()
         .update("mock", new MockClassObject())
@@ -1293,11 +1315,11 @@ public class SkylarkEvaluationTest extends EvaluationTest {
 
   @Test
   public void testSkylarkTypes() {
-    assertEquals(TransitiveInfoCollection.class,
-        EvalUtils.getSkylarkType(FileConfiguredTarget.class));
-    assertEquals(TransitiveInfoCollection.class,
-        EvalUtils.getSkylarkType(RuleConfiguredTarget.class));
-    assertEquals(Artifact.class, EvalUtils.getSkylarkType(SpecialArtifact.class));
+    assertThat(EvalUtils.getSkylarkType(FileConfiguredTarget.class))
+        .isEqualTo(TransitiveInfoCollection.class);
+    assertThat(EvalUtils.getSkylarkType(RuleConfiguredTarget.class))
+        .isEqualTo(TransitiveInfoCollection.class);
+    assertThat(EvalUtils.getSkylarkType(SpecialArtifact.class)).isEqualTo(Artifact.class);
   }
 
   // Override tests in EvaluationTest incompatible with Skylark
@@ -1317,11 +1339,11 @@ public class SkylarkEvaluationTest extends EvaluationTest {
     // tuple
     x = eval("(1,2)");
     assertThat((Iterable<Object>) x).containsExactly(1, 2).inOrder();
-    assertTrue(((SkylarkList) x).isTuple());
+    assertThat(((SkylarkList) x).isTuple()).isTrue();
 
     x = eval("(1,2) + (3,4)");
     assertThat((Iterable<Object>) x).containsExactly(1, 2, 3, 4).inOrder();
-    assertTrue(((SkylarkList) x).isTuple());
+    assertThat(((SkylarkList) x).isTuple()).isTrue();
   }
 
   @Override
@@ -1491,5 +1513,51 @@ public class SkylarkEvaluationTest extends EvaluationTest {
         .testIfExactError(
             // TODO(bazel-team): This should probably match the error above better.
             "struct has no method 'nonexistent_method'", "v = val.nonexistent_method()");
+  }
+
+  @Test
+  public void testListComprehensionsDoNotLeakVariables() throws Exception {
+    env =
+        newEnvironmentWithSkylarkOptions("--incompatible_comprehension_variables_do_not_leak=true");
+    checkEvalErrorContains(
+        "name 'a' is not defined",
+        "def foo():",
+        "  a = 10",
+        "  b = [a for a in range(3)]",
+        "  return a",
+        "x = foo()");
+  }
+
+  @Test
+  public void testListComprehensionsShadowGlobalVariable() throws Exception {
+    env =
+        newEnvironmentWithSkylarkOptions("--incompatible_comprehension_variables_do_not_leak=true");
+    eval("a = 18", "def foo():", "  b = [a for a in range(3)]", "  return a", "x = foo()");
+    assertThat(lookup("x")).isEqualTo(18);
+  }
+
+  @Test
+  public void testListComprehensionsLeakVariables() throws Exception {
+    env =
+        newEnvironmentWithSkylarkOptions(
+            "--incompatible_comprehension_variables_do_not_leak=false");
+    eval("def foo():", "  a = 10", "  b = [a for a in range(3)]", "  return a", "x = foo()");
+    assertThat(lookup("x")).isEqualTo(2);
+  }
+
+  @Test
+  public void testLoadStatementWithAbsolutePath() throws Exception {
+    env = newEnvironmentWithSkylarkOptions("--incompatible_load_argument_is_label");
+    checkEvalErrorContains(
+        "First argument of 'load' must be a label and start with either '//' or ':'",
+        "load('/tmp/foo', 'arg')");
+  }
+
+  @Test
+  public void testLoadStatementWithRelativePath() throws Exception {
+    env = newEnvironmentWithSkylarkOptions("--incompatible_load_argument_is_label");
+    checkEvalErrorContains(
+        "First argument of 'load' must be a label and start with either '//' or ':'",
+        "load('foo', 'arg')");
   }
 }

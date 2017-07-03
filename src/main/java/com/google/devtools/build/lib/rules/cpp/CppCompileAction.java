@@ -34,12 +34,11 @@ import com.google.devtools.build.lib.actions.ArtifactResolver;
 import com.google.devtools.build.lib.actions.CommandAction;
 import com.google.devtools.build.lib.actions.ExecException;
 import com.google.devtools.build.lib.actions.ExecutionInfoSpecifier;
-import com.google.devtools.build.lib.actions.Executor;
+import com.google.devtools.build.lib.actions.ExecutionRequirements;
 import com.google.devtools.build.lib.actions.ResourceSet;
 import com.google.devtools.build.lib.actions.extra.CppCompileInfo;
 import com.google.devtools.build.lib.actions.extra.EnvironmentVariable;
 import com.google.devtools.build.lib.actions.extra.ExtraActionInfo;
-import com.google.devtools.build.lib.analysis.actions.ExecutionRequirements;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.collect.CollectionUtils;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
@@ -83,6 +82,7 @@ import javax.annotation.Nullable;
 @ThreadCompatible
 public class CppCompileAction extends AbstractAction
     implements IncludeScannable, ExecutionInfoSpecifier, CommandAction {
+
   /**
    * Represents logic that determines if an artifact is a special input, meaning that it may require
    * additional inputs when it is compiled or may not be available to other actions.
@@ -114,6 +114,10 @@ public class CppCompileAction extends AbstractAction
 
   private static final int VALIDATION_DEBUG = 0;  // 0==none, 1==warns/errors, 2==all
   private static final boolean VALIDATION_DEBUG_WARN = VALIDATION_DEBUG >= 1;
+
+  /** A string constant used to compute CC_FLAGS make variable value */
+  public static final java.lang.String CC_FLAGS_MAKE_VARIABLE_ACTION_NAME =
+      "cc-flags-make-variable";
 
   /**
    * A string constant for the c compilation action.
@@ -339,19 +343,20 @@ public class CppCompileAction extends AbstractAction
     this.useHeaderModules = useHeaderModules;
     this.discoversInputs = shouldScanIncludes || cppSemantics.needsDotdInputPruning();
     this.compileCommandLine =
-        new CompileCommandLine(
-            sourceFile,
-            outputFile,
-            sourceLabel,
-            copts,
-            coptsFilter,
-            features,
-            featureConfiguration,
-            cppConfiguration,
-            variables,
-            actionName,
-            dotdFile,
-            cppProvider);
+        CompileCommandLine.builder(
+                sourceFile,
+                outputFile,
+                sourceLabel,
+                copts,
+                coptsFilter,
+                features,
+                actionName,
+                cppConfiguration,
+                dotdFile,
+                cppProvider)
+            .setFeatureConfiguration(featureConfiguration)
+            .setVariables(variables)
+            .build();
     this.actionContext = actionContext;
     this.lipoScannables = lipoScannables;
     this.actionClassId = actionClassId;
@@ -443,23 +448,21 @@ public class CppCompileAction extends AbstractAction
   @Override
   public Iterable<Artifact> discoverInputs(ActionExecutionContext actionExecutionContext)
       throws ActionExecutionException, InterruptedException {
-    Executor executor = actionExecutionContext.getExecutor();
     Iterable<Artifact> initialResult;
 
     actionExecutionContext
-        .getExecutor()
         .getEventBus()
         .post(ActionStatusMessage.analysisStrategy(this));
     try {
       initialResult =
-          executor
+          actionExecutionContext
               .getContext(actionContext)
               .findAdditionalInputs(
                   this, actionExecutionContext, cppSemantics.getIncludeProcessing());
     } catch (ExecException e) {
       throw e.toActionExecutionException(
           "Include scanning of rule '" + getOwner().getLabel() + "'",
-          executor.getVerboseFailures(),
+          actionExecutionContext.getVerboseFailures(),
           this);
     }
 
@@ -500,7 +503,7 @@ public class CppCompileAction extends AbstractAction
     // to the set of inputs the caller may need to be aware of.
     Collection<Artifact> result = new HashSet<>();
     ArtifactResolver artifactResolver =
-        executor.getContext(IncludeScanningContext.class).getArtifactResolver();
+        actionExecutionContext.getContext(IncludeScanningContext.class).getArtifactResolver();
     for (Artifact artifact : initialResult) {
       result.addAll(specialInputsHandler.getInputsForIncludedFile(artifact, artifactResolver));
     }
@@ -1150,32 +1153,41 @@ public class CppCompileAction extends AbstractAction
           throws ActionExecutionException, InterruptedException {
     setModuleFileFlags();
 
-    Executor executor = actionExecutionContext.getExecutor();
     CppCompileActionContext.Reply reply;
-    ShowIncludesFilter showIncludesFilter = null;
+    ShowIncludesFilter showIncludesFilterForStdout = null;
+    ShowIncludesFilter showIncludesFilterForStderr = null;
     // If parse_showincludes feature is enabled, instead of parsing dotD file we parse the output of
     // cl.exe caused by /showIncludes option.
     if (featureConfiguration.isEnabled(CppRuleClasses.PARSE_SHOWINCLUDES)) {
-      showIncludesFilter = new ShowIncludesFilter(getSourceFile().getFilename());
-      actionExecutionContext.getFileOutErr().setOutputFilter(showIncludesFilter);
+      showIncludesFilterForStdout = new ShowIncludesFilter(getSourceFile().getFilename());
+      showIncludesFilterForStderr = new ShowIncludesFilter(getSourceFile().getFilename());
+      actionExecutionContext.getFileOutErr().setOutputFilter(showIncludesFilterForStdout);
+      actionExecutionContext.getFileOutErr().setErrorFilter(showIncludesFilterForStderr);
     }
     try {
-      reply = executor.getContext(actionContext).execWithReply(this, actionExecutionContext);
+      reply = actionExecutionContext.getContext(actionContext)
+          .execWithReply(this, actionExecutionContext);
     } catch (ExecException e) {
-      throw e.toActionExecutionException("C++ compilation of rule '" + getOwner().getLabel() + "'",
-          executor.getVerboseFailures(), this);
+      throw e.toActionExecutionException(
+          "C++ compilation of rule '" + getOwner().getLabel() + "'",
+          actionExecutionContext.getVerboseFailures(),
+          this);
     }
     ensureCoverageNotesFilesExist();
 
     // This is the .d file scanning part.
-    IncludeScanningContext scanningContext = executor.getContext(IncludeScanningContext.class);
-    Path execRoot = executor.getExecRoot();
+    IncludeScanningContext scanningContext =
+        actionExecutionContext.getContext(IncludeScanningContext.class);
+    Path execRoot = actionExecutionContext.getExecRoot();
 
     NestedSet<Artifact> discoveredInputs;
-    if (showIncludesFilter != null) {
+    if (featureConfiguration.isEnabled(CppRuleClasses.PARSE_SHOWINCLUDES)) {
       discoveredInputs =
-          discoverInputsFromShowIncludesFilter(
-              execRoot, scanningContext.getArtifactResolver(), showIncludesFilter);
+          discoverInputsFromShowIncludesFilters(
+              execRoot,
+              scanningContext.getArtifactResolver(),
+              showIncludesFilterForStdout,
+              showIncludesFilterForStderr);
     } else {
       discoveredInputs =
           discoverInputsFromDotdFiles(execRoot, scanningContext.getArtifactResolver(), reply);
@@ -1193,23 +1205,29 @@ public class CppCompileAction extends AbstractAction
       validateInclusions(
           discoveredInputs,
           actionExecutionContext.getArtifactExpander(),
-          executor.getEventHandler());
+          actionExecutionContext.getEventHandler());
     }
   }
 
   @VisibleForTesting
-  public NestedSet<Artifact> discoverInputsFromShowIncludesFilter(
-      Path execRoot, ArtifactResolver artifactResolver, ShowIncludesFilter showIncludesFilter)
+  public NestedSet<Artifact> discoverInputsFromShowIncludesFilters(
+      Path execRoot,
+      ArtifactResolver artifactResolver,
+      ShowIncludesFilter showIncludesFilterForStdout,
+      ShowIncludesFilter showIncludesFilterForStderr)
       throws ActionExecutionException {
     if (!cppSemantics.needsDotdInputPruning()) {
       return NestedSetBuilder.emptySet(Order.STABLE_ORDER);
     }
+    ImmutableList.Builder<Path> dependencies = new ImmutableList.Builder<>();
+    dependencies.addAll(showIncludesFilterForStdout.getDependencies(execRoot));
+    dependencies.addAll(showIncludesFilterForStderr.getDependencies(execRoot));
     HeaderDiscovery.Builder discoveryBuilder =
         new HeaderDiscovery.Builder()
             .setAction(this)
             .setSourceFile(getSourceFile())
             .setSpecialInputsHandler(specialInputsHandler)
-            .setDependencies(showIncludesFilter.getDependencies(execRoot))
+            .setDependencies(dependencies.build())
             .setPermittedSystemIncludePrefixes(getPermittedSystemIncludePrefixes(execRoot))
             .setAllowedDerivedinputsMap(getAllowedDerivedInputsMap());
 
@@ -1304,7 +1322,7 @@ public class CppCompileAction extends AbstractAction
       throws ActionExecutionException, InterruptedException {
     Iterable<Artifact> scannedIncludes;
     try {
-      scannedIncludes = actionExecutionContext.getExecutor().getContext(actionContext)
+      scannedIncludes = actionExecutionContext.getContext(actionContext)
           .findAdditionalInputs(this, actionExecutionContext,  cppSemantics.getIncludeProcessing());
     } catch (ExecException e) {
       throw e.toActionExecutionException(this);
@@ -1356,6 +1374,10 @@ public class CppCompileAction extends AbstractAction
     }
 
     return message.toString();
+  }
+
+  public CompileCommandLine getCompileCommandLine() {
+    return compileCommandLine;
   }
 
   /**

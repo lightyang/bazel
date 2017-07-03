@@ -107,7 +107,7 @@ def run_xcode_locator(repository_ctx, xcode_locator_src_label):
     A 2-tuple containing:
     output: A list representing installed xcode toolchain information. Each
         element of the list is a struct containing information for one installed
-        toolchain. This is instead None if there was an error building or
+        toolchain. This is an empty list if there was an error building or
         running xcode-locator.
     err: An error string describing the error that occurred when attempting
         to build and run xcode-locator, or None if the run was successful.
@@ -118,13 +118,18 @@ def run_xcode_locator(repository_ctx, xcode_locator_src_label):
                                          "xcode-locator-bin", xcodeloc_src_path], 30)
 
   if (xcrun_result.return_code != 0):
+    suggestion = ""
+    if "Agreeing to the Xcode/iOS license" in xcrun_result.stderr:
+      suggestion = ("(You may need to sign the xcode license." +
+                    " Try running 'sudo xcodebuild -license')")
     error_msg = (
-        "Generating xcode-locator-bin failed, " +
+        "Generating xcode-locator-bin failed. {suggestion} " +
         "return code {code}, stderr: {err}, stdout: {out}").format(
+            suggestion=suggestion,
             code=xcrun_result.return_code,
             err=xcrun_result.stderr,
             out=xcrun_result.stdout)
-    return (None, error_msg.replace("\n", " "))
+    return ([], error_msg.replace("\n", " "))
 
   xcode_locator_result = repository_ctx.execute(["./xcode-locator-bin", "-v"], 30)
   if (xcode_locator_result.return_code != 0):
@@ -134,7 +139,7 @@ def run_xcode_locator(repository_ctx, xcode_locator_src_label):
             code=xcode_locator_result.return_code,
             err=xcode_locator_result.stderr,
             out=xcode_locator_result.stdout)
-    return (None, error_msg.replace("\n", " "))
+    return ([], error_msg.replace("\n", " "))
   xcode_toolchains = []
   # xcode_dump is comprised of newlines with different installed xcode versions,
   # each line of the form <version>:<comma_separated_aliases>:<developer_dir>.

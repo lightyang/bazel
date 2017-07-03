@@ -397,8 +397,8 @@ static vector<string> GetArgumentArray() {
   }
   result.insert(result.end(), user_options.begin(), user_options.end());
 
-  globals->options->AddJVMArgumentSuffix(
-      real_install_dir, globals->extracted_binaries[0], &result);
+  globals->options->AddJVMArgumentSuffix(real_install_dir,
+                                         globals->ServerJarPath(), &result);
 
   // JVM arguments are complete. Now pass in Blaze startup options.
   // Note that we always use the --flag=ARG form (instead of the --flag ARG one)
@@ -611,8 +611,8 @@ static void StartServer(const WorkspaceLayout *workspace_layout,
     globals->restart_reason = NO_DAEMON;
   }
 
-  string exe = globals->options->GetExe(globals->jvm_path,
-                                        globals->extracted_binaries[0]);
+  string exe =
+      globals->options->GetExe(globals->jvm_path, globals->ServerJarPath());
   // Go to the workspace before we daemonize, so
   // we can still print errors to the terminal.
   GoToWorkspace(workspace_layout);
@@ -665,8 +665,8 @@ static void StartStandalone(const WorkspaceLayout *workspace_layout,
 
   GoToWorkspace(workspace_layout);
 
-  string exe = globals->options->GetExe(globals->jvm_path,
-                                        globals->extracted_binaries[0]);
+  string exe =
+      globals->options->GetExe(globals->jvm_path, globals->ServerJarPath());
   ExecuteProgram(exe, jvm_args_vector);
   pdie(blaze_exit_code::INTERNAL_ERROR, "execv of '%s' failed", exe.c_str());
 }
@@ -711,7 +711,7 @@ static void SetRestartReasonIfNotSet(RestartReason restart_reason) {
   }
 }
 
-// Starts up a new server and connects to it. Exits if it didn't work not.
+// Starts up a new server and connects to it. Exits if it didn't work out.
 static void StartServerAndConnect(const WorkspaceLayout *workspace_layout,
                                   BlazeServer *server) {
   string server_dir =
@@ -808,7 +808,7 @@ class ExtractBlazeZipProcessor : public devtools_ijar::ZipExtractorProcessor {
            path.c_str());
     }
 
-    if (!blaze_util::WriteFile(data, size, path)) {
+    if (!blaze_util::WriteFile(data, size, path, 0755)) {
       die(blaze_exit_code::LOCAL_ENVIRONMENTAL_ERROR,
           "\nFailed to write zipped file \"%s\": %s", path.c_str(),
           blaze_util::GetLastErrorString().c_str());
@@ -1077,9 +1077,9 @@ static void EnsureCorrectRunningVersion(BlazeServer *server) {
                                    globals->options->install_base)) {
     if (server->Connected()) {
       server->KillRunningServer();
+      globals->restart_reason = NEW_VERSION;
     }
 
-    globals->restart_reason = NEW_VERSION;
     blaze_util::UnlinkPath(installation_path);
     if (!SymlinkDirectories(globals->options->install_base,
                             installation_path)) {
@@ -1444,6 +1444,16 @@ bool GrpcBlazeServer::Connect() {
     return false;
   }
 
+  pid_t server_pid = GetServerPid(server_dir);
+  if (server_pid < 0) {
+    return false;
+  }
+
+  if (!VerifyServerProcess(server_pid, globals->options->output_base,
+      globals->options->install_base)) {
+    return false;
+  }
+
   std::shared_ptr<grpc::Channel> channel(
       grpc::CreateChannel(port, grpc::InsecureChannelCredentials()));
   std::unique_ptr<command_server::CommandServer::Stub> client(
@@ -1455,29 +1465,7 @@ bool GrpcBlazeServer::Connect() {
 
   this->client_ = std::move(client);
   connected_ = true;
-
-  globals->server_pid = GetServerPid(server_dir);
-  if (globals->server_pid <= 0) {
-    fprintf(stderr,
-            "Can't get PID of existing server (server dir=%s). "
-            "Shutting it down and starting a new one...\n",
-            server_dir.c_str());
-    // This means that we have a server we could connect to but without a PID
-    // file, which in turn means that something went wrong before. Kill the
-    // server so that we can start with as clean a slate as possible. This may
-    // happen if someone (e.g. a client or server that's very old and uses an
-    // AF_UNIX socket instead of gRPC) deletes the server.pid.txt file.
-    KillRunningServer();
-    // Then wait until it actually dies
-    do {
-      auto next_attempt_time(std::chrono::system_clock::now() +
-                             std::chrono::milliseconds(1000));
-      std::this_thread::sleep_until(next_attempt_time);
-    } while (TryConnect(client_.get()));
-
-    return false;
-  }
-
+  globals->server_pid = server_pid;
   return true;
 }
 

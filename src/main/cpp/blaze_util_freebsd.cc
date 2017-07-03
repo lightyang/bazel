@@ -73,16 +73,23 @@ void WarnFilesystemType(const string &output_base) {
 
 string GetSelfPath() {
   char buffer[PATH_MAX] = {};
-  ssize_t bytes = readlink("/proc/curproc/file", buffer, sizeof(buffer));
-  if (bytes == sizeof(buffer)) {
-    // symlink contents truncated
-    bytes = -1;
-    errno = ENAMETOOLONG;
+  auto pid = getpid();
+  if (kill(pid, 0) < 0) return "";
+  auto procstat = procstat_open_sysctl();
+  unsigned int n;
+  auto p = procstat_getprocs(procstat, KERN_PROC_PID, pid, &n);
+  if (p) {
+    if (n != 1) {
+      pdie(blaze_exit_code::INTERNAL_ERROR,
+           "expected exactly one process from procstat_getprocs, got %d", n);
+    }
+    auto r = procstat_getpathname(procstat, p, buffer, PATH_MAX);
+    if (r != 0) {
+      pdie(blaze_exit_code::INTERNAL_ERROR, "error procstat_getpathname");
+    }
+    procstat_freeprocs(procstat, p);
   }
-  if (bytes == -1) {
-    pdie(blaze_exit_code::INTERNAL_ERROR, "error reading /proc/curproc/file");
-  }
-  buffer[bytes] = '\0';  // readlink does not NUL-terminate
+  procstat_close(procstat);
   return string(buffer);
 }
 
@@ -99,19 +106,7 @@ uint64_t GetMillisecondsSinceProcessStart() {
 }
 
 void SetScheduling(bool batch_cpu_scheduling, int io_nice_level) {
-  // Move ourself into a low priority CPU scheduling group if the
-  // machine is configured appropriately.  Fail silently, because this
-  // isn't available on all kernels.
-
-  if (io_nice_level >= 0) {
-    if (blaze_util::sys_ioprio_set(
-            IOPRIO_WHO_PROCESS, getpid(),
-            IOPRIO_PRIO_VALUE(IOPRIO_CLASS_BE, io_nice_level)) < 0) {
-      pdie(blaze_exit_code::INTERNAL_ERROR,
-           "ioprio_set() with class %d and level %d failed", IOPRIO_CLASS_BE,
-           io_nice_level);
-    }
-  }
+  // Stubbed out so we can compile for FreeBSD.
 }
 
 string GetProcessCWD(int pid) {

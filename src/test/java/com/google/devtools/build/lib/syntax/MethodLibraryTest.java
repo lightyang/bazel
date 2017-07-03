@@ -16,7 +16,6 @@ package com.google.devtools.build.lib.syntax;
 
 import static com.google.common.truth.Truth.assertThat;
 
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.syntax.SkylarkList.MutableList;
 import com.google.devtools.build.lib.syntax.util.EvaluationTestCase;
@@ -1123,11 +1122,6 @@ public class MethodLibraryTest extends EvaluationTestCase {
   }
 
   @Test
-  public void testDictionaryWithMultipleKeys() throws Exception {
-    new BothModesTest().testStatement("{0: 'a', 1: 'b', 0: 'c'}[0]", "c");
-  }
-
-  @Test
   public void testDictionaryKeyNotFound() throws Exception {
     new BothModesTest()
         .testIfErrorContains("key \"0\" not found in dictionary", "{}['0']")
@@ -1700,7 +1694,7 @@ public class MethodLibraryTest extends EvaluationTestCase {
     eval("a = select({'a': 1})");
     SelectorList result = (SelectorList) lookup("a");
     assertThat(((SelectorValue) Iterables.getOnlyElement(result.getElements())).getDictionary())
-        .isEqualTo(ImmutableMap.of("a", 1));
+        .containsExactly("a", 1);
   }
 
   @Test

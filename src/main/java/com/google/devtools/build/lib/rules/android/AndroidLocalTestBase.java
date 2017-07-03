@@ -15,12 +15,13 @@ package com.google.devtools.build.lib.rules.android;
 
 import static com.google.devtools.build.lib.packages.BuildType.LABEL_LIST;
 import static com.google.devtools.build.lib.rules.java.DeployArchiveBuilder.Compression.COMPRESSED;
+import static com.google.devtools.build.lib.vfs.FileSystemUtils.replaceExtension;
+import static java.util.stream.Collectors.toCollection;
 
-import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
-import com.google.common.collect.Sets;
+import com.google.common.collect.Streams;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.FileProvider;
@@ -31,6 +32,7 @@ import com.google.devtools.build.lib.analysis.Runfiles;
 import com.google.devtools.build.lib.analysis.RunfilesProvider;
 import com.google.devtools.build.lib.analysis.RunfilesSupport;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
+import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.rules.RuleConfiguredTargetFactory;
@@ -41,6 +43,8 @@ import com.google.devtools.build.lib.rules.java.JavaCommon;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArgsProvider;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArtifacts;
 import com.google.devtools.build.lib.rules.java.JavaCompilationHelper;
+import com.google.devtools.build.lib.rules.java.JavaConfiguration;
+import com.google.devtools.build.lib.rules.java.JavaConfiguration.OneVersionEnforcementLevel;
 import com.google.devtools.build.lib.rules.java.JavaHelper;
 import com.google.devtools.build.lib.rules.java.JavaPrimaryClassProvider;
 import com.google.devtools.build.lib.rules.java.JavaRuleOutputJarsProvider;
@@ -51,15 +55,15 @@ import com.google.devtools.build.lib.rules.java.JavaSkylarkApiProvider;
 import com.google.devtools.build.lib.rules.java.JavaSourceInfoProvider;
 import com.google.devtools.build.lib.rules.java.JavaSourceJarsProvider;
 import com.google.devtools.build.lib.rules.java.JavaTargetAttributes;
+import com.google.devtools.build.lib.rules.java.OneVersionCheckActionBuilder;
 import com.google.devtools.build.lib.rules.java.SingleJarActionBuilder;
 import com.google.devtools.build.lib.rules.java.proto.GeneratedExtensionRegistryProvider;
 import com.google.devtools.build.lib.syntax.Type;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
+import java.util.stream.Stream;
 
 /**
  * An base implementation for the "android_local_test" rule.
@@ -79,6 +83,20 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
     // (-source 7 -target 7 and no TWR) is unnecessary for robolectric tests
     // since they run on a JVM, not an android device.
     JavaTargetAttributes.Builder attributesBuilder = javaCommon.initCommon();
+
+    if (ruleContext.getFragment(AndroidConfiguration.class).generateRobolectricRClass()) {
+      // Add reconciled R classes for all dependencies with resources to the classpath before the
+      // dependency jars. Must use a NestedSet to have it appear in the correct place on the
+      // classpath.
+      attributesBuilder.addRuntimeClassPathEntries(
+          RobolectricResourceSymbolsActionBuilder.create(
+              ResourceDependencies.fromRuleDeps(ruleContext, false))
+              .setSdk(AndroidSdkProvider.fromRuleContext(ruleContext))
+              .setJarOut(
+                  ruleContext.getImplicitOutputArtifact(
+                      AndroidRuleClasses.ANDROID_RESOURCES_CLASS_JAR))
+              .buildAsClassPathEntry(ruleContext));
+    }
 
     String testClass =
         getAndCheckTestClass(ruleContext, ImmutableList.copyOf(attributesBuilder.getSourceFiles()));
@@ -173,26 +191,69 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
     Artifact deployJar =
         ruleContext.getImplicitOutputArtifact(JavaSemantics.JAVA_BINARY_DEPLOY_JAR);
 
+    OneVersionEnforcementLevel oneVersionEnforcementLevel =
+        ruleContext.getFragment(JavaConfiguration.class).oneVersionEnforcementLevel();
+    if (oneVersionEnforcementLevel != OneVersionEnforcementLevel.OFF) {
+      Artifact oneVersionOutput =
+          ruleContext
+              .getAnalysisEnvironment()
+              .getDerivedArtifact(
+                  replaceExtension(classJar.getRootRelativePath(), "-one-version.txt"),
+                  classJar.getRoot());
+      filesToBuildBuilder.add(oneVersionOutput);
+
+      NestedSet<Artifact> transitiveDependencies =
+          NestedSetBuilder.fromNestedSet(helper.getAttributes().getRuntimeClassPath())
+              .add(classJar)
+              .build();
+      OneVersionCheckActionBuilder.build(
+          ruleContext,
+          transitiveDependencies,
+          oneVersionOutput,
+          oneVersionEnforcementLevel);
+    }
+
     NestedSet<Artifact> filesToBuild = filesToBuildBuilder.build();
 
     Iterable<AndroidLibraryAarProvider> androidAarProviders =
-        Sets.newLinkedHashSet(
-            Iterables.concat(
-                ruleContext.getPrerequisites(
-                    "runtime_deps", Mode.TARGET, AndroidLibraryAarProvider.class),
-                ruleContext.getPrerequisites(
-                    "deps", Mode.TARGET, AndroidLibraryAarProvider.class)));
+        Stream.concat(
+                Streams.stream(
+                    ruleContext.getPrerequisites(
+                        "runtime_deps", Mode.TARGET, AndroidLibraryAarProvider.class)),
+                Streams.stream(
+                    ruleContext.getPrerequisites(
+                        "deps", Mode.TARGET, AndroidLibraryAarProvider.class)))
+            .collect(toCollection(LinkedHashSet::new));
+
+    NestedSetBuilder<Aar> transitiveAarsBuilder = NestedSetBuilder.naiveLinkOrder();
+    NestedSetBuilder<Aar> strictAarsBuilder = NestedSetBuilder.naiveLinkOrder();
+    NestedSetBuilder<Artifact> transitiveAarArtifactsBuilder = NestedSetBuilder.stableOrder();
+    for (AndroidLibraryAarProvider aarProvider : androidAarProviders) {
+      transitiveAarsBuilder.addTransitive(aarProvider.getTransitiveAars());
+      transitiveAarArtifactsBuilder.addTransitive(aarProvider.getTransitiveAarArtifacts());
+      if (aarProvider.getAar() != null) {
+        strictAarsBuilder.add(aarProvider.getAar());
+      }
+    }
+    NestedSet<Aar> transitiveAars = transitiveAarsBuilder.build();
+    NestedSet<Aar> strictAars = strictAarsBuilder.build();
+    NestedSet<Artifact> transitiveAarArtifacts = transitiveAarArtifactsBuilder.build();
 
     Runfiles defaultRunfiles =
-        collectDefaultRunfiles(ruleContext, javaCommon, filesToBuild, androidAarProviders);
+        collectDefaultRunfiles(ruleContext, javaCommon, filesToBuild, transitiveAarArtifacts);
 
-    ImmutableList<String> cmdLineArgs =
-        ImmutableList.of(
-            "--android_libraries=" + getTransitiveLibrariesArg(androidAarProviders),
-            "--strict_libraries=" + getStrictLibrariesArg(androidAarProviders));
-
+    CustomCommandLine.Builder cmdLineArgs = CustomCommandLine.builder();
+    if (!transitiveAars.isEmpty()) {
+      cmdLineArgs.addJoinValues(
+          "--android_libraries", ",", transitiveAars, AndroidLocalTestBase::aarCmdLineArg);
+    }
+    if (!strictAars.isEmpty()) {
+      cmdLineArgs.addJoinValues(
+          "--strict_libraries", ",", strictAars, AndroidLocalTestBase::aarCmdLineArg);
+    }
     RunfilesSupport runfilesSupport =
-        RunfilesSupport.withExecutable(ruleContext, defaultRunfiles, executable, cmdLineArgs);
+        RunfilesSupport.withExecutable(
+            ruleContext, defaultRunfiles, executable, cmdLineArgs.build());
 
     // Create the deploy jar and make it dependent on the runfiles middleman if an executable is
     // created. Do not add the deploy jar to files to build, so we will only build it when it gets
@@ -231,13 +292,9 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
     addExtraProviders(builder, javaCommon, classJar, srcJar, genClassJar, genSourceJar);
 
     JavaRuleOutputJarsProvider ruleOutputJarsProvider = javaRuleOutputJarsProviderBuilder.build();
-    JavaSkylarkApiProvider.Builder skylarkApiProvider =
-        JavaSkylarkApiProvider.builder()
-            .setRuleOutputJarsProvider(ruleOutputJarsProvider)
-            .setSourceJarsProvider(sourceJarsProvider);
 
-    javaCommon.addTransitiveInfoProviders(builder, skylarkApiProvider, filesToBuild, classJar);
-    javaCommon.addGenJarsProvider(builder, skylarkApiProvider, genClassJar, genSourceJar);
+    javaCommon.addTransitiveInfoProviders(builder, filesToBuild, classJar);
+    javaCommon.addGenJarsProvider(builder, genClassJar, genSourceJar);
 
     // No need to use the flag map here - just confirming that dynamic configurations are in use.
     // TODO(mstaib): remove when static configurations are removed.
@@ -245,7 +302,8 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
 
     return builder
         .setFilesToBuild(filesToBuild)
-        .addSkylarkTransitiveInfo(JavaSkylarkApiProvider.NAME, skylarkApiProvider.build())
+        .addSkylarkTransitiveInfo(
+            JavaSkylarkApiProvider.NAME, JavaSkylarkApiProvider.fromRuleContext())
         .addProvider(ruleOutputJarsProvider)
         .addProvider(
             RunfilesProvider.class,
@@ -265,6 +323,12 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
             JavaSourceInfoProvider.fromJavaTargetAttributes(helper.getAttributes(), javaSemantics))
         .addOutputGroup(JavaSemantics.SOURCE_JARS_OUTPUT_GROUP, transitiveSourceJars)
         .build();
+  }
+
+  private static String aarCmdLineArg(Aar aar) {
+    return aar.getManifest().getRootRelativePathString()
+        + ":"
+        + aar.getAar().getRootRelativePathString();
   }
 
   protected abstract JavaSemantics createJavaSemantics();
@@ -337,7 +401,7 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
       RuleContext ruleContext,
       JavaCommon javaCommon,
       NestedSet<Artifact> filesToBuild,
-      Iterable<AndroidLibraryAarProvider> androidLibraryAarProviders) {
+      NestedSet<Artifact> transitiveAarArtifacts) {
     Runfiles.Builder builder = new Runfiles.Builder(ruleContext.getWorkspaceName());
     builder.addTransitiveArtifacts(filesToBuild);
     builder.addArtifacts(javaCommon.getJavaCompilationArtifacts().getRuntimeJars());
@@ -358,17 +422,7 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
 
     builder.addTargets(depsForRunfiles, JavaRunfilesProvider.TO_RUNFILES);
     builder.addTargets(depsForRunfiles, RunfilesProvider.DEFAULT_RUNFILES);
-
-    for (AndroidLibraryAarProvider aarProvider : androidLibraryAarProviders) {
-      if (aarProvider.getAar() != null) {
-        builder.addArtifact(aarProvider.getAar().getAar());
-        builder.addArtifact(aarProvider.getAar().getManifest());
-      }
-      for (Aar aar : aarProvider.getTransitiveAars()) {
-        builder.addArtifact(aar.getAar());
-        builder.addArtifact(aar.getManifest());
-      }
-    }
+    builder.addTransitiveArtifacts(transitiveAarArtifacts);
 
     if (ruleContext.getConfiguration().isCodeCoverageEnabled()) {
       Artifact instrumentedJar = javaCommon.getJavaCompilationArtifacts().getInstrumentedJar();
@@ -409,39 +463,5 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
       }
     }
     return testClass;
-  }
-
-  protected static String getTransitiveLibrariesArg(
-      Iterable<AndroidLibraryAarProvider> aarProviders) {
-    Set<String> args = new LinkedHashSet<>();
-
-    for (AndroidLibraryAarProvider aarProvider : aarProviders) {
-      for (Aar aar : aarProvider.getTransitiveAars()) {
-        Preconditions.checkNotNull(aar.getAar());
-        Preconditions.checkNotNull(aar.getManifest());
-        args.add(
-            aar.getManifest().getRootRelativePathString()
-                + ":"
-                + aar.getAar().getRootRelativePathString());
-      }
-    }
-    return Joiner.on(",").join(args);
-  }
-
-  protected static String getStrictLibrariesArg(Iterable<AndroidLibraryAarProvider> aarProviders) {
-    Set<String> args = new LinkedHashSet<>();
-
-    for (AndroidLibraryAarProvider aarProvider : aarProviders) {
-      Aar aar = aarProvider.getAar();
-      if (aar != null) {
-        Preconditions.checkNotNull(aar.getAar());
-        Preconditions.checkNotNull(aar.getManifest());
-        args.add(
-            aar.getManifest().getRootRelativePathString()
-                + ":"
-                + aar.getAar().getRootRelativePathString());
-      }
-    }
-    return Joiner.on(",").join(args);
   }
 }

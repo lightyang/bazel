@@ -33,8 +33,8 @@ bind(
     actual = "//third_party/py/six",
 )
 
-# For tools/cpp/test/...
-load("//tools/cpp/test:docker_repository.bzl", "docker_repository")
+# For src/test/docker/...
+load("//src/test/docker:docker_repository.bzl", "docker_repository")
 
 docker_repository()
 
@@ -70,6 +70,12 @@ new_local_repository(
     name = "com_google_protobuf_java",
     build_file = "./third_party/protobuf/3.2.0/com_google_protobuf_java.BUILD",
     path = "./third_party/protobuf/3.2.0/",
+)
+
+new_local_repository(
+    name = "googleapis",
+    path = "./third_party/googleapis/",
+    build_file = "./third_party/googleapis/BUILD",
 )
 
 # OpenJDK distributions used to create a version of Bazel bundled with the OpenJDK.

@@ -16,13 +16,12 @@ package com.google.devtools.build.lib.syntax.util;
 import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.fail;
 
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import com.google.common.truth.Ordered;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.EventCollector;
-import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.events.EventKind;
+import com.google.devtools.build.lib.events.ExtendedEventHandler;
 import com.google.devtools.build.lib.events.util.EventCollectionApparatus;
 import com.google.devtools.build.lib.syntax.BazelLibrary;
 import com.google.devtools.build.lib.syntax.BuildFileAST;
@@ -35,7 +34,6 @@ import com.google.devtools.build.lib.syntax.Parser;
 import com.google.devtools.build.lib.syntax.ParserInputSource;
 import com.google.devtools.build.lib.syntax.SkylarkUtils;
 import com.google.devtools.build.lib.syntax.Statement;
-import com.google.devtools.build.lib.syntax.ValidationEnvironment;
 import com.google.devtools.build.lib.testutil.TestConstants;
 import com.google.devtools.build.lib.testutil.TestMode;
 import java.util.LinkedList;
@@ -132,7 +130,7 @@ public class EvaluationTestCase {
     setMode(TestMode.BUILD, skylarkOptions);
   }
 
-  public EventHandler getEventHandler() {
+  public ExtendedEventHandler getEventHandler() {
     return eventCollectionApparatus.reporter();
   }
 
@@ -140,17 +138,50 @@ public class EvaluationTestCase {
     return env;
   }
 
-  protected List<Statement> parseFile(String... input) {
-    BuildFileAST ast = BuildFileAST.parseSkylarkString(getEventHandler(), input);
-    ast = ast.validate(new ValidationEnvironment(env), getEventHandler());
-    return ast.getStatements();
+  protected BuildFileAST parseBuildFileASTWithoutValidation(String... input) {
+    return BuildFileAST.parseSkylarkString(getEventHandler(), input);
   }
 
-  /** Parses an Expression from string without a supporting file */
-  @VisibleForTesting
-  public Expression parseExpression(String... input) {
+  protected BuildFileAST parseBuildFileAST(String... input) {
+    BuildFileAST ast = parseBuildFileASTWithoutValidation(input);
+    return ast.validate(env, getEventHandler());
+  }
+
+  protected List<Statement> parseFile(String... input) {
+    return parseBuildFileAST(input).getStatements();
+  }
+
+  /** Construct a ParserInputSource by concatenating multiple strings with newlines. */
+  private ParserInputSource makeParserInputSource(String... input) {
+    return ParserInputSource.create(Joiner.on("\n").join(input), null);
+  }
+
+  /** Parses a statement, possibly followed by newlines. */
+  protected Statement parseStatement(Parser.ParsingLevel parsingLevel, String... input) {
+    return Parser.parseStatement(
+        makeParserInputSource(input), getEventHandler(),
+        parsingLevel, Parser.Dialect.SKYLARK);
+  }
+
+  /** Parses a top-level statement, possibly followed by newlines. */
+  protected Statement parseTopLevelStatement(String... input) {
+    return Parser.parseStatement(
+        makeParserInputSource(input), getEventHandler(),
+        Parser.ParsingLevel.TOP_LEVEL, Parser.Dialect.SKYLARK);
+  }
+
+  /** Parses a local statement, possibly followed by newlines. */
+  protected Statement parseLocalLevelStatement(String... input) {
+    return Parser.parseStatement(
+        makeParserInputSource(input), getEventHandler(),
+        Parser.ParsingLevel.LOCAL_LEVEL, Parser.Dialect.SKYLARK);
+  }
+
+  /** Parses an expression, possibly followed by newlines. */
+  protected Expression parseExpression(String... input) {
     return Parser.parseExpression(
-        ParserInputSource.create(Joiner.on("\n").join(input), null), getEventHandler());
+        makeParserInputSource(input), getEventHandler(),
+        Parser.Dialect.SKYLARK);
   }
 
   public EvaluationTestCase update(String varname, Object value) throws Exception {
@@ -184,7 +215,7 @@ public class EvaluationTestCase {
       eval(input);
       fail("Expected error containing '" + msg + "' but got no error");
     } catch (IllegalArgumentException | EvalException e) {
-      assertThat(e.getMessage()).contains(msg);
+      assertThat(e).hasMessageThat().contains(msg);
     }
   }
 

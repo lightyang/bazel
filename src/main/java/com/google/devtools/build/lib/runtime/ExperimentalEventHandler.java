@@ -13,8 +13,6 @@
 // limitations under the License.
 package com.google.devtools.build.lib.runtime;
 
-import static com.google.devtools.build.lib.util.Preconditions.checkState;
-
 import com.google.common.collect.ImmutableSet;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.primitives.Bytes;
@@ -25,6 +23,7 @@ import com.google.devtools.build.lib.actions.ActionStatusMessage;
 import com.google.devtools.build.lib.analysis.AnalysisPhaseCompleteEvent;
 import com.google.devtools.build.lib.analysis.NoBuildEvent;
 import com.google.devtools.build.lib.buildeventstream.AnnounceBuildEventTransportsEvent;
+import com.google.devtools.build.lib.buildeventstream.BuildEventTransport;
 import com.google.devtools.build.lib.buildeventstream.BuildEventTransportClosedEvent;
 import com.google.devtools.build.lib.buildtool.buildevent.BuildCompleteEvent;
 import com.google.devtools.build.lib.buildtool.buildevent.BuildStartingEvent;
@@ -38,6 +37,7 @@ import com.google.devtools.build.lib.pkgcache.LoadingPhaseCompleteEvent;
 import com.google.devtools.build.lib.skyframe.LoadingPhaseStartedEvent;
 import com.google.devtools.build.lib.util.Clock;
 import com.google.devtools.build.lib.util.io.AnsiTerminal;
+import com.google.devtools.build.lib.util.io.AnsiTerminal.Color;
 import com.google.devtools.build.lib.util.io.AnsiTerminalWriter;
 import com.google.devtools.build.lib.util.io.LineCountingAnsiTerminalWriter;
 import com.google.devtools.build.lib.util.io.LineWrappingAnsiTerminalWriter;
@@ -92,7 +92,6 @@ public class ExperimentalEventHandler implements EventHandler {
   private int numLinesProgressBar;
   private boolean buildComplete;
   // Number of open build even protocol transports.
-  private int openBepTransports;
   private boolean progressBarNeedsRefresh;
   private Thread updateThread;
   private byte[] stdoutBuffer;
@@ -105,15 +104,19 @@ public class ExperimentalEventHandler implements EventHandler {
    * values for the remaining relative capacity left at which we start taking given measure.
    *
    * <p>The degrading of progress updates to stay within output limit is done in the following
-   * steps. - We limit progress updates to at most one per second; this is the granularity at which
-   * times in he progress bar are shown. So the appearance won't look too bad. Hence we start that
-   * measure realatively early. - We only show the short version of the progress bar, even if curses
-   * are enabled. - We reduce the update frequency of the progress bar to at most one update per 5s.
-   * This still looks as moving and is is line with escalation strategy that so far, every step
-   * reduces output by about a factor of 5. - We start decreasing the update frequency to what we
-   * would do, if curses were not allowed. Note that now the time between updates is at least a
-   * fixed fraction of the time that passed so far; so the time between progress updates will
-   * continue to increase.
+   * steps.
+   * <ul>
+   *   <li>We limit progress updates to at most one per second; this is the granularity at which
+   *       times in he progress bar are shown. So the appearance won't look too bad. Hence we start
+   *       that measure relatively early.
+   *   <li>We only show the short version of the progress bar, even if curses are enabled.
+   *   <li>We reduce the update frequency of the progress bar to at most one update per 5s. This
+   *       still looks moving and is in line with the escalation strategy that so far: every step
+   *       reduces output by about a factor of 5.
+   *   <li>We start decreasing the update frequency to what we would do, if curses were not allowed.
+   *       Note that now the time between updates is at least a fixed fraction of the time that
+   *       passed so far; so the time between progress updates will continue to increase.
+   * </ul>
    */
   private static final double CAPACITY_INCREASE_UPDATE_DELAY = 0.7;
 
@@ -148,6 +151,16 @@ public class ExperimentalEventHandler implements EventHandler {
       if (counter.decrementAndGet() >= 0) {
         stream.write(b);
       }
+    }
+
+    @Override
+    public void flush() throws IOException {
+      stream.flush();
+    }
+
+    @Override
+    public void close() throws IOException {
+      stream.close();
     }
   }
 
@@ -244,7 +257,7 @@ public class ExperimentalEventHandler implements EventHandler {
   }
 
   private synchronized void maybeAddDate() {
-    if (!showTimestamp || dateShown) {
+    if (!showTimestamp || dateShown || buildComplete) {
       return;
     }
     dateShown = true;
@@ -378,17 +391,17 @@ public class ExperimentalEventHandler implements EventHandler {
     switch (kind) {
       case ERROR:
       case FAIL:
-        terminal.textRed();
+        terminal.setTextColor(Color.RED);
         terminal.textBold();
         break;
       case WARNING:
-        terminal.textMagenta();
+        terminal.setTextColor(Color.MAGENTA);
         break;
       case INFO:
-        terminal.textGreen();
+        terminal.setTextColor(Color.GREEN);
         break;
       case SUBCOMMAND:
-        terminal.textBlue();
+        terminal.setTextColor(Color.BLUE);
         break;
       default:
         terminal.resetTerminal();
@@ -438,6 +451,7 @@ public class ExperimentalEventHandler implements EventHandler {
   public void buildComplete(BuildCompleteEvent event) {
     // The final progress bar will flow into the scroll-back buffer, to if treat
     // it as an event and add a timestamp, if events are supposed to have a timestmap.
+    boolean done = false;
     synchronized (this) {
       stateTracker.buildComplete(event);
       ignoreRefreshLimitOnce();
@@ -445,11 +459,14 @@ public class ExperimentalEventHandler implements EventHandler {
 
       // After a build has completed, only stop updating the UI if there is no more BEP
       // upload happening.
-      if (openBepTransports == 0) {
+      if (stateTracker.pendingTransports() == 0) {
         buildComplete = true;
-        stopUpdateThread();
-        flushStdOutStdErrBuffers();
+        done = true;
       }
+    }
+    if (done) {
+      stopUpdateThread();
+      flushStdOutStdErrBuffers();
     }
   }
 
@@ -555,17 +572,24 @@ public class ExperimentalEventHandler implements EventHandler {
 
   @Subscribe
   public synchronized void buildEventTransportsAnnounced(AnnounceBuildEventTransportsEvent event) {
-    openBepTransports = event.transports().size();
     stateTracker.buildEventTransportsAnnounced(event);
+    if (debugAllEvents) {
+      String message = "Transports announced:";
+      for (BuildEventTransport transport : event.transports()) {
+        message += " " + transport.name();
+      }
+      this.handle(Event.info(null, message));
+    }
   }
 
   @Subscribe
-  public synchronized void buildEventTransportClosed(BuildEventTransportClosedEvent event) {
-    checkState(openBepTransports > 0);
-    openBepTransports--;
+  public void buildEventTransportClosed(BuildEventTransportClosedEvent event) {
     stateTracker.buildEventTransportClosed(event);
+    if (debugAllEvents) {
+      this.handle(Event.info(null, "Transport " + event.transport().name() + " closed"));
+    }
 
-    if (openBepTransports == 0) {
+    if (stateTracker.pendingTransports() == 0) {
       stopUpdateThread();
       flushStdOutStdErrBuffers();
       ignoreRefreshLimitOnce();
@@ -681,21 +705,18 @@ public class ExperimentalEventHandler implements EventHandler {
         final ExperimentalEventHandler eventHandler = this;
         updateThread =
             new Thread(
-                new Runnable() {
-                  @Override
-                  public void run() {
-                    try {
-                      while (true) {
-                        Thread.sleep(minimalUpdateInterval);
-                        if (lastRefreshMillis < mustRefreshAfterMillis
-                            && mustRefreshAfterMillis < clock.currentTimeMillis()) {
-                          progressBarNeedsRefresh = true;
-                        }
-                        eventHandler.doRefresh(/* fromUpdateThread= */ true);
+                () -> {
+                  try {
+                    while (true) {
+                      Thread.sleep(minimalUpdateInterval);
+                      if (lastRefreshMillis < mustRefreshAfterMillis
+                          && mustRefreshAfterMillis < clock.currentTimeMillis()) {
+                        progressBarNeedsRefresh = true;
                       }
-                    } catch (InterruptedException e) {
-                      // Ignore
+                      eventHandler.doRefresh(/* fromUpdateThread= */ true);
                     }
+                  } catch (InterruptedException e) {
+                    // Ignore
                   }
                 });
         threadToStart = updateThread;
@@ -706,6 +727,11 @@ public class ExperimentalEventHandler implements EventHandler {
     }
   }
 
+  /**
+   * Stop the update thread and wait for it to terminate. As the update thread, which is a separate
+   * thread, might have to call a synchronized method between being interrupted and terminating, DO
+   * NOT CALL from a SYNCHRONIZED block, as this will give the opportunity for dead locks.
+   */
   private void stopUpdateThread() {
     Thread threadToWaitFor = null;
     synchronized (this) {
