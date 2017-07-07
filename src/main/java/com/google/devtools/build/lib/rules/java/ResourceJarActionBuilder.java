@@ -134,6 +134,7 @@ public class ResourceJarActionBuilder {
             .addTransitiveInputs(additionalInputs)
             .addInputs(classpathResources)
             .addCommandLine(command.build(), PARAM_FILE_INFO)
+            .useDefaultShellEnvironment()
             .setProgressMessage("Building Java resource jar")
             .setMnemonic(MNEMONIC)
             .build(ruleContext));
