@@ -125,6 +125,7 @@ public final class SingleJarActionBuilder {
             .addOutput(outputJar)
             .addInputs(resources)
             .addTransitiveInputs(resourceJars)
+            .useDefaultShellEnvironment()
             .addCommandLine(
                 sourceJarCommandLine(outputJar, semantics, resources, resourceJars),
                 ParamFileInfo.builder(ParameterFileType.SHELL_QUOTED).setUseAlways(true).build())
@@ -150,6 +151,7 @@ public final class SingleJarActionBuilder {
                 JavaToolchainProvider.from(ruleContext), JavaRuntimeInfo.forHost(ruleContext))
             .addOutput(output)
             .addInputs(jars)
+            .useDefaultShellEnvironment()
             .addCommandLine(
                 sourceJarCommandLine(
                     output, /* semantics= */ null, /* resources= */ ImmutableList.of(), jars),
