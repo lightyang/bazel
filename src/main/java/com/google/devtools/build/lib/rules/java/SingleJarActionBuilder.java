@@ -73,6 +73,7 @@ public final class SingleJarActionBuilder {
         .addOutput(outputJar)
         .addInputs(resources.values())
         .addInputs(resourceJars)
+        .useDefaultShellEnvironment()
         .setCommandLine(sourceJarCommandLine(outputJar, resources, resourceJars))
         .alwaysUseParameterFile(ParameterFileType.SHELL_QUOTED)
         .setProgressMessage("Building source jar " + outputJar.prettyPrint())

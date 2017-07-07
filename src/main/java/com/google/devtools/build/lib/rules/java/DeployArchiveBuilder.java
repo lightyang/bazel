@@ -292,6 +292,7 @@ public class DeployArchiveBuilder {
           new SpawnAction.Builder()
               .addInputs(inputs.build())
               .addOutput(outputJar)
+              .useDefaultShellEnvironment()
               .setResources(resourceSet)
               .setExecutable(singlejar)
               .setCommandLine(commandLine)
