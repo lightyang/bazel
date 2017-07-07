@@ -391,6 +391,7 @@ public class DeployArchiveBuilder {
           new SpawnAction.Builder()
               .addTransitiveInputs(inputs.build())
               .addOutput(outputJar)
+              .useDefaultShellEnvironment()
               .setResources(DEPLOY_ACTION_RESOURCE_SET)
               .setExecutable(singlejar)
               .addCommandLine(
