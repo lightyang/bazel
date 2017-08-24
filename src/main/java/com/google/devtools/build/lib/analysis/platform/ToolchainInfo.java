@@ -18,13 +18,14 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.events.Location;
-import com.google.devtools.build.lib.packages.ClassObjectConstructor;
-import com.google.devtools.build.lib.packages.NativeClassObjectConstructor;
-import com.google.devtools.build.lib.packages.SkylarkClassObject;
-import com.google.devtools.build.lib.packages.SkylarkProviderIdentifier;
-import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
+import com.google.devtools.build.lib.packages.NativeInfo;
+import com.google.devtools.build.lib.packages.NativeProvider;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModuleCategory;
+import com.google.devtools.build.lib.syntax.EvalException;
+import com.google.devtools.build.lib.syntax.FunctionSignature;
+import com.google.devtools.build.lib.syntax.SkylarkDict;
+import com.google.devtools.build.lib.syntax.SkylarkType;
 import java.util.Map;
 
 /**
@@ -37,77 +38,44 @@ import java.util.Map;
   category = SkylarkModuleCategory.PROVIDER
 )
 @Immutable
-public class ToolchainInfo extends SkylarkClassObject {
+public class ToolchainInfo extends NativeInfo {
 
   /** Name used in Skylark for accessing this provider. */
   public static final String SKYLARK_NAME = "ToolchainInfo";
 
+  private static final FunctionSignature.WithValues<Object, SkylarkType> SIGNATURE =
+      FunctionSignature.WithValues.create(
+          FunctionSignature.of(
+              /*numMandatoryPositionals=*/ 0,
+              /*numOptionalPositionals=*/ 0,
+              /*numMandatoryNamedOnly*/ 0,
+              /*starArg=*/ false,
+              /*kwArg=*/ true,
+              /*names=*/ "data"),
+          /*defaultValues=*/ null,
+          /*types=*/ ImmutableList.<SkylarkType>of(SkylarkType.DICT));
+
   /** Skylark constructor and identifier for this provider. */
-  public static final ClassObjectConstructor SKYLARK_CONSTRUCTOR =
-      new NativeClassObjectConstructor(SKYLARK_NAME) {};
+  public static final NativeProvider<ToolchainInfo> PROVIDER =
+      new NativeProvider<ToolchainInfo>(ToolchainInfo.class, SKYLARK_NAME, SIGNATURE) {
+        @Override
+        protected ToolchainInfo createInstanceFromSkylark(Object[] args, Location loc)
+            throws EvalException {
+          Map<String, Object> data =
+              SkylarkDict.castSkylarkDictOrNoneToDict(args[0], String.class, Object.class, "data");
+          return ToolchainInfo.create(data, loc);
+        }
+      };
 
-  /** Identifier used to retrieve this provider from rules which export it. */
-  public static final SkylarkProviderIdentifier SKYLARK_IDENTIFIER =
-      SkylarkProviderIdentifier.forKey(SKYLARK_CONSTRUCTOR.getKey());
-
-  private final ClassObjectConstructor.Key toolchainConstructorKey;
-  private final ImmutableList<ConstraintValueInfo> execConstraints;
-  private final ImmutableList<ConstraintValueInfo> targetConstraints;
-
-  public ToolchainInfo(
-      ClassObjectConstructor.Key toolchainConstructorKey,
-      Iterable<ConstraintValueInfo> execConstraints,
-      Iterable<ConstraintValueInfo> targetConstraints,
-      Map<String, Object> toolchainData,
-      Location loc) {
-    this(
-        toolchainConstructorKey,
-        ImmutableList.copyOf(execConstraints),
-        ImmutableList.copyOf(targetConstraints),
-        toolchainData,
-        loc);
+  protected ToolchainInfo(Map<String, Object> toolchainData, Location loc) {
+    super(PROVIDER, ImmutableMap.copyOf(toolchainData), loc);
   }
 
-  public ToolchainInfo(
-      ClassObjectConstructor.Key toolchainConstructorKey,
-      ImmutableList<ConstraintValueInfo> execConstraints,
-      ImmutableList<ConstraintValueInfo> targetConstraints,
-      Map<String, Object> toolchainData,
-      Location loc) {
-    super(
-        SKYLARK_CONSTRUCTOR,
-        ImmutableMap.<String, Object>builder()
-            .put("toolchain_type", toolchainConstructorKey)
-            .put("exec_compatible_with", execConstraints)
-            .put("target_compatible_with", targetConstraints)
-            .putAll(toolchainData)
-            .build(),
-        loc);
-
-    this.toolchainConstructorKey = toolchainConstructorKey;
-    this.execConstraints = execConstraints;
-    this.targetConstraints = targetConstraints;
+  public static ToolchainInfo create(Map<String, Object> toolchainData) {
+    return create(toolchainData, Location.BUILTIN);
   }
 
-  public ClassObjectConstructor.Key toolchainConstructorKey() {
-    return toolchainConstructorKey;
-  }
-
-  @SkylarkCallable(
-    name = "exec_compatible_with",
-    doc = "The constraints on the execution platforms this toolchain supports.",
-    structField = true
-  )
-  public ImmutableList<ConstraintValueInfo> execConstraints() {
-    return execConstraints;
-  }
-
-  @SkylarkCallable(
-    name = "target_compatible_with",
-    doc = "The constraints on the target platforms this toolchain supports.",
-    structField = true
-  )
-  public ImmutableList<ConstraintValueInfo> targetConstraints() {
-    return targetConstraints;
+  public static ToolchainInfo create(Map<String, Object> toolchainData, Location loc) {
+    return new ToolchainInfo(toolchainData, loc);
   }
 }

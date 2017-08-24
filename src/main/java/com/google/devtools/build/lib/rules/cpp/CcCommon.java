@@ -24,25 +24,28 @@ import com.google.devtools.build.lib.actions.ActionAnalysisMetadata;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.AnalysisEnvironment;
 import com.google.devtools.build.lib.analysis.FileProvider;
+import com.google.devtools.build.lib.analysis.MakeVariableInfo;
 import com.google.devtools.build.lib.analysis.MakeVariableSupplier;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
+import com.google.devtools.build.lib.analysis.platform.ToolchainInfo;
+import com.google.devtools.build.lib.analysis.test.InstrumentedFilesCollector;
+import com.google.devtools.build.lib.analysis.test.InstrumentedFilesCollector.LocalMetadataCollector;
+import com.google.devtools.build.lib.analysis.test.InstrumentedFilesProvider;
+import com.google.devtools.build.lib.analysis.test.InstrumentedFilesProviderImpl;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.PackageIdentifier;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.packages.BuildType;
-import com.google.devtools.build.lib.rules.apple.Platform;
+import com.google.devtools.build.lib.rules.apple.ApplePlatform;
 import com.google.devtools.build.lib.rules.cpp.CcLibraryHelper.SourceCategory;
+import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.CollidingProvidesException;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.Variables;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.DynamicMode;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.HeadersCheckingMode;
-import com.google.devtools.build.lib.rules.test.InstrumentedFilesCollector;
-import com.google.devtools.build.lib.rules.test.InstrumentedFilesCollector.LocalMetadataCollector;
-import com.google.devtools.build.lib.rules.test.InstrumentedFilesProvider;
-import com.google.devtools.build.lib.rules.test.InstrumentedFilesProviderImpl;
 import com.google.devtools.build.lib.shell.ShellUtils;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.FileType;
@@ -92,7 +95,6 @@ public final class CcCommon {
           CppRuleClasses.HEADER_MODULE_COMPILE,
           CppRuleClasses.INCLUDE_PATHS,
           CppRuleClasses.PIC,
-          CppRuleClasses.PER_OBJECT_DEBUG_INFO,
           CppRuleClasses.PREPROCESSOR_DEFINES);
   public static final String CC_TOOLCHAIN_DEFAULT_ATTRIBUTE_NAME = ":cc_toolchain";
 
@@ -135,7 +137,8 @@ public final class CcCommon {
       }
     }
 
-    if (Platform.isApplePlatform(cppConfiguration.getTargetCpu()) && result.contains("-static")) {
+    if (ApplePlatform.isApplePlatform(cppConfiguration.getTargetCpu())
+        && result.contains("-static")) {
       ruleContext.attributeError(
           "linkopts", "Apple builds do not support statically linked binaries");
     }
@@ -184,7 +187,7 @@ public final class CcCommon {
       CcCompilationOutputs compilationOutputs,
       boolean generateDwo,
       boolean ltoBackendArtifactsUsePic,
-      Iterable<LTOBackendArtifacts> ltoBackendArtifacts) {
+      Iterable<LtoBackendArtifacts> ltoBackendArtifacts) {
     ImmutableList.Builder<TransitiveInfoCollection> deps =
         ImmutableList.<TransitiveInfoCollection>builder();
 
@@ -329,33 +332,8 @@ public final class CcCommon {
         return null;
       }
 
-      CcToolchainProvider toolchain =
-          CppHelper.getToolchainUsingDefaultCcToolchainAttribute(ruleContext);
-      FeatureConfiguration featureConfiguration =
-          CcCommon.configureFeatures(ruleContext, toolchain);
-      if (!featureConfiguration.actionIsConfigured(
-          CppCompileAction.CC_FLAGS_MAKE_VARIABLE_ACTION_NAME)) {
-        return null;
-      }
-
-      Variables buildVariables = new Variables.Builder()
-          .addAllStringVariables(toolchain.getBuildVariables())
-          .build();
-      String toolchainCcFlags =
-          Joiner.on(" ")
-              .join(
-                  featureConfiguration.getCommandLine(
-                      CppCompileAction.CC_FLAGS_MAKE_VARIABLE_ACTION_NAME, buildVariables));
-
-      ImmutableMap<String, String> currentMakeVariables =
-          ruleContext.getMakeVariables(ImmutableList.of(CC_TOOLCHAIN_DEFAULT_ATTRIBUTE_NAME));
-      Preconditions.checkArgument(
-          currentMakeVariables.containsKey(CppConfiguration.CC_FLAGS_MAKE_VARIABLE_NAME));
-
-      return FluentIterable.of(
-              currentMakeVariables.get(CppConfiguration.CC_FLAGS_MAKE_VARIABLE_NAME))
-          .append(toolchainCcFlags)
-          .join(Joiner.on(" "));
+      return CcCommon.computeCcFlags(ruleContext, ruleContext.getPrerequisite(
+          CcToolchain.CC_TOOLCHAIN_DEFAULT_ATTRIBUTE_NAME, Mode.TARGET));
     }
 
     @Override
@@ -635,22 +613,27 @@ public final class CcCommon {
 
     FeatureSpecification currentFeatureSpecification =
         FeatureSpecification.create(requestedFeatures.build(), unsupportedFeatures);
-    FeatureConfiguration configuration =
-        features.getFeatureConfiguration(currentFeatureSpecification);
-    for (String feature : unsupportedFeatures) {
-      if (configuration.isEnabled(feature)) {
-        ruleContext.ruleError(
-            "The C++ toolchain '"
-                + ruleContext
-                    .getPrerequisite(CcToolchain.CC_TOOLCHAIN_DEFAULT_ATTRIBUTE_NAME, Mode.TARGET)
-                    .getLabel()
-                + "' unconditionally implies feature '"
-                + feature
-                + "', which is unsupported by this rule. "
-                + "This is most likely a misconfiguration in the C++ toolchain.");
+    try {
+      FeatureConfiguration configuration =
+          features.getFeatureConfiguration(currentFeatureSpecification);
+      for (String feature : unsupportedFeatures) {
+        if (configuration.isEnabled(feature)) {
+          ruleContext.ruleError(
+              "The C++ toolchain '"
+                  + ruleContext
+                  .getPrerequisite(CcToolchain.CC_TOOLCHAIN_DEFAULT_ATTRIBUTE_NAME, Mode.TARGET)
+                  .getLabel()
+                  + "' unconditionally implies feature '"
+                  + feature
+                  + "', which is unsupported by this rule. "
+                  + "This is most likely a misconfiguration in the C++ toolchain.");
+        }
       }
+      return configuration;
+    } catch (CollidingProvidesException e) {
+      ruleContext.ruleError(e.getMessage());
+      return FeatureConfiguration.EMPTY;
     }
-    return configuration;
   }
 
 
@@ -694,5 +677,39 @@ public final class CcCommon {
   public static FeatureConfiguration configureFeatures(
       RuleContext ruleContext, CcToolchainProvider toolchain) {
     return configureFeatures(ruleContext, toolchain, SourceCategory.CC);
+  }
+
+  /**
+   * Computes the appropriate value of the {@code $(CC_FLAGS)} Make variable based on the given
+   * toolchain.
+   */
+  public static String computeCcFlags(RuleContext ruleContext, TransitiveInfoCollection toolchain) {
+    CcToolchainProvider toolchainProvider =
+        (CcToolchainProvider) toolchain.get(ToolchainInfo.PROVIDER);
+    FeatureConfiguration featureConfiguration =
+        CcCommon.configureFeatures(ruleContext, toolchainProvider);
+    if (!featureConfiguration.actionIsConfigured(
+        CppCompileAction.CC_FLAGS_MAKE_VARIABLE_ACTION_NAME)) {
+      return null;
+    }
+
+    Variables buildVariables = new Variables.Builder()
+        .addAllStringVariables(toolchainProvider.getBuildVariables())
+        .build();
+    String toolchainCcFlags =
+        Joiner.on(" ")
+            .join(
+                featureConfiguration.getCommandLine(
+                    CppCompileAction.CC_FLAGS_MAKE_VARIABLE_ACTION_NAME, buildVariables));
+    String oldCcFlags = "";
+    MakeVariableInfo makeVariableInfo =
+        toolchain.get(MakeVariableInfo.PROVIDER);
+    if (makeVariableInfo != null) {
+      oldCcFlags = makeVariableInfo.getMakeVariables().getOrDefault(
+          CppConfiguration.CC_FLAGS_MAKE_VARIABLE_NAME, "");
+    }
+    return FluentIterable.of(oldCcFlags)
+        .append(toolchainCcFlags)
+        .join(Joiner.on(" "));
   }
 }

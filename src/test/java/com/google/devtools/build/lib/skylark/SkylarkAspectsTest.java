@@ -19,7 +19,6 @@ import static com.google.common.truth.Truth.assertWithMessage;
 import static com.google.devtools.build.lib.analysis.OutputGroupProvider.INTERNAL_SUFFIX;
 import static org.junit.Assert.fail;
 
-import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.Artifact;
@@ -34,8 +33,8 @@ import com.google.devtools.build.lib.cmdline.TargetParsingException;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.packages.AspectDefinition;
 import com.google.devtools.build.lib.packages.Attribute.ConfigurationTransition;
-import com.google.devtools.build.lib.packages.SkylarkClassObject;
-import com.google.devtools.build.lib.packages.SkylarkClassObjectConstructor.SkylarkKey;
+import com.google.devtools.build.lib.packages.Info;
+import com.google.devtools.build.lib.packages.SkylarkProvider.SkylarkKey;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration;
 import com.google.devtools.build.lib.rules.java.Jvm;
 import com.google.devtools.build.lib.skyframe.AspectValue;
@@ -43,7 +42,6 @@ import com.google.devtools.build.lib.syntax.SkylarkList;
 import com.google.devtools.build.lib.syntax.SkylarkNestedSet;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import java.util.Arrays;
-import javax.annotation.Nullable;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -98,10 +96,8 @@ public class SkylarkAspectsTest extends AnalysisTestCase {
     SkylarkKey fooKey = new SkylarkKey(Label.parseAbsolute("//test:aspect.bzl"), "foo");
     SkylarkKey barKey = new SkylarkKey(Label.parseAbsolute("//test:aspect.bzl"), "bar");
 
-    assertThat(configuredAspect.get(fooKey).getConstructor().getKey())
-        .isEqualTo(fooKey);
-    assertThat(configuredAspect.get(barKey).getConstructor().getKey())
-        .isEqualTo(barKey);
+    assertThat(configuredAspect.get(fooKey).getProvider().getKey()).isEqualTo(fooKey);
+    assertThat(configuredAspect.get(barKey).getProvider().getKey()).isEqualTo(barKey);
   }
 
   @Test
@@ -127,25 +123,17 @@ public class SkylarkAspectsTest extends AnalysisTestCase {
     SkylarkKey fooKey = new SkylarkKey(Label.parseAbsolute("//test:aspect.bzl"), "foo");
     SkylarkKey barKey = new SkylarkKey(Label.parseAbsolute("//test:aspect.bzl"), "bar");
 
-    assertThat(configuredAspect.get(fooKey).getConstructor().getKey())
-        .isEqualTo(fooKey);
-    assertThat(configuredAspect.get(barKey).getConstructor().getKey())
-        .isEqualTo(barKey);
+    assertThat(configuredAspect.get(fooKey).getProvider().getKey()).isEqualTo(fooKey);
+    assertThat(configuredAspect.get(barKey).getProvider().getKey()).isEqualTo(barKey);
   }
 
   private Iterable<String> getAspectDescriptions(AnalysisResult analysisResult) {
     return transform(
         analysisResult.getAspects(),
-        new Function<AspectValue, String>() {
-          @Nullable
-          @Override
-          public String apply(AspectValue aspectValue) {
-            return String.format(
+        aspectValue ->
+            String.format(
                 "%s(%s)",
-                aspectValue.getConfiguredAspect().getName(),
-                aspectValue.getLabel().toString());
-          }
-        });
+                aspectValue.getConfiguredAspect().getName(), aspectValue.getLabel().toString()));
   }
 
   @Test
@@ -193,13 +181,7 @@ public class SkylarkAspectsTest extends AnalysisTestCase {
   private Iterable<String> getLabelsToBuild(AnalysisResult analysisResult) {
     return transform(
         analysisResult.getTargetsToBuild(),
-        new Function<ConfiguredTarget, String>() {
-          @Nullable
-          @Override
-          public String apply(ConfiguredTarget configuredTarget) {
-            return configuredTarget.getLabel().toString();
-          }
-        });
+        configuredTarget -> configuredTarget.getLabel().toString());
   }
 
 
@@ -273,13 +255,9 @@ public class SkylarkAspectsTest extends AnalysisTestCase {
     assertThat(
             transform(
                 ((SkylarkNestedSet) names).toCollection(),
-                new Function<Object, String>() {
-                  @Nullable
-                  @Override
-                  public String apply(Object o) {
-                    assertThat(o).isInstanceOf(Label.class);
-                    return o.toString();
-                  }
+                o -> {
+                  assertThat(o).isInstanceOf(Label.class);
+                  return o.toString();
                 }))
         .containsExactly("//test:xxx", "//test:yyy");
     Object ruleKinds = configuredAspect.get("rule_kinds");
@@ -331,16 +309,12 @@ public class SkylarkAspectsTest extends AnalysisTestCase {
     Object names = configuredAspect.get("target_labels");
     assertThat(names).isInstanceOf(SkylarkNestedSet.class);
     assertThat(
-        transform(
-            ((SkylarkNestedSet) names).toCollection(),
-            new Function<Object, String>() {
-              @Nullable
-              @Override
-              public String apply(Object o) {
-                assertThat(o).isInstanceOf(Label.class);
-                return ((Label) o).getName();
-              }
-            }))
+            transform(
+                ((SkylarkNestedSet) names).toCollection(),
+                o -> {
+                  assertThat(o).isInstanceOf(Label.class);
+                  return ((Label) o).getName();
+                }))
         .containsExactly("stl", "xxx", "yyy");
   }
 
@@ -370,7 +344,7 @@ public class SkylarkAspectsTest extends AnalysisTestCase {
     AnalysisResult analysisResult = update("//test:yyy");
     ConfiguredTarget target = Iterables.getOnlyElement(analysisResult.getTargetsToBuild());
 
-    SkylarkClassObject names = target.get(providerKey);
+    Info names = target.get(providerKey);
     assertThat((Iterable<?>) names.getValue("dir"))
         .containsExactly(
             "aspect_provider",
@@ -470,15 +444,9 @@ public class SkylarkAspectsTest extends AnalysisTestCase {
     AnalysisResult analysisResult =
         update(ImmutableList.of("test/aspect.bzl%MyAspect"), "//test:xxx");
     assertThat(
-        transform(
-            analysisResult.getTargetsToBuild(),
-            new Function<ConfiguredTarget, String>() {
-              @Nullable
-              @Override
-              public String apply(ConfiguredTarget configuredTarget) {
-                return configuredTarget.getLabel().toString();
-              }
-            }))
+            transform(
+                analysisResult.getTargetsToBuild(),
+                configuredTarget -> configuredTarget.getLabel().toString()))
         .containsExactly("//test:xxx");
     AspectValue aspectValue = analysisResult.getAspects().iterator().next();
     OutputGroupProvider outputGroupProvider =
@@ -512,15 +480,9 @@ public class SkylarkAspectsTest extends AnalysisTestCase {
     AnalysisResult analysisResult =
         update(ImmutableList.of("test/aspect.bzl%MyAspect"), "//test:xxx");
     assertThat(
-        transform(
-            analysisResult.getTargetsToBuild(),
-            new Function<ConfiguredTarget, String>() {
-              @Nullable
-              @Override
-              public String apply(ConfiguredTarget configuredTarget) {
-                return configuredTarget.getLabel().toString();
-              }
-            }))
+            transform(
+                analysisResult.getTargetsToBuild(),
+                configuredTarget -> configuredTarget.getLabel().toString()))
         .containsExactly("//test:xxx");
     AspectValue aspectValue = analysisResult.getAspects().iterator().next();
     OutputGroupProvider outputGroupProvider =
@@ -577,16 +539,12 @@ public class SkylarkAspectsTest extends AnalysisTestCase {
     Object names = target.get("rule_deps");
     assertThat(names).isInstanceOf(SkylarkNestedSet.class);
     assertThat(
-        transform(
-            ((SkylarkNestedSet) names).toCollection(),
-            new Function<Object, String>() {
-              @Nullable
-              @Override
-              public String apply(Object o) {
-                assertThat(o).isInstanceOf(Label.class);
-                return o.toString();
-              }
-            }))
+            transform(
+                ((SkylarkNestedSet) names).toCollection(),
+                o -> {
+                  assertThat(o).isInstanceOf(Label.class);
+                  return o.toString();
+                }))
         .containsExactly("//test:yyy");
   }
 
@@ -905,7 +863,6 @@ public class SkylarkAspectsTest extends AnalysisTestCase {
     assertContainsEvent("MyAspect from //test:aspect.bzl is not an aspect");
   }
 
-
   @Test
   public void duplicateOutputGroups() throws Exception {
     scratch.file(
@@ -1139,13 +1096,8 @@ public class SkylarkAspectsTest extends AnalysisTestCase {
 
   private static Iterable<String> getOutputGroupContents(OutputGroupProvider outputGroupProvider,
       String groupName) {
-    return Iterables.transform(outputGroupProvider.getOutputGroup(groupName),
-        new Function<Artifact, String>() {
-          @Override
-          public String apply(Artifact artifact) {
-             return artifact.getRootRelativePathString();
-          }
-        });
+    return Iterables.transform(
+        outputGroupProvider.getOutputGroup(groupName), Artifact::getRootRelativePathString);
   }
 
 
@@ -1196,7 +1148,7 @@ public class SkylarkAspectsTest extends AnalysisTestCase {
     } catch (ViewCreationFailedException e) {
       // expect to fail.
     }
-    assertContainsEvent("MyAspect from //test:aspect.bzl is not an aspect");
+    assertContainsEvent("MyAspect is not exported from //test:aspect.bzl");
   }
 
   @Test
@@ -1674,12 +1626,8 @@ public class SkylarkAspectsTest extends AnalysisTestCase {
     ConfiguredTarget target = analysisResult.getTargetsToBuild().iterator().next();
     NestedSet<Artifact> aspectFiles =
         ((SkylarkNestedSet) target.get("aspect_files")).getSet(Artifact.class);
-    assertThat(transform(aspectFiles, new Function<Artifact, String>() {
-      @Override
-      public String apply(Artifact artifact) {
-        return artifact.getFilename();
-      }
-    })).containsExactly("aspect-output-rbin", "aspect-output-rgen");
+    assertThat(transform(aspectFiles, Artifact::getFilename))
+        .containsExactly("aspect-output-rbin", "aspect-output-rgen");
     for (Artifact aspectFile : aspectFiles) {
       String rootPath = aspectFile.getRoot().getExecPath().toString();
       assertWithMessage("Artifact %s should not be in genfiles", aspectFile)
@@ -1769,7 +1717,8 @@ public class SkylarkAspectsTest extends AnalysisTestCase {
         "test/aspect.bzl",
         "def _aspect_impl(target,ctx):",
         "  f = ctx.actions.declare_file('dummy.txt')",
-        "  ctx.action(outputs = [f], command='echo xxx > $(location f)', mnemonic='AspectAction')",
+        "  ctx.actions.run_shell(outputs = [f], command='echo xxx > $(location f)',",
+        "                        mnemonic='AspectAction')",
         "  return struct()",
         "my_aspect = aspect(implementation = _aspect_impl)"
     );
@@ -1790,13 +1739,10 @@ public class SkylarkAspectsTest extends AnalysisTestCase {
     AnalysisResult analysisResult = update(
         ImmutableList.<String>of("test/aspect.bzl%my_aspect"),
         "//test:xxx");
-    assertThat(Iterables.transform(analysisResult.getAdditionalArtifactsToBuild(),
-        new Function<Artifact, String>() {
-          @Override
-          public String apply(Artifact artifact) {
-            return artifact.getFilename();
-          }
-        })).contains("file.xa");
+    assertThat(
+            Iterables.transform(
+                analysisResult.getAdditionalArtifactsToBuild(), Artifact::getFilename))
+        .contains("file.xa");
   }
 
   @Test
@@ -1836,16 +1782,12 @@ public class SkylarkAspectsTest extends AnalysisTestCase {
     Object names = configuredAspect.get("target_labels");
     assertThat(names).isInstanceOf(SkylarkNestedSet.class);
     assertThat(
-        transform(
-              ((SkylarkNestedSet) names).toCollection(),
-              new Function<Object, String>() {
-                @Nullable
-                @Override
-                public String apply(Object o) {
+            transform(
+                ((SkylarkNestedSet) names).toCollection(),
+                o -> {
                   assertThat(o).isInstanceOf(Label.class);
                   return ((Label) o).getName();
-                }
-              }))
+                }))
         .containsExactly("foo", "bar", "tool");
   }
 
@@ -2313,6 +2255,68 @@ public class SkylarkAspectsTest extends AnalysisTestCase {
             "//test:r1_1=False",
             "//test:r2_1=False");
   }
+
+  /**
+   * r0 is a dependency of r1 via two attributes, dep1 and dep2.
+   * r1 sends an aspect 'a' along dep1 but not along dep2.
+   *
+   * rcollect depends upon r1 and sends another aspect, 'collector',
+   * along its dep dependency. 'collector' wants to see aspect 'a' and propagates along
+   * dep1 and dep2. It should be applied both to r0 and to r0+a.
+   */
+  @Test
+  public void multipleDepsDifferentAspects() throws Exception {
+    scratch.file(
+        "test/aspect.bzl",
+        "PAspect = provider()",
+        "PCollector = provider()",
+        "def _aspect_impl(target, ctx):",
+        "   return [PAspect()]",
+        "a = aspect(_aspect_impl, attr_aspects = ['dep'], provides = [PAspect])",
+        "def _collector_impl(target, ctx):",
+        "   suffix = '+PAspect' if PAspect in target else ''",
+        "   result = [str(target.label)+suffix]",
+        "   for a in ['dep', 'dep1', 'dep2']:",
+        "     if hasattr(ctx.rule.attr, a):",
+        "        result += getattr(ctx.rule.attr, a)[PCollector].result",
+        "   return [PCollector(result=result)]",
+        "collector = aspect(_collector_impl, attr_aspects = ['*'], ",
+        "                   required_aspect_providers = [PAspect])",
+        "def _rimpl(ctx):",
+        "   pass",
+        "r0 = rule(_rimpl)",
+        "r1 = rule(_rimpl, ",
+        "          attrs = {",
+        "             'dep1' : attr.label(),",
+        "             'dep2' : attr.label(aspects = [a]),",
+        "          },",
+        ")",
+        "def _rcollect_impl(ctx):",
+        "    return [ctx.attr.dep[PCollector]]",
+        "rcollect = rule(_rcollect_impl,",
+        "                attrs = {",
+        "                  'dep' : attr.label(aspects = [collector]),",
+        "                })"
+    );
+    scratch.file(
+        "test/BUILD",
+        "load(':aspect.bzl', 'r0', 'r1', 'rcollect')",
+        "r0(name = 'r0')",
+        "r1(name = 'r1', dep1 = ':r0', dep2 = ':r0')",
+        "rcollect(name = 'rcollect', dep = ':r1')"
+    );
+
+    AnalysisResult analysisResult = update(ImmutableList.of(), "//test:rcollect");
+    ConfiguredTarget configuredTarget =
+        Iterables.getOnlyElement(analysisResult.getTargetsToBuild());
+    SkylarkKey pCollector = new SkylarkKey(Label.parseAbsolute("//test:aspect.bzl"), "PCollector");
+    assertThat((SkylarkList<?>) configuredTarget.get(pCollector).getValue("result"))
+        .containsExactly(
+            "//test:r1",
+            "//test:r0",
+            "//test:r0+PAspect");
+  }
+
 
 
   /** SkylarkAspectTest with "keep going" flag */

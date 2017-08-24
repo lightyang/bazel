@@ -16,12 +16,16 @@ package com.google.devtools.build.lib.analysis;
 import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.analysis.config.ConfigMatchingProvider;
 import com.google.devtools.build.lib.analysis.config.RunUnder;
+import com.google.devtools.build.lib.analysis.skylark.SkylarkApiProvider;
 import com.google.devtools.build.lib.cmdline.Label;
+import com.google.devtools.build.lib.packages.Info;
 import com.google.devtools.build.lib.packages.OutputFile;
+import com.google.devtools.build.lib.packages.Provider;
 import com.google.devtools.build.lib.packages.Rule;
-import com.google.devtools.build.lib.packages.SkylarkClassObject;
-import com.google.devtools.build.lib.packages.SkylarkClassObjectConstructor;
+import com.google.devtools.build.lib.skylarkinterface.SkylarkPrinter;
+import com.google.devtools.build.lib.syntax.Printer;
 import com.google.devtools.build.lib.util.Preconditions;
+import java.util.function.Consumer;
 import javax.annotation.Nullable;
 
 /**
@@ -29,7 +33,7 @@ import javax.annotation.Nullable;
  *
  * <p>Created by {@link RuleConfiguredTargetBuilder}. There is an instance of this class for every
  * analyzed rule. For more information about how analysis works, see {@link
- * com.google.devtools.build.lib.rules.RuleConfiguredTargetFactory}.
+ * com.google.devtools.build.lib.analysis.RuleConfiguredTargetFactory}.
  */
 public final class RuleConfiguredTarget extends AbstractConfiguredTarget {
   /**
@@ -47,11 +51,7 @@ public final class RuleConfiguredTarget extends AbstractConfiguredTarget {
   private final TransitiveInfoProviderMap providers;
   private final ImmutableMap<Label, ConfigMatchingProvider> configConditions;
 
-  RuleConfiguredTarget(
-      RuleContext ruleContext,
-      TransitiveInfoProviderMap providers,
-      ImmutableMap<String, Object> legacySkylarkProviders,
-      ImmutableMap<SkylarkClassObjectConstructor.Key, SkylarkClassObject> skylarkProviders) {
+  RuleConfiguredTarget(RuleContext ruleContext, TransitiveInfoProviderMap providers) {
     super(ruleContext);
     // We don't use ImmutableMap.Builder here to allow augmenting the initial list of 'default'
     // providers by passing them in.
@@ -62,12 +62,13 @@ public final class RuleConfiguredTarget extends AbstractConfiguredTarget {
     Preconditions.checkState(providerBuilder.contains(FilesToRunProvider.class));
 
     // Initialize every SkylarkApiProvider
-    if (!legacySkylarkProviders.isEmpty() || !skylarkProviders.isEmpty()) {
-      SkylarkProviders allSkylarkProviders = new SkylarkProviders(legacySkylarkProviders,
-          skylarkProviders);
-      allSkylarkProviders.init(this);
-      providerBuilder.add(allSkylarkProviders);
+    for (int i = 0; i < providers.getProviderCount(); i++) {
+      Object obj = providers.getProviderInstanceAt(i);
+      if (obj instanceof SkylarkApiProvider) {
+        ((SkylarkApiProvider) obj).init(this);
+      }
     }
+
 
     this.providers = providerBuilder.build();
     this.configConditions = ruleContext.getConfigConditions();
@@ -113,7 +114,32 @@ public final class RuleConfiguredTarget extends AbstractConfiguredTarget {
 
   @Override
   public String errorMessage(String name) {
-    return String.format("target (rule class of '%s') doesn't have provider '%s'.",
-        getTarget().getRuleClass(), name);
+    return Printer.format("%r (rule '%s') doesn't have provider '%s'",
+        this, getTarget().getRuleClass(), name);
+  }
+
+  @Override
+  protected void addExtraSkylarkKeys(Consumer<String> result) {
+    for (int i = 0; i < providers.getProviderCount(); i++) {
+      Object classAt = providers.getProviderKeyAt(i);
+      if (classAt instanceof String) {
+        result.accept((String) classAt);
+      }
+    }
+  }
+
+  @Override
+  protected Info rawGetSkylarkProvider(Provider.Key providerKey) {
+    return providers.getProvider(providerKey);
+  }
+
+  @Override
+  protected Object rawGetSkylarkProvider(String providerKey) {
+    return providers.getProvider(providerKey);
+  }
+
+  @Override
+  public void repr(SkylarkPrinter printer) {
+    printer.append("<target " + getLabel() + ">");
   }
 }

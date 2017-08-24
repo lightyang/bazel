@@ -13,20 +13,22 @@
 // limitations under the License.
 package com.google.devtools.build.lib.runtime;
 
+import com.google.devtools.build.lib.analysis.test.TestResult;
+import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.exec.ExecutionOptions;
 import com.google.devtools.build.lib.exec.TestLogHelper;
 import com.google.devtools.build.lib.exec.TestStrategy.TestOutputFormat;
 import com.google.devtools.build.lib.exec.TestStrategy.TestSummaryFormat;
-import com.google.devtools.build.lib.rules.test.TestResult;
 import com.google.devtools.build.lib.util.StringUtil;
 import com.google.devtools.build.lib.util.io.AnsiTerminalPrinter;
 import com.google.devtools.build.lib.view.test.TestStatus.BlazeTestStatus;
 import com.google.devtools.common.options.Option;
 import com.google.devtools.common.options.OptionDocumentationCategory;
+import com.google.devtools.common.options.OptionEffectTag;
 import com.google.devtools.common.options.OptionsBase;
 import com.google.devtools.common.options.OptionsProvider;
-import com.google.devtools.common.options.proto.OptionFilters.OptionEffectTag;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -89,12 +91,27 @@ public class TerminalTestResultNotifier implements TestResultNotifier {
   }
 
   /**
+   * Decide if two tests with the same label are contained in the set of test summaries
+   */
+  private boolean duplicateLabels(Set<TestSummary> summaries) {
+    Set<Label> labelsSeen = new HashSet<>();
+    for (TestSummary summary : summaries) {
+      if (labelsSeen.contains(summary.getTarget().getLabel())) {
+        return true;
+      }
+      labelsSeen.add(summary.getTarget().getLabel());
+    }
+    return false;
+  }
+
+  /**
    * Prints a test result summary that contains only failed tests.
    */
   private void printDetailedTestResultSummary(Set<TestSummary> summaries) {
+    boolean withConfig = duplicateLabels(summaries);
     for (TestSummary summary : summaries) {
       if (summary.getStatus() != BlazeTestStatus.PASSED) {
-        TestSummaryPrinter.print(summary, printer, summaryOptions.verboseSummary, true);
+        TestSummaryPrinter.print(summary, printer, summaryOptions.verboseSummary, true, withConfig);
       }
     }
   }
@@ -103,9 +120,11 @@ public class TerminalTestResultNotifier implements TestResultNotifier {
    * Prints a full test result summary.
    */
   private void printShortSummary(Set<TestSummary> summaries, boolean showPassingTests) {
+    boolean withConfig = duplicateLabels(summaries);
     for (TestSummary summary : summaries) {
       if (summary.getStatus() != BlazeTestStatus.PASSED || showPassingTests) {
-        TestSummaryPrinter.print(summary, printer, summaryOptions.verboseSummary, false);
+        TestSummaryPrinter.print(summary, printer, summaryOptions.verboseSummary, false,
+            withConfig);
       }
     }
   }

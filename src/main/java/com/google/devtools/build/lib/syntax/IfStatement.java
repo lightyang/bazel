@@ -25,20 +25,23 @@ public final class IfStatement extends Statement {
 
   /**
    * Syntax node for an [el]if statement.
+   *
+   * <p>This extends Statement because it implements {@code doExec}, but it is not actually an
+   * independent statement in the grammar.
    */
   public static final class ConditionalStatements extends Statement {
 
     private final Expression condition;
-    private final ImmutableList<Statement> stmts;
+    private final ImmutableList<Statement> statements;
 
-    public ConditionalStatements(Expression condition, List<Statement> stmts) {
+    public ConditionalStatements(Expression condition, List<Statement> statements) {
       this.condition = Preconditions.checkNotNull(condition);
-      this.stmts = ImmutableList.copyOf(stmts);
+      this.statements = ImmutableList.copyOf(statements);
     }
 
     @Override
     void doExec(Environment env) throws EvalException, InterruptedException {
-      for (Statement stmt : stmts) {
+      for (Statement stmt : statements) {
         stmt.exec(env);
       }
     }
@@ -51,7 +54,7 @@ public final class IfStatement extends Statement {
 
     @Override
     public String toString() {
-      return "[el]if " + condition + ": " + stmts + "\n";
+      return "[el]if " + condition + ": " + statements + "\n";
     }
 
     @Override
@@ -63,14 +66,8 @@ public final class IfStatement extends Statement {
       return condition;
     }
 
-    public ImmutableList<Statement> getStmts() {
-      return stmts;
-    }
-
-    @Override
-    void validate(ValidationEnvironment env) throws EvalException {
-      condition.validate(env);
-      validateStmts(env, stmts);
+    public ImmutableList<Statement> getStatements() {
+      return statements;
     }
   }
 
@@ -104,7 +101,7 @@ public final class IfStatement extends Statement {
       buffer.append(clauseWord);
       condStmt.getCondition().prettyPrint(buffer);
       buffer.append(":\n");
-      printSuite(buffer, condStmt.getStmts(), indentLevel);
+      printSuite(buffer, condStmt.getStatements(), indentLevel);
       clauseWord = "elif ";
     }
     if (!elseBlock.isEmpty()) {
@@ -135,23 +132,5 @@ public final class IfStatement extends Statement {
   @Override
   public void accept(SyntaxTreeVisitor visitor) {
     visitor.visit(this);
-  }
-
-  @Override
-  void validate(ValidationEnvironment env) throws EvalException {
-    env.startTemporarilyDisableReadonlyCheckSession();
-    for (ConditionalStatements stmts : thenBlocks) {
-      stmts.validate(env);
-    }
-    validateStmts(env, elseBlock);
-    env.finishTemporarilyDisableReadonlyCheckSession();
-  }
-
-  private static void validateStmts(ValidationEnvironment env, List<Statement> stmts)
-      throws EvalException {
-    for (Statement stmt : stmts) {
-      stmt.validate(env);
-    }
-    env.finishTemporarilyDisableReadonlyCheckBranch();
   }
 }

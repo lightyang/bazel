@@ -42,7 +42,13 @@ import com.google.devtools.build.lib.analysis.config.BuildConfigurationCollectio
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
 import com.google.devtools.build.lib.analysis.config.ComposingSplitTransition;
 import com.google.devtools.build.lib.analysis.config.ConfigMatchingProvider;
+import com.google.devtools.build.lib.analysis.config.DynamicTransitionMapper;
 import com.google.devtools.build.lib.analysis.config.InvalidConfigurationException;
+import com.google.devtools.build.lib.analysis.config.PatchTransition;
+import com.google.devtools.build.lib.analysis.constraints.TopLevelConstraintSemantics;
+import com.google.devtools.build.lib.analysis.test.CoverageReportActionFactory;
+import com.google.devtools.build.lib.analysis.test.CoverageReportActionFactory.CoverageReportActionsWrapper;
+import com.google.devtools.build.lib.analysis.test.InstrumentedFilesProvider;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.PackageIdentifier;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
@@ -70,9 +76,7 @@ import com.google.devtools.build.lib.packages.RuleTransitionFactory;
 import com.google.devtools.build.lib.packages.Target;
 import com.google.devtools.build.lib.packages.TargetUtils;
 import com.google.devtools.build.lib.pkgcache.LoadingResult;
-import com.google.devtools.build.lib.rules.test.CoverageReportActionFactory;
-import com.google.devtools.build.lib.rules.test.CoverageReportActionFactory.CoverageReportActionsWrapper;
-import com.google.devtools.build.lib.rules.test.InstrumentedFilesProvider;
+import com.google.devtools.build.lib.pkgcache.PackageManager.PackageManagerStatistics;
 import com.google.devtools.build.lib.skyframe.AspectValue;
 import com.google.devtools.build.lib.skyframe.AspectValue.AspectKey;
 import com.google.devtools.build.lib.skyframe.AspectValue.AspectValueKey;
@@ -96,10 +100,9 @@ import com.google.devtools.build.skyframe.WalkableGraph;
 import com.google.devtools.common.options.Converter;
 import com.google.devtools.common.options.Option;
 import com.google.devtools.common.options.OptionDocumentationCategory;
+import com.google.devtools.common.options.OptionEffectTag;
 import com.google.devtools.common.options.OptionsBase;
-import com.google.devtools.common.options.OptionsParser.OptionUsageRestrictions;
 import com.google.devtools.common.options.OptionsParsingException;
-import com.google.devtools.common.options.proto.OptionFilters.OptionEffectTag;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -239,8 +242,7 @@ public class BuildView {
     @Option(
       name = "version_window_for_dirty_node_gc",
       defaultValue = "0",
-      optionUsageRestrictions = OptionUsageRestrictions.UNDOCUMENTED,
-      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
       effectTags = {OptionEffectTag.UNKNOWN},
       help =
           "Nodes that have been dirty for more than this many versions will be deleted"
@@ -283,6 +285,10 @@ public class BuildView {
   /** The number of targets freshly evaluated in the last analysis run. */
   public int getTargetsVisited() {
     return skyframeBuildView.getEvaluatedTargetKeys().size();
+  }
+
+  public PackageManagerStatistics getAndClearPkgManagerStatistics() {
+    return skyframeExecutor.getPackageManager().getAndClearStatistics();
   }
 
   public BuildView(BlazeDirectories directories,
@@ -330,8 +336,9 @@ public class BuildView {
    * Return value for {@link BuildView#update} and {@code BuildTool.prepareToBuild}.
    */
   public static final class AnalysisResult {
-    private final ImmutableList<ConfiguredTarget> targetsToBuild;
+    private final ImmutableSet<ConfiguredTarget> targetsToBuild;
     @Nullable private final ImmutableList<ConfiguredTarget> targetsToTest;
+    private final ImmutableSet<ConfiguredTarget> targetsToSkip;
     @Nullable private final String error;
     private final ActionGraph actionGraph;
     private final ImmutableSet<Artifact> artifactsToBuild;
@@ -346,6 +353,7 @@ public class BuildView {
         Collection<ConfiguredTarget> targetsToBuild,
         Collection<AspectValue> aspects,
         Collection<ConfiguredTarget> targetsToTest,
+        Collection<ConfiguredTarget> targetsToSkip,
         @Nullable String error,
         ActionGraph actionGraph,
         Collection<Artifact> artifactsToBuild,
@@ -354,9 +362,10 @@ public class BuildView {
         TopLevelArtifactContext topLevelContext,
         ImmutableMap<PackageIdentifier, Path> packageRoots,
         String workspaceName) {
-      this.targetsToBuild = ImmutableList.copyOf(targetsToBuild);
+      this.targetsToBuild = ImmutableSet.copyOf(targetsToBuild);
       this.aspects = ImmutableList.copyOf(aspects);
       this.targetsToTest = targetsToTest == null ? null : ImmutableList.copyOf(targetsToTest);
+      this.targetsToSkip = ImmutableSet.copyOf(targetsToSkip);
       this.error = error;
       this.actionGraph = actionGraph;
       this.artifactsToBuild = ImmutableSet.copyOf(artifactsToBuild);
@@ -370,7 +379,7 @@ public class BuildView {
     /**
      * Returns configured targets to build.
      */
-    public Collection<ConfiguredTarget> getTargetsToBuild() {
+    public ImmutableSet<ConfiguredTarget> getTargetsToBuild() {
       return targetsToBuild;
     }
 
@@ -399,6 +408,16 @@ public class BuildView {
     @Nullable
     public Collection<ConfiguredTarget> getTargetsToTest() {
       return targetsToTest;
+    }
+
+    /**
+     * Returns the configured targets that should not be executed because they're not
+     * platform-compatible with the current build.
+     *
+     * <p>For example: tests that aren't intended for the designated CPU.
+     */
+    public ImmutableSet<ConfiguredTarget> getTargetsToSkip() {
+      return targetsToSkip;
     }
 
     public ImmutableSet<Artifact> getAdditionalArtifactsToBuild() {
@@ -488,8 +507,8 @@ public class BuildView {
     for (TargetAndConfiguration pair : topLevelTargetsWithConfigs) {
       byLabel.put(pair.getLabel(), pair.getConfiguration());
     }
-    for (Label label : byLabel.keySet()) {
-      eventBus.post(new TargetConfiguredEvent(label, byLabel.get(label)));
+    for (Target target : targets) {
+      eventBus.post(new TargetConfiguredEvent(target, byLabel.get(target.getLabel())));
     }
 
     List<ConfiguredTargetKey> topLevelCtKeys = Lists.transform(topLevelTargetsWithConfigs,
@@ -586,13 +605,20 @@ public class BuildView {
       LOG.info(msg);
     }
 
+    Set<ConfiguredTarget> targetsToSkip =
+        TopLevelConstraintSemantics.checkTargetEnvironmentRestrictions(
+            skyframeAnalysisResult.getConfiguredTargets(),
+            skyframeExecutor.getPackageManager(),
+            eventHandler);
+
     AnalysisResult result =
         createResult(
             eventHandler,
             loadingResult,
             topLevelOptions,
             viewOptions,
-            skyframeAnalysisResult);
+            skyframeAnalysisResult,
+            targetsToSkip);
     LOG.info("Finished analysis");
     return result;
   }
@@ -602,19 +628,19 @@ public class BuildView {
       LoadingResult loadingResult,
       TopLevelArtifactContext topLevelOptions,
       BuildView.Options viewOptions,
-      SkyframeAnalysisResult skyframeAnalysisResult)
+      SkyframeAnalysisResult skyframeAnalysisResult,
+      Set<ConfiguredTarget> targetsToSkip)
       throws InterruptedException {
     Collection<Target> testsToRun = loadingResult.getTestsToRun();
-    Collection<ConfiguredTarget> configuredTargets = skyframeAnalysisResult.getConfiguredTargets();
+    Set<ConfiguredTarget> configuredTargets =
+        Sets.newLinkedHashSet(skyframeAnalysisResult.getConfiguredTargets());
     Collection<AspectValue> aspects = skyframeAnalysisResult.getAspects();
 
-    Collection<ConfiguredTarget> allTargetsToTest = null;
+    Set<ConfiguredTarget> allTargetsToTest = null;
     if (testsToRun != null) {
       // Determine the subset of configured targets that are meant to be run as tests.
-      // Do not remove <ConfiguredTarget>: workaround for Java 7 type inference.
-      allTargetsToTest =
-          Lists.<ConfiguredTarget>newArrayList(
-              filterTestsByTargets(configuredTargets, Sets.newHashSet(testsToRun)));
+      allTargetsToTest = Sets.newLinkedHashSet(
+          filterTestsByTargets(configuredTargets, Sets.newHashSet(testsToRun)));
     }
 
     Set<Artifact> artifactsToBuild = new HashSet<>();
@@ -679,6 +705,7 @@ public class BuildView {
         configuredTargets,
         aspects,
         allTargetsToTest,
+        targetsToSkip,
         error,
         actionGraph,
         artifactsToBuild,
@@ -845,20 +872,10 @@ public class BuildView {
     LinkedHashSet<TargetAndConfiguration> nodes = new LinkedHashSet<>(targets.size());
     for (BuildConfiguration config : configurations.getTargetConfigurations()) {
       for (Target target : targets) {
-        nodes.add(new TargetAndConfiguration(target,
-            config.useDynamicConfigurations()
-                // Dynamic configurations apply top-level transitions through a different code path:
-                // BuildConfiguration#topLevelConfigurationHook. That path has the advantages of a)
-                // not requiring a global transitions table and b) making its choices outside core
-                // Bazel code.
-                ? (target.isConfigurable() ? config : null)
-                : BuildConfigurationCollection.configureTopLevelTarget(config, target)));
+        nodes.add(new TargetAndConfiguration(target, target.isConfigurable() ? config : null));
       }
     }
-    return ImmutableList.copyOf(
-        configurations.useDynamicConfigurations()
-            ? getDynamicConfigurations(nodes, eventHandler)
-            : nodes);
+    return ImmutableList.copyOf(getDynamicConfigurations(nodes, eventHandler));
   }
 
   /**
@@ -893,7 +910,9 @@ public class BuildView {
       if (targetAndConfig.getConfiguration() != null) {
         asDeps.put(targetAndConfig.getConfiguration(),
             Dependency.withTransitionAndAspects(
-                targetAndConfig.getLabel(), getTopLevelTransition(targetAndConfig),
+                targetAndConfig.getLabel(),
+                getTopLevelTransition(targetAndConfig,
+                    ruleClassProvider.getDynamicTransitionMapper()),
                 // TODO(bazel-team): support top-level aspects
                 AspectCollection.EMPTY));
       }
@@ -934,11 +953,10 @@ public class BuildView {
    * Returns the transition to apply to the top-level configuration before applying it to this
    * target. This enables support for rule-triggered top-level configuration hooks.
    */
-  private static Attribute.Transition getTopLevelTransition(
-      TargetAndConfiguration targetAndConfig) {
+  private static Attribute.Transition getTopLevelTransition(TargetAndConfiguration targetAndConfig,
+      DynamicTransitionMapper dynamicTransitionMapper) {
     Target target = targetAndConfig.getTarget();
     BuildConfiguration fromConfig = targetAndConfig.getConfiguration();
-    Preconditions.checkArgument(fromConfig.useDynamicConfigurations());
 
     // Top-level transitions (chosen by configuration fragments):
     Transition topLevelTransition = fromConfig.topLevelConfigurationHook(target);
@@ -956,7 +974,11 @@ public class BuildView {
     if (transitionFactory == null) {
       return topLevelTransition;
     }
-    Attribute.Transition ruleClassTransition = transitionFactory.buildTransitionFor(associatedRule);
+    // dynamicTransitionMapper is only needed because of Attribute.ConfigurationTransition.DATA:
+    // this is C++-specific but non-C++ rules declare it. So they can't directly provide the
+    // C++-specific patch transition that implements it.
+    PatchTransition ruleClassTransition = (PatchTransition)
+        dynamicTransitionMapper.map(transitionFactory.buildTransitionFor(associatedRule));
     if (ruleClassTransition == null) {
       return topLevelTransition;
     } else if (topLevelTransition == ConfigurationTransition.NONE) {
@@ -1039,6 +1061,10 @@ public class BuildView {
     }
 
     class SilentDependencyResolver extends DependencyResolver {
+      private SilentDependencyResolver() {
+        super(ruleClassProvider.getDynamicTransitionMapper());
+      }
+
       @Override
       protected void invalidVisibilityReferenceHook(TargetAndConfiguration node, Label label) {
         throw new RuntimeException("bad visibility on " + label + " during testing unexpected");
@@ -1160,7 +1186,12 @@ public class BuildView {
     if (factory == null) {
       return ConfigurationTransition.NONE;
     }
-    Transition transition = factory.buildTransitionFor(rule);
+
+    // dynamicTransitionMapper is only needed because of Attribute.ConfigurationTransition.DATA:
+    // this is C++-specific but non-C++ rules declare it. So they can't directly provide the
+    // C++-specific patch transition that implements it.
+    PatchTransition transition = (PatchTransition)
+        ruleClassProvider.getDynamicTransitionMapper().map(factory.buildTransitionFor(rule));
     return (transition == null) ? ConfigurationTransition.NONE : transition;
   }
 

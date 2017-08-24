@@ -39,8 +39,10 @@ public class SyntaxTreeVisitor {
     visit(node.getValue());
   }
 
-  public void visit(@SuppressWarnings("unused") Parameter<?, ?> node) {
-    // leaf node (we need the function for overrides)
+  public void visit(Parameter<Expression, Expression> node) {
+    if (node.getDefaultValue() != null) {
+      visit(node.getDefaultValue());
+    }
   }
 
   public void visit(BuildFileAST node) {
@@ -54,9 +56,6 @@ public class SyntaxTreeVisitor {
   }
 
   public void visit(FuncallExpression node) {
-    if (node.getObject() != null) {
-      visit(node.getObject());
-    }
     visit(node.getFunction());
     visitAll(node.getArguments());
   }
@@ -64,20 +63,19 @@ public class SyntaxTreeVisitor {
   public void visit(@SuppressWarnings("unused") Identifier node) {}
 
   public void visit(AbstractComprehension node) {
-    visitAll(node.getOutputExpressions());
-
     for (ListComprehension.Clause clause : node.getClauses()) {
       if (clause.getLValue() != null) {
         visit(clause.getLValue());
       }
       visit(clause.getExpression());
     }
+    visitAll(node.getOutputExpressions());
   }
 
   public void visit(ForStatement node) {
-    visit(node.getVariable().getExpression());
+    visit(node.getVariable());
     visit(node.getCollection());
-    visitAll(node.block());
+    visitAll(node.getBlock());
   }
 
   public void visit(LoadStatement node) {
@@ -117,17 +115,24 @@ public class SyntaxTreeVisitor {
 
   public void visit(ConditionalStatements node) {
     visit(node.getCondition());
-    visitAll(node.getStmts());
+    visitAll(node.getStatements());
   }
 
   public void visit(FunctionDefStatement node) {
-    visit(node.getIdent());
-    visitAll(node.getParameters());
+    visit(node.getIdentifier());
+    // Do not use visitAll for the parameters, because we would lose the type information.
+    // Inside the AST, we know that Parameters are using Expressions.
+    for (Parameter<Expression, Expression> param : node.getParameters()) {
+      visit(param);
+    }
     visitAll(node.getStatements());
   }
 
   public void visit(ReturnStatement node) {
     visit(node.getReturnExpression());
+  }
+
+  public void visit(FlowStatement node) {
   }
 
   public void visit(DictionaryLiteral node) {
@@ -144,7 +149,7 @@ public class SyntaxTreeVisitor {
   }
 
   public void visit(DotExpression node) {
-    visit(node.getObj());
+    visit(node.getObject());
     visit(node.getField());
   }
 

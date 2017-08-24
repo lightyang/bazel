@@ -38,7 +38,7 @@ public class ResourceJarActionBuilder {
   private Artifact outputJar;
   private Map<PathFragment, Artifact> resources = ImmutableMap.of();
   private NestedSet<Artifact> resourceJars = NestedSetBuilder.emptySet(Order.STABLE_ORDER);
-  private List<Artifact> classpathResources = ImmutableList.of();
+  private ImmutableList<Artifact> classpathResources = ImmutableList.of();
   private List<Artifact> messages = ImmutableList.of();
   private JavaToolchainProvider javaToolchain;
   private NestedSet<Artifact> javabase;
@@ -92,7 +92,7 @@ public class ResourceJarActionBuilder {
     if (singleJar.getFilename().endsWith(".jar")) {
       builder
           .setJarExecutable(
-              ruleContext.getHostConfiguration().getFragment(Jvm.class).getJavaExecutable(),
+              JavaCommon.getHostJavaExecutable(ruleContext),
               singleJar,
               javaToolchain.getJvmOptions())
           .addTransitiveInputs(javabase);
@@ -154,9 +154,9 @@ public class ResourceJarActionBuilder {
       PathFragment resourcePath, Artifact artifact, CustomCommandLine.Builder builder) {
     PathFragment execPath = artifact.getExecPath();
     if (execPath.equals(resourcePath)) {
-      builder.addPaths("%s", resourcePath);
+      builder.addFormatted("%s", resourcePath);
     } else {
-      builder.addPaths("%s:%s", execPath, resourcePath);
+      builder.addFormatted("%s:%s", execPath, resourcePath);
     }
   }
 }

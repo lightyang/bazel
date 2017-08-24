@@ -78,6 +78,15 @@ sh_test(
 )
 
 sh_test(
+    name = "cpp_darwin_integration_test",
+    size = "large",
+    srcs = ["cpp_darwin_integration_test.sh"],
+    data = [
+        ":test-deps",
+    ],
+)
+
+sh_test(
     name = "bazel_tools_test",
     size = "large",
     srcs = ["bazel_tools_test.sh"],
@@ -106,6 +115,20 @@ sh_test(
     name = "persistent_test_runner_test",
     size = "large",
     srcs = ["persistent_test_runner_test.sh"],
+    data = [":test-deps"],
+)
+
+sh_test(
+    name = "bazel_build_event_stream_test",
+    size = "medium",
+    srcs = ["bazel_build_event_stream_test.sh"],
+    data = [":test-deps"],
+)
+
+sh_test(
+    name = "bazel_experimental_ui_test",
+    size = "medium",
+    srcs = ["bazel_experimental_ui_test.sh"],
     data = [":test-deps"],
 )
 
@@ -298,16 +321,6 @@ sh_test(
 )
 
 sh_test(
-    name = "generate_workspace_test",
-    size = "large",
-    srcs = ["generate_workspace_test.sh"],
-    data = [
-        ":test-deps",
-        "//src/tools/generate_workspace",
-    ],
-)
-
-sh_test(
     name = "workspace_test",
     size = "large",
     srcs = ["workspace_test.sh"],
@@ -439,6 +452,18 @@ sh_test(
 )
 
 sh_test(
+    name = "bazel_determinism_test",
+    timeout = "eternal",
+    srcs = ["bazel_determinism_test.sh"],
+    args = ["$(location //:bazel-distfile)"],
+    data = [
+        ":test-deps",
+        "//:bazel-distfile",
+    ],
+    tags = ["jdk8"],
+)
+
+sh_test(
     name = "rule_test_test",
     size = "medium",
     srcs = ["rule_test_test.sh"],
@@ -466,6 +491,23 @@ sh_test(
     srcs = ["java_launcher_test.sh"],
     args = ["$(JAVABASE)"],
     data = [":test-deps"],
+)
+
+genquery(
+    name = "srcs_list",
+    expression = "kind(\"source file\", deps(//:srcs))",
+    scope = ["//:srcs"],
+)
+
+sh_test(
+    name = "srcs_test",
+    size = "small",
+    srcs = ["srcs_test.sh"],
+    data = [
+        ":srcs_list",
+        "@local_bazel_source_list//:sources",
+    ],
+    tags = ["no_windows"],
 )
 
 test_suite(

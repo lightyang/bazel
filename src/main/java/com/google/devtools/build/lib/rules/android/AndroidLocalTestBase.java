@@ -15,7 +15,6 @@ package com.google.devtools.build.lib.rules.android;
 
 import static com.google.devtools.build.lib.packages.BuildType.LABEL_LIST;
 import static com.google.devtools.build.lib.rules.java.DeployArchiveBuilder.Compression.COMPRESSED;
-import static com.google.devtools.build.lib.vfs.FileSystemUtils.replaceExtension;
 import static java.util.stream.Collectors.toCollection;
 
 import com.google.common.collect.ImmutableList;
@@ -25,8 +24,10 @@ import com.google.common.collect.Streams;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.FileProvider;
+import com.google.devtools.build.lib.analysis.OutputGroupProvider;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetBuilder;
+import com.google.devtools.build.lib.analysis.RuleConfiguredTargetFactory;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.Runfiles;
 import com.google.devtools.build.lib.analysis.RunfilesProvider;
@@ -35,7 +36,6 @@ import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
-import com.google.devtools.build.lib.rules.RuleConfiguredTargetFactory;
 import com.google.devtools.build.lib.rules.android.AndroidLibraryAarProvider.Aar;
 import com.google.devtools.build.lib.rules.java.ClasspathConfiguredFragment;
 import com.google.devtools.build.lib.rules.java.DeployArchiveBuilder;
@@ -55,6 +55,7 @@ import com.google.devtools.build.lib.rules.java.JavaSkylarkApiProvider;
 import com.google.devtools.build.lib.rules.java.JavaSourceInfoProvider;
 import com.google.devtools.build.lib.rules.java.JavaSourceJarsProvider;
 import com.google.devtools.build.lib.rules.java.JavaTargetAttributes;
+import com.google.devtools.build.lib.rules.java.JavaToolchainProvider;
 import com.google.devtools.build.lib.rules.java.OneVersionCheckActionBuilder;
 import com.google.devtools.build.lib.rules.java.SingleJarActionBuilder;
 import com.google.devtools.build.lib.rules.java.proto.GeneratedExtensionRegistryProvider;
@@ -191,26 +192,21 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
     Artifact deployJar =
         ruleContext.getImplicitOutputArtifact(JavaSemantics.JAVA_BINARY_DEPLOY_JAR);
 
+    Artifact oneVersionOutputArtifact = null;
     OneVersionEnforcementLevel oneVersionEnforcementLevel =
         ruleContext.getFragment(JavaConfiguration.class).oneVersionEnforcementLevel();
     if (oneVersionEnforcementLevel != OneVersionEnforcementLevel.OFF) {
-      Artifact oneVersionOutput =
-          ruleContext
-              .getAnalysisEnvironment()
-              .getDerivedArtifact(
-                  replaceExtension(classJar.getRootRelativePath(), "-one-version.txt"),
-                  classJar.getRoot());
-      filesToBuildBuilder.add(oneVersionOutput);
-
-      NestedSet<Artifact> transitiveDependencies =
-          NestedSetBuilder.fromNestedSet(helper.getAttributes().getRuntimeClassPath())
-              .add(classJar)
-              .build();
-      OneVersionCheckActionBuilder.build(
-          ruleContext,
-          transitiveDependencies,
-          oneVersionOutput,
-          oneVersionEnforcementLevel);
+      oneVersionOutputArtifact =
+          OneVersionCheckActionBuilder.newBuilder()
+              .withEnforcementLevel(oneVersionEnforcementLevel)
+              .outputArtifact(
+                  ruleContext.getImplicitOutputArtifact(JavaSemantics.JAVA_ONE_VERSION_ARTIFACT))
+              .useToolchain(JavaToolchainProvider.fromRuleContext(ruleContext))
+              .checkJars(
+                  NestedSetBuilder.fromNestedSet(helper.getAttributes().getRuntimeClassPath())
+                      .add(classJar)
+                      .build())
+              .build(ruleContext);
     }
 
     NestedSet<Artifact> filesToBuild = filesToBuildBuilder.build();
@@ -244,11 +240,11 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
 
     CustomCommandLine.Builder cmdLineArgs = CustomCommandLine.builder();
     if (!transitiveAars.isEmpty()) {
-      cmdLineArgs.addJoinValues(
+      cmdLineArgs.addJoined(
           "--android_libraries", ",", transitiveAars, AndroidLocalTestBase::aarCmdLineArg);
     }
     if (!strictAars.isEmpty()) {
-      cmdLineArgs.addJoinValues(
+      cmdLineArgs.addJoined(
           "--strict_libraries", ",", strictAars, AndroidLocalTestBase::aarCmdLineArg);
     }
     RunfilesSupport runfilesSupport =
@@ -289,8 +285,6 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
           generatedExtensionRegistryProvider);
     }
 
-    addExtraProviders(builder, javaCommon, classJar, srcJar, genClassJar, genSourceJar);
-
     JavaRuleOutputJarsProvider ruleOutputJarsProvider = javaRuleOutputJarsProviderBuilder.build();
 
     javaCommon.addTransitiveInfoProviders(builder, filesToBuild, classJar);
@@ -299,6 +293,10 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
     // No need to use the flag map here - just confirming that dynamic configurations are in use.
     // TODO(mstaib): remove when static configurations are removed.
     AndroidFeatureFlagSetProvider.getAndValidateFlagMapFromRuleContext(ruleContext);
+
+    if (oneVersionOutputArtifact != null) {
+      builder.addOutputGroup(OutputGroupProvider.HIDDEN_TOP_LEVEL, oneVersionOutputArtifact);
+    }
 
     return builder
         .setFilesToBuild(filesToBuild)
@@ -332,14 +330,6 @@ public abstract class AndroidLocalTestBase implements RuleConfiguredTargetFactor
   }
 
   protected abstract JavaSemantics createJavaSemantics();
-
-  protected abstract void addExtraProviders(
-      RuleConfiguredTargetBuilder builder,
-      JavaCommon javaCommon,
-      Artifact classJar,
-      Artifact srcJar,
-      Artifact genClassJar,
-      Artifact genSourceJar);
 
   protected abstract ImmutableList<String> getJvmFlags(RuleContext ruleContext, String testClass);
 

@@ -174,8 +174,7 @@ public final class Lexer {
 
     @Override
     public PathFragment getPath() {
-      PathFragment path = lineNumberTable.getPath(getStartOffset());
-      return path;
+      return lineNumberTable.getPath(getStartOffset());
     }
 
     @Override
@@ -252,7 +251,8 @@ public final class Lexer {
       } else if (c == '\r') {
         pos++;
       } else if (c == '\t') {
-        indentLen += 8 - indentLen % 8;
+        error("Tabulations are not allowed for identation. Use spaces instead.");
+        indentLen++;
         pos++;
       } else if (c == '\n') { // entirely blank line: discard
         indentLen = 0;
@@ -527,6 +527,7 @@ public final class Lexer {
     keywordMap.put("in", TokenKind.IN);
     keywordMap.put("is", TokenKind.IS);
     keywordMap.put("lambda", TokenKind.LAMBDA);
+    keywordMap.put("load", TokenKind.LOAD);
     keywordMap.put("nonlocal", TokenKind.NONLOCAL);
     keywordMap.put("not", TokenKind.NOT);
     keywordMap.put("or", TokenKind.OR);
@@ -833,9 +834,9 @@ public final class Lexer {
           break;
         }
 
-        if (Character.isDigit(c)) {
+        if (c >= '0' && c <= '9') {
           addToken(integer());
-        } else if (Character.isJavaIdentifierStart(c) && c != '$') {
+        } else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_') {
           addToken(identifierOrKeyword());
         } else {
           error("invalid character: '" + c + "'");

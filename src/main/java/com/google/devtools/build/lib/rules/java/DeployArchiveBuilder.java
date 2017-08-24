@@ -176,13 +176,12 @@ public class DeployArchiveBuilder {
     }
     args.add("--normalize");
     if (javaMainClass != null) {
-      args.add("--main_class");
-      args.add(javaMainClass);
+      args.add("--main_class", javaMainClass);
     }
 
     if (!deployManifestLines.isEmpty()) {
       args.add("--deploy_manifest_lines");
-      args.add(deployManifestLines);
+      args.addAll(deployManifestLines);
     }
 
     if (buildInfoFiles != null) {
@@ -194,12 +193,13 @@ public class DeployArchiveBuilder {
       args.add("--exclude_build_data");
     }
     if (launcher != null) {
-      args.add("--java_launcher");
-      args.add(launcher.getExecPathString());
+      args.addExecPath("--java_launcher", launcher);
     }
 
     args.addExecPaths("--classpath_resources", classpathResources);
-    args.addExecPaths("--sources", runtimeClasspath);
+    if (runtimeClasspath != null) {
+      args.addExecPaths("--sources", ImmutableList.copyOf(runtimeClasspath));
+    }
     return args;
   }
 
@@ -277,13 +277,10 @@ public class DeployArchiveBuilder {
               .addTransitiveInputs(JavaHelper.getHostJavabaseInputs(ruleContext))
               .addOutput(outputJar)
               .setResources(resourceSet)
-              .setJarExecutable(
-                  ruleContext.getHostConfiguration().getFragment(Jvm.class).getJavaExecutable(),
-                  singlejar,
-                  jvmArgs)
+              .setJarExecutable(JavaCommon.getHostJavaExecutable(ruleContext), singlejar, jvmArgs)
               .setCommandLine(commandLine)
               .alwaysUseParameterFile(ParameterFileType.SHELL_QUOTED)
-              .setProgressMessage("Building deploy jar " + outputJar.prettyPrint())
+              .setProgressMessage("Building deploy jar %s", outputJar.prettyPrint())
               .setMnemonic("JavaDeployJar")
               .setExecutionInfo(ExecutionRequirements.WORKER_MODE_ENABLED)
               .build(ruleContext));
@@ -297,7 +294,7 @@ public class DeployArchiveBuilder {
               .setExecutable(singlejar)
               .setCommandLine(commandLine)
               .alwaysUseParameterFile(ParameterFileType.SHELL_QUOTED)
-              .setProgressMessage("Building deploy jar " + outputJar.prettyPrint())
+              .setProgressMessage("Building deploy jar %s", outputJar.prettyPrint())
               .setMnemonic("JavaDeployJar")
               .build(ruleContext));
     }

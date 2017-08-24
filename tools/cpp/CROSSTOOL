@@ -623,7 +623,6 @@ toolchain {
   compiler_flag: "-m64"
   compiler_flag: "/D__inline__=__inline"
   # TODO(pcloudy): Review those flags below, they should be defined by cl.exe
-  compiler_flag: "/DOS_WINDOWS=OS_WINDOWS"
   compiler_flag: "/DCOMPILER_MSVC"
 
   # Don't pollute with GDI macros in windows.h.
@@ -680,12 +679,15 @@ toolchain {
       action: 'c++-header-preprocessing'
       action: 'c++-module-compile'
       flag_group {
+        iterate_over: 'quote_include_paths'
         flag: '/I%{quote_include_paths}'
       }
       flag_group {
+        iterate_over: 'include_paths'
         flag: '/I%{include_paths}'
       }
       flag_group {
+        iterate_over: 'system_include_paths'
         flag: '/I%{system_include_paths}'
       }
     }
@@ -750,6 +752,7 @@ toolchain {
         flag: '/Fi%{output_preprocess_file}'
       }
     }
+    implies: 'copts'
   }
 
   action_config {
@@ -781,6 +784,26 @@ toolchain {
       flag_group {
         flag: '/P'
         flag: '/Fi%{output_preprocess_file}'
+      }
+    }
+    implies: 'copts'
+  }
+
+  feature {
+    name: 'copts'
+    flag_set {
+      expand_if_all_available: 'copts'
+      action: 'assemble'
+      action: 'preprocess-assemble'
+      action: 'c-compile'
+      action: 'c++-compile'
+      action: 'c++-header-parsing'
+      action: 'c++-header-preprocessing'
+      action: 'c++-module-compile'
+      action: 'c++-module-codegen'
+      flag_group {
+        iterate_over: 'copts'
+        flag: '%{copts}'
       }
     }
   }

@@ -37,7 +37,6 @@ import static com.google.devtools.build.lib.syntax.Type.BOOLEAN;
 import static com.google.devtools.build.lib.syntax.Type.STRING;
 import static com.google.devtools.build.lib.syntax.Type.STRING_LIST;
 
-import com.google.common.base.Preconditions;
 import com.google.common.base.Predicates;
 import com.google.devtools.build.lib.analysis.BaseRuleClasses;
 import com.google.devtools.build.lib.analysis.RuleDefinition;
@@ -71,29 +70,6 @@ public class BazelCppRuleClasses {
 
   static final SafeImplicitOutputsFunction CC_BINARY_IMPLICIT_OUTPUTS =
       fromFunctions(CppRuleClasses.CC_BINARY_STRIPPED, CppRuleClasses.CC_BINARY_DEBUG_PACKAGE);
-
-  static final RuleClass.Configurator<BuildConfiguration, Rule> LIPO_ON_DEMAND =
-      new RuleClass.Configurator<BuildConfiguration, Rule>() {
-        @Override
-        public BuildConfiguration apply(Rule rule, BuildConfiguration configuration) {
-          Preconditions.checkState(!configuration.useDynamicConfigurations(),
-              "Dynamic configurations don't use rule class configurators for LIPO");
-          BuildConfiguration toplevelConfig =
-              configuration.getConfiguration(LipoTransition.TARGET_CONFIG_FOR_LIPO);
-          CppConfiguration cppConfig = configuration.getFragment(CppConfiguration.class);
-          if (toplevelConfig != null
-              && cppConfig.isDataConfigurationForLipoOptimization()
-              && rule.getLabel().equals(cppConfig.getLipoContextForBuild())) {
-            return toplevelConfig;
-          }
-          return configuration;
-        }
-
-        @Override
-        public String getCategory() {
-          return "lipo";
-        }
-      };
 
   public static final LateBoundLabel<BuildConfiguration> STL =
       new LateBoundLabel<BuildConfiguration>() {
@@ -161,7 +137,7 @@ public class BazelCppRuleClasses {
       return builder
           .add(
               attr(CcToolchain.CC_TOOLCHAIN_DEFAULT_ATTRIBUTE_NAME, LABEL)
-                  .value(CppRuleClasses.CC_TOOLCHAIN))
+                  .value(CppRuleClasses.ccToolchainAttribute(env)))
           .setPreferredDependencyPredicate(Predicates.<String>or(CPP_SOURCE, C_SOURCE, CPP_HEADER))
           .build();
     }
@@ -225,11 +201,11 @@ public class BazelCppRuleClasses {
           Subject to <a href="${link make-variables}">"Make" variable</a> substitution and
           <a href="${link common-definitions#sh-tokenization}">Bourne shell tokenization</a>.
           Each string, which must consist of a single Bourne shell token,
-          is prepended with <code>-D</code> and added to
+          is prepended with <code>-D</code> (or <code>/D</code> on Windows) and added to
           <code>COPTS</code>.
           Unlike <a href="#cc_binary.copts"><code>copts</code></a>, these flags are added for the
           target and every rule that depends on it!  Be very careful, since this may have
-          far-reaching effects.  When in doubt, add "-D" flags to
+          far-reaching effects.  When in doubt, add "-D" (or <code>/D</code> on Windows) flags to
           <a href="#cc_binary.copts"><code>copts</code></a> instead.
           <!-- #END_BLAZE_RULE.ATTRIBUTE -->*/
           .add(attr("defines", STRING_LIST))
@@ -309,7 +285,7 @@ public class BazelCppRuleClasses {
           </p>
           <ul>
             <li>C and C++ source files: <code>.c</code>, <code>.cc</code>, <code>.cpp</code>,
-              <code>.cxx</code>, <code>.c++</code, <code>.C</code></li>
+              <code>.cxx</code>, <code>.c++</code>, <code>.C</code></li>
             <li>C and C++ header files: <code>.h</code>, <code>.hh</code>, <code>.hpp</code>,
               <code>.hxx</code>, <code>.inc</code></li>
             <li>Assembler with C preprocessor: <code>.S</code></li>
@@ -339,6 +315,9 @@ public class BazelCppRuleClasses {
                   .allowedRuleClasses(DEPS_ALLOWED_RULES)
                   .allowedFileTypes(CppFileTypes.LINKER_SCRIPT)
                   .skipAnalysisTimeFileTypeCheck())
+          .add(attr("reexport_deps", LABEL_LIST)
+              .allowedRuleClasses(DEPS_ALLOWED_RULES)
+              .allowedFileTypes())
           /*<!-- #BLAZE_RULE($cc_rule).ATTRIBUTE(linkopts) -->
           Add these flags to the C++ linker command.
           Subject to <a href="make-variables.html">"Make" variable</a> substitution,

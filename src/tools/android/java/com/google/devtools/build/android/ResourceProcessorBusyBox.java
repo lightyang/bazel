@@ -17,9 +17,9 @@ package com.google.devtools.build.android;
 import com.google.devtools.common.options.EnumConverter;
 import com.google.devtools.common.options.Option;
 import com.google.devtools.common.options.OptionDocumentationCategory;
+import com.google.devtools.common.options.OptionEffectTag;
 import com.google.devtools.common.options.OptionsBase;
 import com.google.devtools.common.options.OptionsParser;
-import com.google.devtools.common.options.proto.OptionFilters.OptionEffectTag;
 import java.nio.file.FileSystems;
 
 /**
@@ -108,6 +108,18 @@ public class ResourceProcessorBusyBox {
       void call(String[] args) throws Exception {
         ManifestMergerAction.main(args);
       }
+    },
+    COMPILE_LIBRARY_RESOURCES() {
+      @Override
+      void call(String[] args) throws Exception {
+        CompileLibraryResourcesAction.main(args);
+      }
+    },
+    AAPT2_PACKAGE() {
+      @Override
+      void call(String[] args) throws Exception {
+        Aapt2ResourcePackagingAction.main(args);
+      }
     };
 
     abstract void call(String[] args) throws Exception;
@@ -133,7 +145,8 @@ public class ResourceProcessorBusyBox {
       help =
           "The processing tool to execute. "
               + "Valid tools: PACKAGE, VALIDATE, GENERATE_BINARY_R, GENERATE_LIBRARY_R, PARSE, "
-              + "MERGE, GENERATE_AAR, SHRINK, MERGE_MANIFEST."
+              + "MERGE, GENERATE_AAR, SHRINK, MERGE_MANIFEST, COMPILE_LIBRARY_RESOURCES, "
+              + "AAPT2_PACKAGE."
     )
     public Tool tool;
   }

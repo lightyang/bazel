@@ -19,6 +19,7 @@ import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
+import com.google.common.base.Throwables;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
@@ -29,6 +30,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Sets;
 import com.google.common.collect.Sets.SetView;
+import com.google.common.collect.Streams;
 import com.google.devtools.build.lib.analysis.config.InvalidConfigurationException;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
@@ -50,6 +52,7 @@ import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.Stack;
+import java.util.concurrent.ExecutionException;
 
 /**
  * Provides access to features supported by a specific toolchain.
@@ -82,10 +85,8 @@ public class CcToolchainFeatures implements Serializable {
     }
   }
 
-  /**
-   * Thrown when multiple features provide the same string symbol.
-   */
-  public static class CollidingProvidesException extends RuntimeException {
+  /** Thrown when multiple features provide the same string symbol. */
+  public static class CollidingProvidesException extends Exception {
     CollidingProvidesException(String message) {
       super(message);
     }
@@ -360,7 +361,6 @@ public class CcToolchainFeatures implements Serializable {
   @Immutable
   private static class FlagGroup implements Serializable, Expandable {
     private final ImmutableList<Expandable> expandables;
-    private final ImmutableSet<String> usedVariables;
     private String iterateOverVariable;
     private final ImmutableSet<String> expandIfAllAvailable;
     private final ImmutableSet<String> expandIfNoneAvailable;
@@ -368,15 +368,8 @@ public class CcToolchainFeatures implements Serializable {
     private final String expandIfFalse;
     private final VariableWithValue expandIfEqual;
 
-    /**
-     * TODO(b/32655571): Cleanup and get rid of usedVariables field once implicit iteration is not
-     * needed.
-     *
-     * @throws InvalidConfigurationException
-     */
     private FlagGroup(CToolchain.FlagGroup flagGroup) throws InvalidConfigurationException {
       ImmutableList.Builder<Expandable> expandables = ImmutableList.builder();
-      ImmutableSet.Builder<String> usedVariables = ImmutableSet.builder();
       Collection<String> flags = flagGroup.getFlagList();
       Collection<CToolchain.FlagGroup> groups = flagGroup.getFlagGroupList();
       if (!flags.isEmpty() && !groups.isEmpty()) {
@@ -388,18 +381,14 @@ public class CcToolchainFeatures implements Serializable {
       for (String flag : flags) {
         StringValueParser parser = new StringValueParser(flag);
         expandables.add(new Flag(parser.getChunks()));
-        usedVariables.addAll(parser.getUsedVariables());
       }
       for (CToolchain.FlagGroup group : groups) {
         FlagGroup subgroup = new FlagGroup(group);
         expandables.add(subgroup);
-        usedVariables.addAll(subgroup.getUsedVariables());
       }
       if (flagGroup.hasIterateOver()) {
         this.iterateOverVariable = flagGroup.getIterateOver();
-        usedVariables.add(this.iterateOverVariable);
       }
-      this.usedVariables = usedVariables.build();
       this.expandables = expandables.build();
       this.expandIfAllAvailable = ImmutableSet.copyOf(flagGroup.getExpandIfAllAvailableList());
       this.expandIfNoneAvailable = ImmutableSet.copyOf(flagGroup.getExpandIfNoneAvailableList());
@@ -418,10 +407,6 @@ public class CcToolchainFeatures implements Serializable {
     public void expand(Variables variables, final List<String> commandLine) {
       if (!canBeExpanded(variables)) {
         return;
-      }
-      if (iterateOverVariable == null) {
-        // TODO(b/32655571): Remove branch once implicit iteration is not needed anymore.
-        iterateOverVariable = variables.guessIteratedOverVariable(usedVariables);
       }
       if (iterateOverVariable != null) {
         for (VariableValue variableValue : variables.getSequenceVariable(iterateOverVariable)) {
@@ -467,10 +452,6 @@ public class CcToolchainFeatures implements Serializable {
         return false;
       }
       return true;
-    }
-
-    private Set<String> getUsedVariables() {
-      return usedVariables;
     }
 
     /**
@@ -845,6 +826,20 @@ public class CcToolchainFeatures implements Serializable {
     public static final Variables EMPTY = new Variables.Builder().build();
 
     /**
+     * Retrieves a {@link StringSequence} variable named {@code variableName} from {@code variables}
+     * and converts it into a list of plain strings.
+     *
+     * <p>Throws {@link ExpansionException} when the variable is not a {@link StringSequence}.
+     */
+    public static final ImmutableList<String> toStringList(
+        CcToolchainFeatures.Variables variables, String variableName) {
+      return Streams
+          .stream(variables.getSequenceVariable(variableName))
+          .map(variable -> variable.getStringValue(variableName))
+          .collect(ImmutableList.toImmutableList());
+    }
+
+    /**
      * Variables can be either String values or an arbitrarily deeply nested recursive sequences,
      * which we represent as a tree of {@code VariableValue} nodes. The nodes are {@code Sequence}
      * objects, while the leafs are {@code StringSequence} objects. We do not allow {@code
@@ -869,9 +864,6 @@ public class CcToolchainFeatures implements Serializable {
        * @param variableName name of the variable value at hand, for better exception message.
        */
       Iterable<? extends VariableValue> getSequenceValue(String variableName);
-
-      // TODO(b/32655571): Remove once implicit iteration is not needed
-      boolean isSequence();
 
       /**
        * Return value of the field, if the variable is of struct type or throw exception if it is
@@ -1084,11 +1076,6 @@ public class CcToolchainFeatures implements Serializable {
       }
 
       @Override
-      public boolean isSequence() {
-        return false;
-      }
-
-      @Override
       public VariableValue getFieldValue(String variableName, String field) {
         Preconditions.checkNotNull(field);
         if (NAME_FIELD_NAME.equals(field) && !type.equals(Type.OBJECT_FILE_GROUP)) {
@@ -1143,11 +1130,6 @@ public class CcToolchainFeatures implements Serializable {
       }
 
       @Override
-      public boolean isSequence() {
-        return true;
-      }
-
-      @Override
       public VariableValue getFieldValue(String variableName, String field) {
         throw new ExpansionException(
             String.format(
@@ -1177,7 +1159,7 @@ public class CcToolchainFeatures implements Serializable {
      * objects significantly reduces memory overhead.
      */
     @Immutable
-    private static final class StringSequence implements VariableValue {
+    static final class StringSequence implements VariableValue {
 
       private final Iterable<String> values;
 
@@ -1193,11 +1175,6 @@ public class CcToolchainFeatures implements Serializable {
           sequences.add(new StringValue(value));
         }
         return sequences.build();
-      }
-
-      @Override
-      public boolean isSequence() {
-        return true;
       }
 
       @Override
@@ -1237,11 +1214,6 @@ public class CcToolchainFeatures implements Serializable {
       @Override
       public Iterable<? extends VariableValue> getSequenceValue(String variableName) {
         return values;
-      }
-
-      @Override
-      public boolean isSequence() {
-        return true;
       }
 
       @Override
@@ -1309,11 +1281,6 @@ public class CcToolchainFeatures implements Serializable {
       }
 
       @Override
-      public boolean isSequence() {
-        return false;
-      }
-
-      @Override
       public boolean isTruthy() {
         return !value.isEmpty();
       }
@@ -1357,11 +1324,6 @@ public class CcToolchainFeatures implements Serializable {
       }
 
       @Override
-      public boolean isSequence() {
-        return false;
-      }
-
-      @Override
       public boolean isTruthy() {
         return !value.isEmpty();
       }
@@ -1402,11 +1364,6 @@ public class CcToolchainFeatures implements Serializable {
                 "Invalid toolchain configuration: Cannot expand variable '%s.%s': variable '%s' is "
                     + "integer, expected structure",
                 variableName, field, variableName));
-      }
-
-      @Override
-      public boolean isSequence() {
-        return false;
       }
 
       @Override
@@ -1685,27 +1642,6 @@ public class CcToolchainFeatures implements Serializable {
       return getVariable(variableName).getSequenceValue(variableName);
     }
 
-    private String guessIteratedOverVariable(ImmutableSet<String> usedVariables) {
-      String sequenceName = null;
-      for (String usedVariable : usedVariables) {
-        VariableValue variableValue = lookupVariable(usedVariable, false);
-        if (variableValue != null && variableValue.isSequence()) {
-          if (sequenceName != null) {
-            throw new ExpansionException(
-                "Invalid toolchain configuration: trying to expand two variable list in one "
-                    + "flag group: '"
-                    + sequenceName
-                    + "' and '"
-                    + usedVariable
-                    + "'");
-          } else {
-            sequenceName = usedVariable;
-          }
-        }
-      }
-      return sequenceName;
-    }
-
     /** Returns whether {@code variable} is set. */
     boolean isAvailable(String variable) {
       return lookupVariable(variable, false) != null;
@@ -1724,12 +1660,19 @@ public class CcToolchainFeatures implements Serializable {
     
     private final ImmutableMap<String, ActionConfig> actionConfigByActionName;
 
-    public FeatureConfiguration() {
+    /**
+     * {@link FeatureConfiguration} instance that doesn't produce any command lines. This is to be
+     * used when creation of the real {@link FeatureConfiguration} failed, the rule error was
+     * reported, but the analysis continues to collect more rule errors.
+     */
+    public static final FeatureConfiguration EMPTY = new FeatureConfiguration();
+
+    protected FeatureConfiguration() {
       this(
           FeatureSpecification.EMPTY,
-          ImmutableList.<Feature>of(),
-          ImmutableList.<ActionConfig>of(),
-          ImmutableMap.<String, ActionConfig>of());
+          ImmutableList.of(),
+          ImmutableList.of(),
+          ImmutableMap.of());
     }
 
     private FeatureConfiguration(
@@ -1774,16 +1717,16 @@ public class CcToolchainFeatures implements Serializable {
     /**
      * @return the command line for the given {@code action}.
      */
-    List<String> getCommandLine(String action, Variables variables) {
+    public List<String> getCommandLine(String action, Variables variables) {
       List<String> commandLine = new ArrayList<>();
-      for (Feature feature : enabledFeatures) {
-        feature.expandCommandLine(action, variables, enabledFeatureNames, commandLine);
-      }
-      
       if (actionIsConfigured(action)) {
         actionConfigByActionName
             .get(action)
             .expandCommandLine(variables, enabledFeatureNames, commandLine);
+      }
+
+      for (Feature feature : enabledFeatures) {
+        feature.expandCommandLine(action, variables, enabledFeatureNames, commandLine);
       }
 
       return commandLine;
@@ -2028,7 +1971,8 @@ public class CcToolchainFeatures implements Serializable {
         .build(
             new CacheLoader<FeatureSpecification, FeatureConfiguration>() {
               @Override
-              public FeatureConfiguration load(FeatureSpecification featureSpecification) {
+              public FeatureConfiguration load(FeatureSpecification featureSpecification)
+                  throws CollidingProvidesException {
                 return computeFeatureConfiguration(featureSpecification);
               }
             });
@@ -2044,8 +1988,15 @@ public class CcToolchainFeatures implements Serializable {
    * <p>Additional features will be enabled if the toolchain supports them and they are implied by
    * requested features.
    */
-  public FeatureConfiguration getFeatureConfiguration(FeatureSpecification featureSpecification) {
-    return configurationCache.getUnchecked(featureSpecification);
+  public FeatureConfiguration getFeatureConfiguration(FeatureSpecification featureSpecification)
+      throws CollidingProvidesException {
+    try {
+      return configurationCache.get(featureSpecification);
+    } catch (ExecutionException e) {
+      Throwables.throwIfInstanceOf(e.getCause(), CollidingProvidesException.class);
+      Throwables.throwIfUnchecked(e.getCause());
+      throw new IllegalStateException("Unexpected checked exception encountered", e);
+    }
   }
 
   /**
@@ -2058,8 +2009,8 @@ public class CcToolchainFeatures implements Serializable {
    * <p>Additional features will be enabled if the toolchain supports them and they are implied by
    * requested features.
    */
-  public FeatureConfiguration computeFeatureConfiguration(
-      FeatureSpecification featureSpecification) {
+  public FeatureConfiguration computeFeatureConfiguration(FeatureSpecification featureSpecification)
+      throws CollidingProvidesException {
     // Command line flags will be output in the order in which they are specified in the toolchain
     // configuration.
     return new FeatureSelection(featureSpecification).run();
@@ -2163,10 +2114,10 @@ public class CcToolchainFeatures implements Serializable {
     }
 
     /**
-     * @return a {@code FeatureConfiguration} that reflects the set of activated features and
-     * action configs.
+     * @return a {@code FeatureConfiguration} that reflects the set of activated features and action
+     *     configs.
      */
-    private FeatureConfiguration run() {
+    private FeatureConfiguration run() throws CollidingProvidesException {
       for (CrosstoolSelectable selectable : requestedSelectables) {
         enableAllImpliedBy(selectable);
       }

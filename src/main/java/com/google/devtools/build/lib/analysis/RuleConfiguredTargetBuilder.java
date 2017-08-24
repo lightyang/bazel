@@ -24,25 +24,25 @@ import com.google.devtools.build.lib.analysis.constraints.ConstraintSemantics;
 import com.google.devtools.build.lib.analysis.constraints.EnvironmentCollection;
 import com.google.devtools.build.lib.analysis.constraints.SupportedEnvironments;
 import com.google.devtools.build.lib.analysis.constraints.SupportedEnvironmentsProvider;
+import com.google.devtools.build.lib.analysis.test.ExecutionInfo;
+import com.google.devtools.build.lib.analysis.test.InstrumentedFilesProvider;
+import com.google.devtools.build.lib.analysis.test.TestActionBuilder;
+import com.google.devtools.build.lib.analysis.test.TestEnvironmentInfo;
+import com.google.devtools.build.lib.analysis.test.TestProvider;
+import com.google.devtools.build.lib.analysis.test.TestProvider.TestParams;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.events.Location;
-import com.google.devtools.build.lib.packages.ClassObjectConstructor;
-import com.google.devtools.build.lib.packages.SkylarkClassObject;
+import com.google.devtools.build.lib.packages.Info;
+import com.google.devtools.build.lib.packages.NativeProvider;
+import com.google.devtools.build.lib.packages.Provider;
 import com.google.devtools.build.lib.packages.Target;
 import com.google.devtools.build.lib.packages.TargetUtils;
-import com.google.devtools.build.lib.rules.test.ExecutionInfoProvider;
-import com.google.devtools.build.lib.rules.test.InstrumentedFilesProvider;
-import com.google.devtools.build.lib.rules.test.TestActionBuilder;
-import com.google.devtools.build.lib.rules.test.TestEnvironmentProvider;
-import com.google.devtools.build.lib.rules.test.TestProvider;
-import com.google.devtools.build.lib.rules.test.TestProvider.TestParams;
 import com.google.devtools.build.lib.syntax.EvalException;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.Preconditions;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.TreeMap;
@@ -52,17 +52,14 @@ import java.util.TreeMap;
  *
  * <p>This is used to tell Bazel which {@link TransitiveInfoProvider}s are produced by the analysis
  * of a configured target. For more information about analysis, see
- * {@link com.google.devtools.build.lib.rules.RuleConfiguredTargetFactory}.
+ * {@link com.google.devtools.build.lib.analysis.RuleConfiguredTargetFactory}.
  *
- * @see com.google.devtools.build.lib.rules.RuleConfiguredTargetFactory
+ * @see com.google.devtools.build.lib.analysis.RuleConfiguredTargetFactory
  */
 public final class RuleConfiguredTargetBuilder {
   private final RuleContext ruleContext;
   private final TransitiveInfoProviderMapBuilder providersBuilder =
       new TransitiveInfoProviderMapBuilder();
-  private final ImmutableMap.Builder<String, Object> skylarkProviders = ImmutableMap.builder();
-  private final ImmutableMap.Builder<ClassObjectConstructor.Key, SkylarkClassObject>
-      skylarkDeclaredProviders = ImmutableMap.builder();
   private final Map<String, NestedSetBuilder<Artifact>> outputGroupBuilders = new TreeMap<>();
 
   /** These are supported by all configured targets and need to be specially handled. */
@@ -131,34 +128,14 @@ public final class RuleConfiguredTargetBuilder {
       }
 
       OutputGroupProvider outputGroupProvider = new OutputGroupProvider(outputGroups.build());
-      addProvider(OutputGroupProvider.class, outputGroupProvider);
+      addNativeDeclaredProvider(outputGroupProvider);
     }
 
     TransitiveInfoProviderMap providers = providersBuilder.build();
-    addRegisteredProvidersToSkylarkProviders(providers);
 
-    return new RuleConfiguredTarget(
-        ruleContext,
-        providers,
-        skylarkProviders.build(), skylarkDeclaredProviders.build());
+    return new RuleConfiguredTarget(ruleContext, providers);
   }
 
-  /** Adds skylark providers from a skylark provider registry, and checks for collisions. */
-  private void addRegisteredProvidersToSkylarkProviders(TransitiveInfoProviderMap providers) {
-    Map<String, Object> nativeSkylarkProviders = new HashMap<>();
-    for (int i = 0; i < providers.getProviderCount(); ++i) {
-      Class<? extends TransitiveInfoProvider> providerClass = providers.getProviderClassAt(i);
-      if (ruleContext.getSkylarkProviderRegistry().containsValue(providerClass)) {
-        String skylarkName = ruleContext.getSkylarkProviderRegistry().inverse().get(providerClass);
-        nativeSkylarkProviders.put(skylarkName, providers.getProviderAt(i));
-      }
-    }
-    try {
-      skylarkProviders.putAll(nativeSkylarkProviders);
-    } catch (IllegalArgumentException e) {
-      ruleContext.ruleError("Collision caused by duplicate skylark providers: " + e.getMessage());
-    }
-  }
 
   /**
    * Like getFilesToBuild(), except that it also includes the runfiles middleman, if any. Middlemen
@@ -213,11 +190,9 @@ public final class RuleConfiguredTargetBuilder {
         new TestActionBuilder(ruleContext)
             .setInstrumentedFiles(providersBuilder.getProvider(InstrumentedFilesProvider.class));
 
-    TestEnvironmentProvider environmentProvider =
-        (TestEnvironmentProvider)
-            skylarkDeclaredProviders
-                .build()
-                .get(TestEnvironmentProvider.SKYLARK_CONSTRUCTOR.getKey());
+    TestEnvironmentInfo environmentProvider =
+        (TestEnvironmentInfo)
+            providersBuilder.getProvider(TestEnvironmentInfo.PROVIDER.getKey());
     if (environmentProvider != null) {
       testActionBuilder.addExtraEnv(environmentProvider.getEnvironment());
     }
@@ -226,10 +201,8 @@ public final class RuleConfiguredTargetBuilder {
         testActionBuilder
             .setFilesToRunProvider(filesToRunProvider)
             .setExecutionRequirements(
-                (ExecutionInfoProvider)
-                    skylarkDeclaredProviders
-                        .build()
-                        .get(ExecutionInfoProvider.SKYLARK_CONSTRUCTOR.getKey()))
+                (ExecutionInfo) providersBuilder
+                    .getProvider(ExecutionInfo.PROVIDER.getKey()))
             .setShardCount(explicitShardCount)
             .build();
     ImmutableList<String> testTags = ImmutableList.copyOf(ruleContext.getRule().getRuleTags());
@@ -277,6 +250,13 @@ public final class RuleConfiguredTargetBuilder {
     return this;
   }
 
+  private <T extends TransitiveInfoProvider> void maybeAddSkylarkLegacyProvider(Info value) {
+    if (value.getProvider() instanceof NativeProvider.WithLegacySkylarkName) {
+      addSkylarkTransitiveInfo(
+          ((NativeProvider.WithLegacySkylarkName) value.getProvider()).getSkylarkName(), value);
+    }
+  }
+
   /**
    * Add a Skylark transitive info. The provider value must be safe (i.e. a String, a Boolean,
    * an Integer, an Artifact, a Label, None, a Java TransitiveInfoProvider or something composed
@@ -285,23 +265,22 @@ public final class RuleConfiguredTargetBuilder {
    */
   public RuleConfiguredTargetBuilder addSkylarkTransitiveInfo(
       String name, Object value, Location loc) throws EvalException {
-    skylarkProviders.put(name, value);
+    providersBuilder.put(name, value);
     return this;
   }
 
   /**
-   * Adds a "declared provider" defined in Skylark to the rule.
-   * Use this method for declared providers defined in Skyark.
+   * Adds a "declared provider" defined in Skylark to the rule. Use this method for declared
+   * providers defined in Skyark.
    *
-   * Has special handling for {@link OutputGroupProvider}: that provider is not added
-   * from Skylark directly, instead its outpuyt groups are added.
+   * <p>Has special handling for {@link OutputGroupProvider}: that provider is not added from
+   * Skylark directly, instead its outpuyt groups are added.
    *
-   * Use {@link #addNativeDeclaredProvider(SkylarkClassObject)} in definitions of
-   * native rules.
+   * <p>Use {@link #addNativeDeclaredProvider(Info)} in definitions of native rules.
    */
-  public RuleConfiguredTargetBuilder addSkylarkDeclaredProvider(
-      SkylarkClassObject provider, Location loc) throws EvalException {
-    ClassObjectConstructor constructor = provider.getConstructor();
+  public RuleConfiguredTargetBuilder addSkylarkDeclaredProvider(Info provider, Location loc)
+      throws EvalException {
+    Provider constructor = provider.getProvider();
     if (!constructor.isExported()) {
       throw new EvalException(constructor.getLocation(),
           "All providers must be top level values");
@@ -312,7 +291,7 @@ public final class RuleConfiguredTargetBuilder {
         addOutputGroup(outputGroup, outputGroupProvider.getOutputGroup(outputGroup));
       }
     } else {
-      skylarkDeclaredProviders.put(constructor.getKey(), provider);
+      providersBuilder.put(provider);
     }
     return this;
   }
@@ -321,28 +300,26 @@ public final class RuleConfiguredTargetBuilder {
    * Adds "declared providers" defined in native code to the rule. Use this method for declared
    * providers in definitions of native rules.
    *
-   * <p>Use {@link #addSkylarkDeclaredProvider(SkylarkClassObject, Location)} for Skylark rule
-   * implementations.
+   * <p>Use {@link #addSkylarkDeclaredProvider(Info, Location)} for Skylark rule implementations.
    */
-  public RuleConfiguredTargetBuilder addNativeDeclaredProviders(
-      Iterable<SkylarkClassObject> providers) {
-    for (SkylarkClassObject provider : providers) {
+  public RuleConfiguredTargetBuilder addNativeDeclaredProviders(Iterable<Info> providers) {
+    for (Info provider : providers) {
       addNativeDeclaredProvider(provider);
     }
     return this;
   }
 
   /**
-   * Adds a "declared provider" defined in native code to the rule.
-   * Use this method for declared providers in definitions of native rules.
+   * Adds a "declared provider" defined in native code to the rule. Use this method for declared
+   * providers in definitions of native rules.
    *
-   * Use {@link #addSkylarkDeclaredProvider(SkylarkClassObject, Location)}
-   * for Skylark rule implementations.
+   * <p>Use {@link #addSkylarkDeclaredProvider(Info, Location)} for Skylark rule implementations.
    */
-  public RuleConfiguredTargetBuilder addNativeDeclaredProvider(SkylarkClassObject provider) {
-    ClassObjectConstructor constructor = provider.getConstructor();
+  public RuleConfiguredTargetBuilder addNativeDeclaredProvider(Info provider) {
+    Provider constructor = provider.getProvider();
     Preconditions.checkState(constructor.isExported());
-    skylarkDeclaredProviders.put(constructor.getKey(), provider);
+    providersBuilder.put(provider);
+    maybeAddSkylarkLegacyProvider(provider);
     return this;
   }
 
@@ -351,7 +328,7 @@ public final class RuleConfiguredTargetBuilder {
    */
   public RuleConfiguredTargetBuilder addSkylarkTransitiveInfo(
       String name, Object value) {
-    skylarkProviders.put(name, value);
+    providersBuilder.put(name, value);
     return this;
   }
 

@@ -28,14 +28,14 @@ import com.google.devtools.build.lib.analysis.Runfiles.Builder;
 import com.google.devtools.build.lib.analysis.RunfilesProvider;
 import com.google.devtools.build.lib.analysis.actions.TemplateExpansionAction;
 import com.google.devtools.build.lib.analysis.actions.TemplateExpansionAction.Substitution;
+import com.google.devtools.build.lib.analysis.test.InstrumentedFilesProvider;
+import com.google.devtools.build.lib.analysis.test.TestEnvironmentInfo;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
-import com.google.devtools.build.lib.packages.SkylarkClassObject;
+import com.google.devtools.build.lib.packages.Info;
 import com.google.devtools.build.lib.rules.apple.AppleConfiguration;
 import com.google.devtools.build.lib.rules.apple.DottedVersion;
 import com.google.devtools.build.lib.rules.objc.ObjcRuleClasses.SimulatorRule;
-import com.google.devtools.build.lib.rules.test.InstrumentedFilesProvider;
-import com.google.devtools.build.lib.rules.test.TestEnvironmentProvider;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.FileType;
 import com.google.devtools.build.lib.util.Preconditions;
@@ -255,11 +255,10 @@ public class TestSupport {
    * Returns any additional providers that need to be exported to the rule context to the passed
    * builder.
    */
-  public Iterable<SkylarkClassObject> getExtraProviders() {
+  public Iterable<Info> getExtraProviders() {
     IosDeviceProvider deviceProvider =
-        (IosDeviceProvider)
-            ruleContext.getPrerequisite(
-                IosTest.TARGET_DEVICE, Mode.TARGET, IosDeviceProvider.SKYLARK_CONSTRUCTOR.getKey());
+        ruleContext.getPrerequisite(
+            IosTest.TARGET_DEVICE, Mode.TARGET, IosDeviceProvider.SKYLARK_CONSTRUCTOR);
     DottedVersion xcodeVersion = deviceProvider.getXcodeVersion();
     AppleConfiguration configuration = ruleContext.getFragment(AppleConfiguration.class);
 
@@ -275,7 +274,7 @@ public class TestSupport {
       envBuilder.put("APPLE_COVERAGE", "1");
     }
 
-    return ImmutableList.<SkylarkClassObject>of(new TestEnvironmentProvider(envBuilder.build()));
+    return ImmutableList.<Info>of(new TestEnvironmentInfo(envBuilder.build()));
   }
 
   /**

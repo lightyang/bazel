@@ -26,9 +26,11 @@ import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.FileProvider;
 import com.google.devtools.build.lib.analysis.LicensesProvider;
 import com.google.devtools.build.lib.analysis.LicensesProvider.TargetLicense;
+import com.google.devtools.build.lib.analysis.MakeVariableInfo;
 import com.google.devtools.build.lib.analysis.MiddlemanProvider;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetBuilder;
+import com.google.devtools.build.lib.analysis.RuleConfiguredTargetFactory;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.Runfiles;
 import com.google.devtools.build.lib.analysis.RunfilesProvider;
@@ -42,8 +44,6 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.packages.License;
-import com.google.devtools.build.lib.rules.MakeVariableProvider;
-import com.google.devtools.build.lib.rules.RuleConfiguredTargetFactory;
 import com.google.devtools.build.lib.rules.cpp.FdoSupport.FdoException;
 import com.google.devtools.build.lib.util.FileType;
 import com.google.devtools.build.lib.util.Pair;
@@ -149,7 +149,7 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
               .addArguments(
                   "-d", rawProfileArtifact.getExecPath().getParentDirectory().getSafePathString())
               .setProgressMessage(
-                  "LLVMUnzipProfileAction: Generating " + rawProfileArtifact.prettyPrint())
+                  "LLVMUnzipProfileAction: Generating %s", rawProfileArtifact.prettyPrint())
               .setMnemonic("LLVMUnzipProfileAction")
               .build(ruleContext));
     } else {
@@ -182,7 +182,7 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
             .setExecutable(cppConfiguration.getLLVMProfDataExecutable())
             .addArguments("merge", "-o", profileArtifact.getExecPathString())
             .addArgument(rawProfileArtifact.getExecPathString())
-            .setProgressMessage("LLVMProfDataAction: Generating " + profileArtifact.prettyPrint())
+            .setProgressMessage("LLVMProfDataAction: Generating %s", profileArtifact.prettyPrint())
             .setMnemonic("LLVMProfDataAction")
             .build(ruleContext));
 
@@ -381,15 +381,13 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
             builtInIncludeDirectories,
             sysroot);
 
-    MakeVariableProvider makeVariableProvider =
+    MakeVariableInfo makeVariableInfo =
         createMakeVariableProvider(cppConfiguration, sysroot);
 
     RuleConfiguredTargetBuilder builder =
         new RuleConfiguredTargetBuilder(ruleContext)
-            .addProvider(ccProvider)
             .addNativeDeclaredProvider(ccProvider)
-            .addProvider(makeVariableProvider)
-            .addNativeDeclaredProvider(makeVariableProvider)
+            .addNativeDeclaredProvider(makeVariableInfo)
             .addProvider(
                 fdoSupport.getFdoSupport().createFdoSupportProvider(ruleContext, profileArtifact))
             .setFilesToBuild(new NestedSetBuilder<Artifact>(Order.STABLE_ORDER).build())
@@ -510,7 +508,7 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
         : NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER);
   }
 
-  private MakeVariableProvider createMakeVariableProvider(
+  private MakeVariableInfo createMakeVariableProvider(
       CppConfiguration cppConfiguration, PathFragment sysroot) {
 
     HashMap<String, String> makeVariables =
@@ -523,7 +521,7 @@ public class CcToolchain implements RuleConfiguredTargetFactory {
       ccFlags = ccFlags.isEmpty() ? sysrootFlag : ccFlags + " " + sysrootFlag;
       makeVariables.put(CppConfiguration.CC_FLAGS_MAKE_VARIABLE_NAME, ccFlags);
     }
-    return new MakeVariableProvider(ImmutableMap.copyOf(makeVariables));
+    return new MakeVariableInfo(ImmutableMap.copyOf(makeVariables));
   }
 
   /**

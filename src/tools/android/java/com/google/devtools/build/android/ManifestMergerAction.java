@@ -25,9 +25,9 @@ import com.google.devtools.build.android.Converters.PathConverter;
 import com.google.devtools.build.android.Converters.StringDictionaryConverter;
 import com.google.devtools.common.options.Option;
 import com.google.devtools.common.options.OptionDocumentationCategory;
+import com.google.devtools.common.options.OptionEffectTag;
 import com.google.devtools.common.options.OptionsBase;
 import com.google.devtools.common.options.OptionsParser;
-import com.google.devtools.common.options.proto.OptionFilters.OptionEffectTag;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -223,7 +223,9 @@ public class ManifestMergerAction {
 
       // Set to the epoch for caching purposes.
       Files.setLastModifiedTime(options.manifestOutput, FileTime.fromMillis(0L));
-    } catch (IOException e) {
+    } catch (AndroidManifestProcessor.ManifestProcessingException e) {
+      System.exit(1);
+    } catch (Exception e) {
       logger.log(SEVERE, "Error during merging manifests", e);
       throw e;
     }

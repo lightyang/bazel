@@ -18,6 +18,7 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableList.Builder;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Streams;
 import com.google.devtools.build.lib.actions.ActionAnalysisMetadata;
@@ -34,22 +35,22 @@ import com.google.devtools.build.lib.analysis.RunfilesProvider;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.analysis.TransitiveInfoProvider;
 import com.google.devtools.build.lib.analysis.Util;
+import com.google.devtools.build.lib.analysis.test.InstrumentedFilesCollector;
+import com.google.devtools.build.lib.analysis.test.InstrumentedFilesCollector.InstrumentationSpec;
+import com.google.devtools.build.lib.analysis.test.InstrumentedFilesCollector.LocalMetadataCollector;
+import com.google.devtools.build.lib.analysis.test.InstrumentedFilesProvider;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.packages.BuildType;
-import com.google.devtools.build.lib.packages.ClassObjectConstructor;
-import com.google.devtools.build.lib.packages.SkylarkClassObject;
+import com.google.devtools.build.lib.packages.Info;
+import com.google.devtools.build.lib.packages.NativeProvider;
 import com.google.devtools.build.lib.packages.Target;
 import com.google.devtools.build.lib.packages.TargetUtils;
 import com.google.devtools.build.lib.rules.cpp.CppCompilationContext;
 import com.google.devtools.build.lib.rules.cpp.LinkerInput;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArgs.ClasspathType;
-import com.google.devtools.build.lib.rules.test.InstrumentedFilesCollector;
-import com.google.devtools.build.lib.rules.test.InstrumentedFilesCollector.InstrumentationSpec;
-import com.google.devtools.build.lib.rules.test.InstrumentedFilesCollector.LocalMetadataCollector;
-import com.google.devtools.build.lib.rules.test.InstrumentedFilesProvider;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.FileTypeSet;
 import com.google.devtools.build.lib.util.Pair;
@@ -288,7 +289,7 @@ public class JavaCommon {
       builder.add(outDeps);
     }
 
-    for (JavaCompilationArgsProvider provider : JavaProvider.getProvidersFromListOfTargets(
+    for (JavaCompilationArgsProvider provider : JavaInfo.getProvidersFromListOfTargets(
         JavaCompilationArgsProvider.class, getExports(ruleContext))) {
       builder.addTransitive(provider.getCompileTimeJavaDependencyArtifacts());
     }
@@ -300,9 +301,7 @@ public class JavaCommon {
     // We need to check here because there are classes inheriting from this class that implement
     // rules that don't have this attribute.
     if (ruleContext.attributes().has("exports", BuildType.LABEL_LIST)) {
-      // Do not remove <SplitTransition<?>, BuildConfiguration>:
-      // workaround for Java 7 type inference.
-      return ImmutableList.<TransitiveInfoCollection>copyOf(
+      return ImmutableList.copyOf(
           ruleContext.getPrerequisites("exports", Mode.TARGET));
     } else {
       return ImmutableList.of();
@@ -370,7 +369,7 @@ public class JavaCommon {
     NestedSetBuilder<Artifact> builder = NestedSetBuilder.<Artifact>stableOrder()
         .addAll(targetSrcJars);
 
-    for (JavaSourceJarsProvider sourceJarsProvider : JavaProvider.getProvidersFromListOfTargets(
+    for (JavaSourceJarsProvider sourceJarsProvider : JavaInfo.getProvidersFromListOfTargets(
         JavaSourceJarsProvider.class, getDependencies())) {
       builder.addTransitive(sourceJarsProvider.getTransitiveSourceJars());
     }
@@ -465,6 +464,20 @@ public class JavaCommon {
         .collect(toImmutableList());
   }
 
+  public static PathFragment getHostJavaExecutable(RuleContext ruleContext) {
+    JavaRuntimeInfo javaRuntime = JavaHelper.getHostJavaRuntime(ruleContext);
+    return javaRuntime != null
+        ? javaRuntime.javaBinaryExecPath()
+        : ruleContext.getHostConfiguration().getFragment(Jvm.class).getJavaExecutable();
+  }
+
+  public static PathFragment getJavaExecutable(RuleContext ruleContext) {
+    JavaRuntimeInfo javaRuntime = JavaHelper.getJavaRuntime(ruleContext);
+    return javaRuntime != null
+        ? javaRuntime.javaBinaryExecPath()
+        : ruleContext.getFragment(Jvm.class).getJavaExecutable();
+  }
+
   /**
    * Returns the string that the stub should use to determine the JVM
    * @param launcher if non-null, the cc_binary used to launch the Java Virtual Machine
@@ -473,11 +486,14 @@ public class JavaCommon {
       RuleContext ruleContext, @Nullable Artifact launcher) {
     Preconditions.checkState(ruleContext.getConfiguration().hasFragment(Jvm.class));
     PathFragment javaExecutable;
+    JavaRuntimeInfo javaRuntime = JavaHelper.getJavaRuntime(ruleContext);
 
     if (launcher != null) {
       javaExecutable = launcher.getRootRelativePath();
+    } else if (javaRuntime != null) {
+      javaExecutable = javaRuntime.javaBinaryRunfilesPath();
     } else {
-      javaExecutable = ruleContext.getFragment(Jvm.class).getRunfilesJavaExecutable();
+      javaExecutable = ruleContext.getFragment(Jvm.class).getJavaExecutable();
     }
 
     if (!javaExecutable.isAbsolute()) {
@@ -544,8 +560,7 @@ public class JavaCommon {
     // We need to check here because there are classes inheriting from this class that implement
     // rules that don't have this attribute.
     if (ruleContext.attributes().has("runtime_deps", BuildType.LABEL_LIST)) {
-      // Do not remove <TransitiveInfoCollection>: workaround for Java 7 type inference.
-      return ImmutableList.<TransitiveInfoCollection>copyOf(
+      return ImmutableList.copyOf(
           ruleContext.getPrerequisites("runtime_deps", Mode.TARGET));
     } else {
       return ImmutableList.of();
@@ -732,6 +747,18 @@ public class JavaCommon {
    * the target attributes.
    */
   private void addPlugins(JavaTargetAttributes.Builder attributes) {
+    addPlugins(attributes, activePlugins);
+  }
+
+  /**
+   * Adds information about the annotation processors that should be run for this java target
+   * retrieved from the given plugins to the target attributes.
+   *
+   * In particular, the processor names/paths and the API generating processor names/paths are added
+   * to the given attributes. Plugins having repetitive names/paths will be added only once.
+   */
+  public static void addPlugins(
+      JavaTargetAttributes.Builder attributes, Iterable<JavaPluginInfoProvider> activePlugins) {
     for (JavaPluginInfoProvider plugin : activePlugins) {
       for (String name : plugin.getProcessorClasses()) {
         attributes.addProcessorName(name);
@@ -759,9 +786,40 @@ public class JavaCommon {
   private static Iterable<JavaPluginInfoProvider> getPluginInfoProvidersForAttribute(
       RuleContext ruleContext, String attribute, Mode mode) {
     if (ruleContext.attributes().has(attribute, BuildType.LABEL_LIST)) {
-      return ruleContext.getPrerequisites(attribute, mode, JavaPluginInfoProvider.class);
+      return JavaInfo.getProvidersFromListOfTargets(
+          JavaPluginInfoProvider.class, ruleContext.getPrerequisites(attribute, mode));
     }
     return ImmutableList.of();
+  }
+
+  JavaPluginInfoProvider getJavaPluginInfoProvider(RuleContext ruleContext) {
+    ImmutableSet<String> processorClasses = getProcessorClasses(ruleContext);
+    NestedSet<Artifact> processorClasspath = getRuntimeClasspath();
+    ImmutableSet<String> apiGeneratingProcessorClasses;
+    NestedSet<Artifact> apiGeneratingProcessorClasspath;
+    if (ruleContext.attributes().get("generates_api", Type.BOOLEAN)) {
+      apiGeneratingProcessorClasses = processorClasses;
+      apiGeneratingProcessorClasspath = processorClasspath;
+    } else {
+      apiGeneratingProcessorClasses = ImmutableSet.of();
+      apiGeneratingProcessorClasspath = NestedSetBuilder.emptySet(Order.NAIVE_LINK_ORDER);
+    }
+
+    return new JavaPluginInfoProvider(
+        processorClasses,
+        processorClasspath,
+        apiGeneratingProcessorClasses,
+        apiGeneratingProcessorClasspath);
+  }
+
+  /**
+   * Returns the class that should be passed to javac in order to run the annotation processor this
+   * class represents.
+   */
+  private static ImmutableSet<String> getProcessorClasses(RuleContext ruleContext) {
+    return ruleContext.getRule().isAttributeValueExplicitlySpecified("processor_class")
+        ? ImmutableSet.of(ruleContext.attributes().get("processor_class", Type.STRING))
+        : ImmutableSet.<String>of();
   }
 
   public static JavaPluginInfoProvider getTransitivePlugins(RuleContext ruleContext) {
@@ -819,12 +877,9 @@ public class JavaCommon {
     return AnalysisUtils.getProviders(getDependencies(), provider);
   }
 
-  /**
-   * Gets all the deps that implement a particular provider.
-   */
-  public final <P extends SkylarkClassObject> Iterable<P> getDependencies(
-      ClassObjectConstructor.Key provider, Class<P> resultClass) {
-    return AnalysisUtils.getProviders(getDependencies(), provider, resultClass);
+  /** Gets all the deps that implement a particular provider. */
+  public final <P extends Info> Iterable<P> getDependencies(NativeProvider<P> provider) {
+    return AnalysisUtils.getProviders(getDependencies(), provider);
   }
 
 

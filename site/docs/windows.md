@@ -5,16 +5,12 @@ title: Windows
 
 # Using Bazel on Windows
 
-Windows support is experimental. Known issues are [marked with label
+Windows support is in beta. Known issues are [marked with label
 "Windows"](https://github.com/bazelbuild/bazel/issues?q=is%3Aissue+is%3Aopen+label%3A%22category%3A+multi-platform+%3E+windows%22)
 on github issues.
 
 We currently support only 64 bit Windows 7 or higher and we compile Bazel as a
 msys2 binary.
-
-## <a name="install"></a>Installation
-
-See instructions on the [installation page](install-windows.md).
 
 ## <a name="requirements"></a>Requirements
 
@@ -23,66 +19,33 @@ variables:
 
 ```bash
 export JAVA_HOME="$(ls -d C:/Program\ Files/Java/jdk* | sort | tail -n 1)"
-export BAZEL_SH=c:/tools/msys64/usr/bin/bash.exe
+export BAZEL_SH=c:/msys64/usr/bin/bash.exe
 ```
 
-If you run outside of `bash`, ensure that ``msys-2.0.dll`` is in your ``PATH``
-(if you install msys2 to ``c:\tools\msys64``, just add
-``c:\tools\msys64\usr\bin`` to ``PATH``).
-
 If you have another tool that vendors msys2 (such as msysgit), then
-``c:\tools\msys64\usr\bin`` must appear in your ``PATH`` *before* entries for
+``c:\msys64\usr\bin`` must appear in your ``PATH`` *before* entries for
 those tools.
 
 Similarly, if you have [bash on Ubuntu on
 Windows](https://msdn.microsoft.com/en-gb/commandline/wsl/about) installed, you
-should make sure ``c:\tools\msys64\usr\bin`` appears in ``PATH`` *before*
+should make sure ``c:\msys64\usr\bin`` appears in ``PATH`` *before*
 ``c:\windows\system32``, because otherwise Windows' ``bash.exe`` is used before
 msys2's.
 
-Use ``where msys-2.0.dll`` to ensure your ``PATH`` is set up correctly.
-
 To **run** Bazel (even pre-built binaries), you will need:
 
-*    Java JDK 8 or later
-*    [msys2 shell](https://msys2.github.io/) (need to be installed at
-     ``C:\tools\msys64\``).
-    * We build against version
-     [20160205](https://sourceforge.net/projects/msys2/files/Base/x86_64/msys2-x86_64-20160205.exe/download),
-     you will need this version in order to run the pre-built
-     [release Bazel binaries](https://github.com/bazelbuild/bazel/releases).
-    * You can also use newer versions or the
-     [latest version](https://sourceforge.net/projects/msys2/files/latest/download?source=files),
-     but then you will need to compile Bazel from the distribution archive (the
-     source zip file) so that it's linked against the right version of
-     ``msys-2.0.dll``. See also the
-     [known issues](install-compile-source.md#known-issues-when-compiling-from-source).
+*    Java JDK 8 or later.
+*    Python 2.7 or later.
+*    [msys2 shell](https://msys2.github.io/).
 *    Several msys2 packages. Use the ``pacman`` command to install them:
 
      ```
-     pacman -Syuu gcc git curl zip unzip zlib-devel
+     pacman -Syuu git curl zip unzip
      ```
 
-To **compile** Bazel, in addition to the above you will need:
+## <a name="install"></a>Installation
 
-*    [Visual C++ Build Tools](http://landinghub.visualstudio.com/visual-cpp-build-tools)
-     or the full [Visual C++](https://www.visualstudio.com/) (as part of Visual
-     Studio; Community Edition is fine) with Windows SDK installed.
-*    You may need to apply some patches/workarounds, see the
-     [known issues](install-compile-source.md#known-issues-when-compiling-from-source).
-
-## <a name="compiling"></a>Compiling Bazel on Windows
-
-Ensure you have the [requirements](#requirements).
-
-To build Bazel:
-
-*    Open the msys2 shell.
-*    Clone the Bazel git repository as normal.
-*    Set the environment variables (see above)
-*    Run ``compile.sh`` in Bazel directory.
-*    If all works fine, bazel will be built at ``output\bazel.exe``.
-
+See [Install Bazel on Windows](install-windows.md) for installation instructions.
 
 ## <a name="using"></a>Using Bazel on Windows
 
@@ -144,7 +107,7 @@ bazel run examples/java-native/src/main/java/com/example/myproject:hello-world
 
 On Windows, we build a self-extracting zip file for executable Python targets, you can even use
 `python ./bazel-bin/path/to/target` to run it in native Windows command line (cmd.exe).
-See more details in this [design doc](/designs/2016/09/05/build-python-on-windows.html).
+See more details in this [design doc](https://bazel.build/designs/2016/09/05/build-python-on-windows.html).
 
 ```bash
 bazel build examples/py_native:bin

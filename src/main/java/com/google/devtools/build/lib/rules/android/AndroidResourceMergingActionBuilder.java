@@ -25,6 +25,7 @@ import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.rules.android.ResourceContainerConverter.Builder.SeparatorType;
+import com.google.devtools.build.lib.util.OS;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -65,6 +66,7 @@ public class AndroidResourceMergingActionBuilder {
 
   // Flags
   private String customJavaPackage;
+  private boolean throwOnResourceConflict;
 
   /** @param ruleContext The RuleContext that was used to create the SpawnAction.Builder. */
   public AndroidResourceMergingActionBuilder(RuleContext ruleContext) {
@@ -116,6 +118,12 @@ public class AndroidResourceMergingActionBuilder {
     return this;
   }
 
+  public AndroidResourceMergingActionBuilder setThrowOnResourceConflict(
+      boolean throwOnResourceConflict) {
+    this.throwOnResourceConflict = throwOnResourceConflict;
+    return this;
+  }
+
   public ResourceContainer build(ActionConstructionContext context) {
     CustomCommandLine.Builder builder = new CustomCommandLine.Builder();
 
@@ -129,7 +137,7 @@ public class AndroidResourceMergingActionBuilder {
     inputs.add(sdk.getAndroidJar());
 
     Preconditions.checkNotNull(primary);
-    builder.add("--primaryData").add(RESOURCE_CONTAINER_TO_ARG.apply(primary));
+    builder.add("--primaryData", RESOURCE_CONTAINER_TO_ARG.apply(primary));
     inputs.addTransitive(RESOURCE_CONTAINER_TO_ARTIFACTS.apply(primary));
 
     Preconditions.checkNotNull(primary.getManifest());
@@ -160,7 +168,7 @@ public class AndroidResourceMergingActionBuilder {
     if (!Strings.isNullOrEmpty(customJavaPackage)) {
       // Sets an alternative java package for the generated R.java
       // this allows android rules to generate resources outside of the java{,tests} tree.
-      builder.add("--packageForR").add(customJavaPackage);
+      builder.add("--packageForR", customJavaPackage);
     }
 
     // TODO(corysmith): Move the data binding parsing out of the merging pass to enable faster
@@ -170,17 +178,36 @@ public class AndroidResourceMergingActionBuilder {
       outs.add(dataBindingInfoZip);
     }
 
+    if (throwOnResourceConflict) {
+      builder.add("--throwOnResourceConflict");
+    }
+
     SpawnAction.Builder spawnActionBuilder = new SpawnAction.Builder();
+
+    if (OS.getCurrent() == OS.WINDOWS) {
+      // Some flags (e.g. --mainData) may specify lists (or lists of lists) separated by special
+      // characters (colon, semicolon, hashmark, ampersand) that don't work on Windows, and quoting
+      // semantics are very complicated (more so than in Bash), so let's just always use a parameter
+      // file.
+      // TODO(laszlocsomor), TODO(corysmith): restructure the Android BusyBux's flags by deprecating
+      // list-type and list-of-list-type flags that use such problematic separators in favor of
+      // multi-value flags (to remove one level of listing) and by changing all list separators to a
+      // platform-safe character (= comma).
+      spawnActionBuilder.alwaysUseParameterFile(ParameterFileType.UNQUOTED);
+    } else {
+      spawnActionBuilder.useParameterFile(ParameterFileType.UNQUOTED);
+    }
+
     // Create the spawn action.
     ruleContext.registerAction(
         spawnActionBuilder
-            .useParameterFile(ParameterFileType.UNQUOTED)
+            .useDefaultShellEnvironment()
             .addTransitiveInputs(inputs.build())
             .addOutputs(ImmutableList.copyOf(outs))
             .setCommandLine(builder.build())
             .setExecutable(
                 ruleContext.getExecutablePrerequisite("$android_resources_busybox", Mode.HOST))
-            .setProgressMessage("Merging Android resources for " + ruleContext.getLabel())
+            .setProgressMessage("Merging Android resources for %s", ruleContext.getLabel())
             .setMnemonic("AndroidResourceMerger")
             .build(context));
 

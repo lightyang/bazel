@@ -29,8 +29,10 @@ import com.google.devtools.build.lib.analysis.Runfiles;
 import com.google.devtools.build.lib.analysis.RunfilesProvider;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.analysis.TransitiveInfoProvider;
+import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.analysis.actions.FileWriteAction;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
+import com.google.devtools.build.lib.analysis.test.InstrumentedFilesCollector.InstrumentationSpec;
 import com.google.devtools.build.lib.collect.IterablesChain;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
@@ -38,13 +40,15 @@ import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.packages.AggregatingAttributeMapper;
 import com.google.devtools.build.lib.packages.AttributeMap;
 import com.google.devtools.build.lib.packages.BuildType;
+import com.google.devtools.build.lib.packages.Info;
+import com.google.devtools.build.lib.packages.NativeProvider;
 import com.google.devtools.build.lib.packages.Rule;
-import com.google.devtools.build.lib.packages.SkylarkClassObject;
-import com.google.devtools.build.lib.packages.SkylarkClassObjectConstructor;
+import com.google.devtools.build.lib.packages.RuleClass.ConfiguredTargetFactory.RuleErrorException;
 import com.google.devtools.build.lib.packages.TriState;
+import com.google.devtools.build.lib.rules.android.AndroidConfiguration.AndroidAaptVersion;
 import com.google.devtools.build.lib.rules.android.ResourceContainer.ResourceType;
 import com.google.devtools.build.lib.rules.cpp.CcLinkParams;
-import com.google.devtools.build.lib.rules.cpp.CcLinkParamsProvider;
+import com.google.devtools.build.lib.rules.cpp.CcLinkParamsInfo;
 import com.google.devtools.build.lib.rules.cpp.CcLinkParamsStore;
 import com.google.devtools.build.lib.rules.java.ClasspathConfiguredFragment;
 import com.google.devtools.build.lib.rules.java.JavaCcLinkParamsProvider;
@@ -63,12 +67,10 @@ import com.google.devtools.build.lib.rules.java.JavaSourceJarsProvider;
 import com.google.devtools.build.lib.rules.java.JavaTargetAttributes;
 import com.google.devtools.build.lib.rules.java.JavaUtil;
 import com.google.devtools.build.lib.rules.java.proto.GeneratedExtensionRegistryProvider;
-import com.google.devtools.build.lib.rules.test.InstrumentedFilesCollector.InstrumentationSpec;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.FileType;
 import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.vfs.PathFragment;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import javax.annotation.Nullable;
@@ -99,26 +101,13 @@ public class AndroidCommon {
     return builder.build();
   }
 
-  public static final <T extends SkylarkClassObject> Iterable<T> getTransitivePrerequisites(
-      RuleContext ruleContext, Mode mode, SkylarkClassObjectConstructor.Key key,
-      final Class<T> classType) {
+  public static final <T extends Info> Iterable<T> getTransitivePrerequisites(
+      RuleContext ruleContext, Mode mode, NativeProvider<T> key) {
     IterablesChain.Builder<T> builder = IterablesChain.builder();
     AttributeMap attributes = ruleContext.attributes();
     for (String attr : TRANSITIVE_ATTRIBUTES) {
       if (attributes.has(attr, BuildType.LABEL_LIST)) {
-        builder.add(ruleContext.getPrerequisites(attr, mode, key, classType));
-      }
-    }
-    return builder.build();
-  }
-
-
-  public static final Iterable<TransitiveInfoCollection> collectTransitiveInfo(
-      RuleContext ruleContext, Mode mode) {
-    ImmutableList.Builder<TransitiveInfoCollection> builder = ImmutableList.builder();
-    for (String attr : TRANSITIVE_ATTRIBUTES) {
-      if (ruleContext.attributes().has(attr, BuildType.LABEL_LIST)) {
-        builder.addAll(ruleContext.getPrerequisites(attr, mode));
+        builder.add(ruleContext.getPrerequisites(attr, mode, key));
       }
     }
     return builder.build();
@@ -208,35 +197,36 @@ public class AndroidCommon {
       RuleContext ruleContext,
       Artifact jarToDex, Artifact classesDex, List<String> dexOptions, boolean multidex,
       Artifact mainDexList) {
-    List<String> args = new ArrayList<>();
-    args.add("--dex");
+    CustomCommandLine.Builder commandLine = CustomCommandLine.builder();
+    commandLine.add("--dex");
 
     // Multithreaded dex does not work when using --multi-dex.
     if (!multidex) {
       // Multithreaded dex tends to run faster, but only up to about 5 threads (at which point the
       // law of diminishing returns kicks in). This was determined experimentally, with 5-thread dex
       // performing about 25% faster than 1-thread dex.
-      args.add("--num-threads=5");
+      commandLine.add("--num-threads=5");
     }
 
-    args.addAll(dexOptions);
+    commandLine.addAll(dexOptions);
     if (multidex) {
-      args.add("--multi-dex");
+      commandLine.add("--multi-dex");
       if (mainDexList != null) {
-        args.add("--main-dex-list=" + mainDexList.getExecPathString());
+        commandLine.addPrefixedExecPath("--main-dex-list=", mainDexList);
       }
     }
-    args.add("--output=" + classesDex.getExecPathString());
-    args.add(jarToDex.getExecPathString());
+    commandLine.addPrefixedExecPath("--output=", classesDex);
+    commandLine.addExecPath(jarToDex);
 
-    SpawnAction.Builder builder = new SpawnAction.Builder()
-        .setExecutable(AndroidSdkProvider.fromRuleContext(ruleContext).getDx())
-        .addInput(jarToDex)
-        .addOutput(classesDex)
-        .addArguments(args)
-        .setProgressMessage("Converting " + jarToDex.getExecPathString() + " to dex format")
-        .setMnemonic("AndroidDexer")
-        .setResources(ResourceSet.createWithRamCpuIo(4096.0, 5.0, 0.0));
+    SpawnAction.Builder builder =
+        new SpawnAction.Builder()
+            .setExecutable(AndroidSdkProvider.fromRuleContext(ruleContext).getDx())
+            .addInput(jarToDex)
+            .addOutput(classesDex)
+            .setProgressMessage("Converting %s to dex format", jarToDex.getExecPathString())
+            .setMnemonic("AndroidDexer")
+            .setCommandLine(commandLine.build())
+            .setResources(ResourceSet.createWithRamCpuIo(4096.0, 5.0, 0.0));
     if (mainDexList != null) {
       builder.addInput(mainDexList);
     }
@@ -319,7 +309,7 @@ public class AndroidCommon {
   }
 
   static PathFragment getSourceDirectoryRelativePathFromResource(Artifact resource) {
-    PathFragment resourceDir = LocalResourceContainer.Builder.findResourceDir(resource);
+    PathFragment resourceDir = LocalResourceContainer.findResourceDir(resource);
     if (resourceDir == null) {
       return null;
     }
@@ -403,9 +393,7 @@ public class AndroidCommon {
     // If the rule does not have the Android configuration fragment, we default to false.
     boolean exportsManifestDefault =
         ruleContext.isLegalFragment(AndroidConfiguration.class)
-            && ruleContext
-                .getFragment(AndroidConfiguration.class)
-                .getExportsManifestDefault(ruleContext);
+            && ruleContext.getFragment(AndroidConfiguration.class).getExportsManifestDefault();
     return attributeValue == TriState.YES
         || (attributeValue == TriState.AUTO && exportsManifestDefault);
   }
@@ -418,7 +406,7 @@ public class AndroidCommon {
       JavaTargetAttributes.Builder attributes,
       NestedSetBuilder<Artifact> filesBuilder,
       boolean useRClassGenerator)
-      throws InterruptedException {
+      throws InterruptedException, RuleErrorException {
     compileResourceJar(javaSemantics, resourceApk, resourcesJar, useRClassGenerator);
     // Add the compiled resource jar to the classpath of the main compilation.
     attributes.addDirectJars(NestedSetBuilder.create(Order.STABLE_ORDER, resourceClassJar));
@@ -436,7 +424,7 @@ public class AndroidCommon {
   private void compileResourceJar(
       JavaSemantics javaSemantics, ResourceApk resourceApk, Artifact resourcesJar,
       boolean useRClassGenerator)
-      throws InterruptedException {
+      throws InterruptedException, RuleErrorException {
     resourceSourceJar = ruleContext.getImplicitOutputArtifact(
         AndroidRuleClasses.ANDROID_RESOURCES_SOURCE_JAR);
     resourceClassJar = ruleContext.getImplicitOutputArtifact(
@@ -450,12 +438,12 @@ public class AndroidCommon {
     // Only build the class jar if it's not already generated internally by resource processing.
     if (resourceApk.getResourceJavaClassJar() == null) {
       if (useRClassGenerator) {
-        RClassGeneratorActionBuilder actionBuilder =
-            new RClassGeneratorActionBuilder(ruleContext)
-                .withPrimary(resourceApk.getPrimaryResource())
-                .withDependencies(resourceApk.getResourceDependencies())
-                .setClassJarOut(resourceClassJar);
-        actionBuilder.build();
+        new RClassGeneratorActionBuilder(ruleContext)
+            .targetAaptVersion(AndroidAaptVersion.chooseTargetAaptVersion(ruleContext))
+            .withPrimary(resourceApk.getPrimaryResource())
+            .withDependencies(resourceApk.getResourceDependencies())
+            .setClassJarOut(resourceClassJar)
+            .build();
       } else {
         Artifact outputDepsProto =
             javacHelper.createOutputDepsProtoArtifact(resourceClassJar, javaArtifactsBuilder);
@@ -506,15 +494,22 @@ public class AndroidCommon {
       FilesToRunProvider jarjar =
           ruleContext.getExecutablePrerequisite("$jarjar_bin", Mode.HOST);
 
-      ruleContext.registerAction(new SpawnAction.Builder()
-          .setExecutable(jarjar)
-          .addArgument("process")
-          .addInputArgument(jarJarRuleFile)
-          .addInputArgument(binaryResourcesJar)
-          .addOutputArgument(resourcesJar)
-          .setProgressMessage("Repackaging jar")
-          .setMnemonic("AndroidRepackageJar")
-          .build(ruleContext));
+      ruleContext.registerAction(
+          new SpawnAction.Builder()
+              .setExecutable(jarjar)
+              .setProgressMessage("Repackaging jar")
+              .setMnemonic("AndroidRepackageJar")
+              .addInput(jarJarRuleFile)
+              .addInput(binaryResourcesJar)
+              .addOutput(resourcesJar)
+              .setCommandLine(
+                  CustomCommandLine.builder()
+                      .add("process")
+                      .addExecPath(jarJarRuleFile)
+                      .addExecPath(binaryResourcesJar)
+                      .addExecPath(resourcesJar)
+                      .build())
+              .build(ruleContext));
       jarsProducedForRuntime.add(resourcesJar);
     }
   }
@@ -541,7 +536,7 @@ public class AndroidCommon {
       boolean collectJavaCompilationArgs,
       boolean isBinary,
       boolean includeLibraryResourceJars)
-      throws InterruptedException {
+      throws InterruptedException, RuleErrorException {
 
     classJar = ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_LIBRARY_CLASS_JAR);
     idlHelper = new AndroidIdlHelper(ruleContext, classJar);
@@ -755,7 +750,8 @@ public class AndroidCommon {
       ResourceApk resourceApk,
       Artifact zipAlignedApk,
       Iterable<Artifact> apksUnderTest,
-      NativeLibs nativeLibs) {
+      NativeLibs nativeLibs,
+      boolean isResourcesOnly) {
 
     idlHelper.addTransitiveInfoProviders(builder, classJar, manifestProtoOutput);
 
@@ -789,14 +785,16 @@ public class AndroidCommon {
         .setFilesToBuild(filesToBuild)
         .addSkylarkTransitiveInfo(
             JavaSkylarkApiProvider.NAME, JavaSkylarkApiProvider.fromRuleContext())
-        .add(JavaRuleOutputJarsProvider.class, ruleOutputJarsProvider)
-        .add(JavaSourceJarsProvider.class, sourceJarsProvider)
-        .add(
+        .addProvider(JavaRuleOutputJarsProvider.class, ruleOutputJarsProvider)
+        .addProvider(JavaSourceJarsProvider.class, sourceJarsProvider)
+        .addProvider(
             JavaRuntimeJarProvider.class,
             new JavaRuntimeJarProvider(javaCommon.getJavaCompilationArtifacts().getRuntimeJars()))
-        .add(RunfilesProvider.class, RunfilesProvider.simple(getRunfiles()))
-        .add(AndroidResourcesProvider.class, resourceApk.toResourceProvider(ruleContext.getLabel()))
-        .add(
+        .addProvider(RunfilesProvider.class, RunfilesProvider.simple(getRunfiles()))
+        .addProvider(
+            AndroidResourcesProvider.class,
+            resourceApk.toResourceProvider(ruleContext.getLabel(), isResourcesOnly))
+        .addProvider(
             AndroidIdeInfoProvider.class,
             createAndroidIdeInfoProvider(
                 ruleContext,
@@ -808,7 +806,7 @@ public class AndroidCommon {
                 zipAlignedApk,
                 apksUnderTest,
                 nativeLibs))
-        .add(JavaCompilationArgsProvider.class, compilationArgsProvider)
+        .addProvider(JavaCompilationArgsProvider.class, compilationArgsProvider)
         .addSkylarkTransitiveInfo(AndroidSkylarkApiProvider.NAME, new AndroidSkylarkApiProvider())
         .addOutputGroup(
             OutputGroupProvider.HIDDEN_TOP_LEVEL, collectHiddenTopLevelArtifacts(ruleContext))
@@ -843,10 +841,24 @@ public class AndroidCommon {
     if (prerequisite == null) {
       return null;
     }
+
+    AndroidResourcesProvider provider = prerequisite.getProvider(AndroidResourcesProvider.class);
+
+    if (!provider.getIsResourcesOnly()) {
+      ruleContext.attributeError(
+          "resources",
+          "android_library target "
+              + prerequisite.getLabel()
+              + " cannot be used in the 'resources' attribute as it specifies information (probably"
+              + " 'srcs' or 'deps') not directly related to android_resources. Consider moving this"
+              + " target from 'resources' to 'deps'.");
+      return null;
+    }
+
     ruleContext.ruleWarning(
         "The use of the android_resources rule and the resources attribute is deprecated. "
             + "Please use the resource_files, assets, and manifest attributes of android_library.");
-    return prerequisite.getProvider(AndroidResourcesProvider.class);
+    return provider;
   }
 
   /**
@@ -922,7 +934,7 @@ public class AndroidCommon {
             // Link in Android-specific C++ code (e.g., android_libraries) in the transitive closure
             AndroidCcLinkParamsProvider.TO_LINK_PARAMS,
             // Link in non-language-specific C++ code in the transitive closure
-            CcLinkParamsProvider.TO_LINK_PARAMS);
+            CcLinkParamsInfo.TO_LINK_PARAMS);
         builder.addLinkOpts(linkOpts);
       }
     };
@@ -938,9 +950,8 @@ public class AndroidCommon {
   private NestedSet<Artifact> collectHiddenTopLevelArtifacts(RuleContext ruleContext) {
     NestedSetBuilder<Artifact> builder = NestedSetBuilder.stableOrder();
     for (OutputGroupProvider provider :
-        getTransitivePrerequisites(ruleContext, Mode.TARGET,
-            OutputGroupProvider.SKYLARK_CONSTRUCTOR.getKey(),
-            OutputGroupProvider.class)) {
+        getTransitivePrerequisites(
+            ruleContext, Mode.TARGET, OutputGroupProvider.SKYLARK_CONSTRUCTOR)) {
       builder.addTransitive(provider.getOutputGroup(OutputGroupProvider.HIDDEN_TOP_LEVEL));
     }
     return builder.build();

@@ -38,15 +38,12 @@ import com.google.devtools.build.lib.packages.Rule;
 import com.google.devtools.build.lib.packages.Target;
 import com.google.devtools.build.lib.packages.TriState;
 import com.google.devtools.build.lib.query2.AbstractBlazeQueryEnvironment;
-import com.google.devtools.build.lib.query2.engine.BuildFilesFunction;
-import com.google.devtools.build.lib.query2.engine.FunctionExpression;
-import com.google.devtools.build.lib.query2.engine.LoadFilesFunction;
+import com.google.devtools.build.lib.query2.engine.AggregatingQueryExpressionVisitor.ContainsFunctionQueryExpressionVisitor;
 import com.google.devtools.build.lib.query2.engine.OutputFormatterCallback;
 import com.google.devtools.build.lib.query2.engine.QueryEnvironment;
-import com.google.devtools.build.lib.query2.engine.QueryEnvironment.QueryFunction;
 import com.google.devtools.build.lib.query2.engine.QueryException;
 import com.google.devtools.build.lib.query2.engine.QueryExpression;
-import com.google.devtools.build.lib.query2.engine.QueryExpressionMapper;
+import com.google.devtools.build.lib.query2.engine.QueryExpressionVisitor;
 import com.google.devtools.build.lib.query2.engine.SynchronizedDelegatingOutputFormatterCallback;
 import com.google.devtools.build.lib.query2.engine.ThreadSafeOutputFormatterCallback;
 import com.google.devtools.build.lib.query2.output.QueryOptions.OrderOutput;
@@ -67,7 +64,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicBoolean;
 import javax.annotation.Nullable;
 
 /**
@@ -380,20 +376,11 @@ public abstract class OutputFormatter implements Serializable {
       if (!(env instanceof AbstractBlazeQueryEnvironment)) {
         return;
       }
-      final AtomicBoolean found = new AtomicBoolean(false);
-      QueryExpressionMapper noteBuildFilesAndLoadLilesMapper = new QueryExpressionMapper() {
-        @Override
-        public QueryExpression map(FunctionExpression functionExpression) {
-          QueryFunction queryFunction = functionExpression.getFunction();
-          if (queryFunction instanceof LoadFilesFunction
-              || queryFunction instanceof BuildFilesFunction) {
-            found.set(true);
-          }
-          return super.map(functionExpression);
-        }
-      };
-      expr.getMapped(noteBuildFilesAndLoadLilesMapper);
-      if (found.get()) {
+
+      QueryExpressionVisitor<Boolean> noteBuildFilesAndLoadLilesVisitor =
+          new ContainsFunctionQueryExpressionVisitor(ImmutableList.of("loadfiles", "buildfiles"));
+
+      if (expr.accept(noteBuildFilesAndLoadLilesVisitor)) {
         throw new QueryException(
             "Query expressions involving 'buildfiles' or 'loadfiles' cannot be used with "
             + "--output=location");
@@ -466,7 +453,8 @@ public abstract class OutputFormatter implements Serializable {
             if (attributeMap.isConfigurable(attr.getName())) {
               // We don't know the actual value for configurable attributes, so we reconstruct
               // the select without trying to resolve it.
-              printStream.printf(outputAttributePattern,
+              printStream.printf(
+                  outputAttributePattern,
                   attr.getPublicName(),
                   outputConfigurableAttrValue(rule, attributeMap, attr));
               continue;
@@ -479,20 +467,17 @@ public abstract class OutputFormatter implements Serializable {
               // Computed defaults that depend on configurable attributes can have multiple values.
               continue;
             }
-            printStream.printf(outputAttributePattern,
+            printStream.printf(
+                outputAttributePattern,
                 attr.getPublicName(),
                 outputAttrValue(Iterables.getOnlyElement(values)));
           }
           printStream.printf(")\n%s", lineTerm);
         }
 
-        /**
-         * Returns the given attribute value with BUILD output syntax. Does not support selects.
-         */
+        /** Returns the given attribute value with BUILD output syntax. Does not support selects. */
         private String outputAttrValue(Object value) {
-          if (value instanceof Label) {
-            value = ((Label) value).getDefaultCanonicalForm();
-          } else if (value instanceof License) {
+          if (value instanceof License) {
             List<String> licenseTypes = new ArrayList<>();
             for (License.LicenseType licenseType : ((License) value).getLicenseTypes()) {
               licenseTypes.add(licenseType.toString().toLowerCase());
@@ -504,10 +489,7 @@ public abstract class OutputFormatter implements Serializable {
           } else if (value instanceof TriState) {
             value = ((TriState) value).toInt();
           }
-          // It is *much* faster to write to a StringBuilder compared to the PrintStream object.
-          StringBuilder builder = new StringBuilder();
-          Printer.write(builder, value);
-          return builder.toString();
+          return new LabelPrinter().repr(value).toString();
         }
 
         /**
@@ -516,21 +498,22 @@ public abstract class OutputFormatter implements Serializable {
          * <p>Since query doesn't know which select path should be chosen, this doesn't try to
          * resolve the final value. Instead it just reconstructs the select.
          */
-        private String outputConfigurableAttrValue(Rule rule, RawAttributeMapper attributeMap,
-            Attribute attr) {
+        private String outputConfigurableAttrValue(
+            Rule rule, RawAttributeMapper attributeMap, Attribute attr) {
           List<String> selectors = new ArrayList<>();
-          for (BuildType.Selector<?> selector : ((BuildType.SelectorList<?>)
-              attributeMap.getRawAttributeValue(rule, attr)).getSelectors()) {
+          for (BuildType.Selector<?> selector :
+              ((BuildType.SelectorList<?>) attributeMap.getRawAttributeValue(rule, attr))
+                  .getSelectors()) {
             if (selector.isUnconditional()) {
-              selectors.add(outputAttrValue(
-                  Iterables.getOnlyElement(selector.getEntries().entrySet()).getValue()));
+              selectors.add(
+                  outputAttrValue(
+                      Iterables.getOnlyElement(selector.getEntries().entrySet()).getValue()));
             } else {
               selectors.add(String.format("select(%s)", outputAttrValue(selector.getEntries())));
             }
           }
           return String.join(" + ", selectors);
         }
-
 
         @Override
         public void processOutput(Iterable<Target> partialResult) throws InterruptedException {
@@ -837,5 +820,17 @@ public abstract class OutputFormatter implements Serializable {
         ? location.print(target.getPackage().getPackageDirectory().asFragment(),
             target.getPackage().getNameFragment())
         : location.print();
+  }
+
+  private static class LabelPrinter extends Printer.BasePrinter {
+    @Override
+    public LabelPrinter repr(Object o) {
+      if (o instanceof Label) {
+        writeString(((Label) o).getCanonicalForm());
+      } else {
+        super.repr(o);
+      }
+      return this;
+    }
   }
 }

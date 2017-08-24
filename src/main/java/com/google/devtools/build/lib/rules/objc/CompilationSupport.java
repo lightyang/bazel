@@ -34,7 +34,6 @@ import static java.nio.charset.StandardCharsets.ISO_8859_1;
 import static java.util.stream.Collectors.toCollection;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
@@ -59,6 +58,10 @@ import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.analysis.actions.ParameterFileWriteAction;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
+import com.google.devtools.build.lib.analysis.test.InstrumentedFilesCollector;
+import com.google.devtools.build.lib.analysis.test.InstrumentedFilesCollector.InstrumentationSpec;
+import com.google.devtools.build.lib.analysis.test.InstrumentedFilesCollector.LocalMetadataCollector;
+import com.google.devtools.build.lib.analysis.test.InstrumentedFilesProvider;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
@@ -66,9 +69,10 @@ import com.google.devtools.build.lib.packages.BuildType;
 import com.google.devtools.build.lib.packages.ImplicitOutputsFunction.SafeImplicitOutputsFunction;
 import com.google.devtools.build.lib.packages.RuleClass.ConfiguredTargetFactory.RuleErrorException;
 import com.google.devtools.build.lib.rules.apple.AppleConfiguration;
+import com.google.devtools.build.lib.rules.apple.ApplePlatform;
+import com.google.devtools.build.lib.rules.apple.ApplePlatform.PlatformType;
 import com.google.devtools.build.lib.rules.apple.AppleToolchain;
-import com.google.devtools.build.lib.rules.apple.Platform;
-import com.google.devtools.build.lib.rules.apple.Platform.PlatformType;
+import com.google.devtools.build.lib.rules.apple.XcodeConfig;
 import com.google.devtools.build.lib.rules.cpp.CcToolchain;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainProvider;
 import com.google.devtools.build.lib.rules.cpp.CppFileTypes;
@@ -78,10 +82,6 @@ import com.google.devtools.build.lib.rules.cpp.CppModuleMapAction;
 import com.google.devtools.build.lib.rules.cpp.FdoSupportProvider;
 import com.google.devtools.build.lib.rules.cpp.UmbrellaHeaderAction;
 import com.google.devtools.build.lib.rules.objc.ObjcCommandLineOptions.ObjcCrosstoolMode;
-import com.google.devtools.build.lib.rules.test.InstrumentedFilesCollector;
-import com.google.devtools.build.lib.rules.test.InstrumentedFilesCollector.InstrumentationSpec;
-import com.google.devtools.build.lib.rules.test.InstrumentedFilesCollector.LocalMetadataCollector;
-import com.google.devtools.build.lib.rules.test.InstrumentedFilesProvider;
 import com.google.devtools.build.lib.util.FileTypeSet;
 import com.google.devtools.build.lib.util.Pair;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
@@ -259,27 +259,26 @@ public abstract class CompilationSupport {
         .addPrivateHdrs(srcs.filter(HEADERS).list())
         .addPrecompiledSrcs(srcs.filter(PRECOMPILED_SRCS_TYPE).list())
         .setIntermediateArtifacts(intermediateArtifacts)
-        .setPchFile(Optional.fromNullable(ruleContext.getPrerequisiteArtifact("pch", Mode.TARGET)))
         .build();
   }
 
   /** Returns a list of framework search path flags for clang actions. */
   static Iterable<String> commonFrameworkFlags(
-      ObjcProvider provider, AppleConfiguration appleConfiguration) {
-    return Interspersing.beforeEach("-F", commonFrameworkNames(provider, appleConfiguration));
+      ObjcProvider provider, RuleContext ruleContext, ApplePlatform applePlaform) {
+    return Interspersing.beforeEach("-F",
+        commonFrameworkNames(provider, ruleContext, applePlaform));
   }
 
   /** Returns a list of frameworks for clang actions. */
   static Iterable<String> commonFrameworkNames(
-      ObjcProvider provider, AppleConfiguration appleConfiguration) {
-    Platform platform = appleConfiguration.getSingleArchPlatform();
+      ObjcProvider provider, RuleContext ruleContext, ApplePlatform platform) {
 
     ImmutableList.Builder<String> frameworkNames =
         new ImmutableList.Builder<String>()
-            .add(AppleToolchain.sdkFrameworkDir(platform, appleConfiguration));
-    if (platform.getType() == PlatformType.IOS) {
-      // As of sdk8.1, XCTest is in a base Framework dir
-      frameworkNames.add(AppleToolchain.platformDeveloperFrameworkDir(appleConfiguration));
+            .add(AppleToolchain.sdkFrameworkDir(platform, ruleContext));
+    // As of sdk8.1, XCTest is in a base Framework dir.
+    if (platform.getType() != PlatformType.WATCHOS) { // WatchOS does not have this directory.
+      frameworkNames.add(AppleToolchain.platformDeveloperFrameworkDir(platform));
     }
     return frameworkNames
         // Add custom (non-SDK) framework search paths. For each framework foo/bar.framework,
@@ -303,6 +302,7 @@ public abstract class CompilationSupport {
   protected final boolean useDeps;
   protected final Map<String, NestedSet<Artifact>> outputGroupCollector;
   protected final boolean isTestRule;
+  protected final boolean usePch;
 
   /**
    * Creates a new compilation support for the given rule and build configuration.
@@ -324,7 +324,8 @@ public abstract class CompilationSupport {
       CompilationAttributes compilationAttributes,
       boolean useDeps,
       Map<String, NestedSet<Artifact>> outputGroupCollector,
-      boolean isTestRule) {
+      boolean isTestRule,
+      boolean usePch) {
     this.ruleContext = ruleContext;
     this.buildConfiguration = buildConfiguration;
     this.objcConfiguration = buildConfiguration.getFragment(ObjcConfiguration.class);
@@ -334,6 +335,7 @@ public abstract class CompilationSupport {
     this.useDeps = useDeps;
     this.isTestRule = isTestRule;
     this.outputGroupCollector = outputGroupCollector;
+    this.usePch = usePch;
   }
 
   /** Builder for {@link CompilationSupport} */
@@ -346,6 +348,7 @@ public abstract class CompilationSupport {
     private Map<String, NestedSet<Artifact>> outputGroupCollector;
     private boolean isObjcLibrary = false;
     private boolean isTestRule = false;
+    private boolean usePch = true;
 
     /** Sets the {@link RuleContext} for the calling target. */
     public Builder setRuleContext(RuleContext ruleContext) {
@@ -377,6 +380,15 @@ public abstract class CompilationSupport {
      */
     public Builder doNotUseDeps() {
       this.useDeps = false;
+      return this;
+    }
+
+    /**
+     * Sets that this {@link CompilationSupport} will not use the pch from the rule context in
+     * determining compilation actions.
+     */
+    public Builder doNotUsePch() {
+      this.usePch = false;
       return this;
     }
 
@@ -446,7 +458,8 @@ public abstract class CompilationSupport {
             compilationAttributes,
             useDeps,
             outputGroupCollector,
-            isTestRule);
+            isTestRule,
+            usePch);
       } else {
         return new LegacyCompilationSupport(
             ruleContext,
@@ -455,7 +468,8 @@ public abstract class CompilationSupport {
             compilationAttributes,
             useDeps,
             outputGroupCollector,
-            isTestRule);
+            isTestRule,
+            usePch);
       }
     }
   }
@@ -833,7 +847,7 @@ public abstract class CompilationSupport {
       }
     }
 
-    if (attributes.enableModules()) {
+    if (attributes.enableModules() && !getCustomModuleMap(ruleContext).isPresent()) {
       copts.add("-fmodules");
     }
     if (copts.contains("-fmodules")) {
@@ -1054,7 +1068,7 @@ public abstract class CompilationSupport {
       Artifact dummyArchive =
           Iterables.getOnlyElement(
               ruleContext
-                  .getPrerequisite("$dummy_lib", Mode.TARGET, ObjcProvider.class)
+                  .getPrerequisite("$dummy_lib", Mode.TARGET, ObjcProvider.SKYLARK_CONSTRUCTOR)
                   .get(LIBRARY));
 
       CustomCommandLine commandLine =
@@ -1063,12 +1077,12 @@ public abstract class CompilationSupport {
               .addExecPath("--output_archive", prunedJ2ObjcArchive)
               .addExecPath("--dummy_archive", dummyArchive)
               .addExecPath("--xcrunwrapper", xcrunwrapper(ruleContext).getExecutable())
-              .addJoinExecPaths("--dependency_mapping_files", ",", j2ObjcDependencyMappingFiles)
-              .addJoinExecPaths("--header_mapping_files", ",", j2ObjcHeaderMappingFiles)
-              .addJoinExecPaths(
+              .addJoinedExecPaths("--dependency_mapping_files", ",", j2ObjcDependencyMappingFiles)
+              .addJoinedExecPaths("--header_mapping_files", ",", j2ObjcHeaderMappingFiles)
+              .addJoinedExecPaths(
                   "--archive_source_mapping_files", ",", j2ObjcArchiveSourceMappingFiles)
               .add("--entry_classes")
-              .add(Joiner.on(",").join(entryClasses))
+              .addJoined(",", entryClasses)
               .build();
 
       ruleContext.registerAction(
@@ -1092,7 +1106,7 @@ public abstract class CompilationSupport {
               .addTransitiveInputs(j2ObjcHeaderMappingFiles)
               .addTransitiveInputs(j2ObjcArchiveSourceMappingFiles)
               .setCommandLine(
-                  CustomCommandLine.builder().addPaths("@%s", paramFile.getExecPath()).build())
+                  CustomCommandLine.builder().addFormatted("@%s", paramFile.getExecPath()).build())
               .addOutput(prunedJ2ObjcArchive)
               .build(ruleContext));
     }
@@ -1146,10 +1160,10 @@ public abstract class CompilationSupport {
   }
 
   private static CommandLine symbolStripCommandLine(
-      Iterable<String> extraFlags, Artifact unstrippedArtifact, Artifact strippedArtifact) {
+      ImmutableList<String> extraFlags, Artifact unstrippedArtifact, Artifact strippedArtifact) {
     return CustomCommandLine.builder()
         .add(STRIP)
-        .add(extraFlags)
+        .addAll(extraFlags)
         .addExecPath("-o", strippedArtifact)
         .addPath(unstrippedArtifact.getExecPath())
         .build();
@@ -1165,7 +1179,7 @@ public abstract class CompilationSupport {
    * subject to the given {@link StrippingType}.
    */
   protected void registerBinaryStripAction(Artifact binaryToLink, StrippingType strippingType) {
-    final Iterable<String> stripArgs;
+    final ImmutableList<String> stripArgs;
     if (isTestRule) {
       // For test targets, only debug symbols are stripped off, since /usr/bin/strip is not able
       // to strip off all symbols in XCTest bundle.
@@ -1209,6 +1223,17 @@ public abstract class CompilationSupport {
             ImmutableList.<PathFragment>of()));
  
     return this;
+  }
+
+  protected Optional<Artifact> getPchFile() {
+    if (!usePch) {
+      return Optional.absent();
+    }
+    Artifact pchHdr = null;
+    if (ruleContext.attributes().has("pch", BuildType.LABEL)) {
+      pchHdr = ruleContext.getPrerequisiteArtifact("pch", Mode.TARGET);
+    }
+    return Optional.fromNullable(pchHdr);
   }
 
   /**
@@ -1355,31 +1380,29 @@ public abstract class CompilationSupport {
                     .list());
     CustomCommandLine.Builder cmdLine =
         CustomCommandLine.builder()
-            .add("--arch")
-            .add(appleConfiguration.getSingleArchitecture().toLowerCase())
-            .add("--platform")
-            .add(appleConfiguration.getSingleArchPlatform().getLowerCaseNameInPlist())
-            .add("--sdk_version")
+            .add("--arch", appleConfiguration.getSingleArchitecture().toLowerCase())
+            .add("--platform", appleConfiguration.getSingleArchPlatform().getLowerCaseNameInPlist())
             .add(
-                appleConfiguration
-                    .getSdkVersionForPlatform(appleConfiguration.getSingleArchPlatform())
+                "--sdk_version",
+                XcodeConfig.getSdkVersionForPlatform(
+                        ruleContext, appleConfiguration.getSingleArchPlatform())
                     .toStringWithMinimumComponents(2))
-            .add("--xcode_version")
-            .add(appleConfiguration.getXcodeVersion().toStringWithMinimumComponents(2))
+            .add(
+                "--xcode_version",
+                XcodeConfig.getXcodeVersion(ruleContext).toStringWithMinimumComponents(2))
             .add("--");
     for (ObjcHeaderThinningInfo info : infos) {
-      cmdLine.addJoinPaths(
-          ":",
-          Lists.newArrayList(info.sourceFile.getExecPath(), info.headersListFile.getExecPath()));
+      cmdLine.addFormatted(
+          "%s:%s", info.sourceFile.getExecPath(), info.headersListFile.getExecPath());
       builder.addInput(info.sourceFile).addOutput(info.headersListFile);
     }
     ruleContext.registerAction(
         builder
-            .setCommandLine(cmdLine.add("--").add(args).build())
+            .setCommandLine(cmdLine.add("--").addAll(args).build())
             .addInputs(compilationArtifacts.getPrivateHdrs())
             .addTransitiveInputs(attributes.hdrs())
             .addTransitiveInputs(objcProvider.get(ObjcProvider.HEADER))
-            .addInputs(compilationArtifacts.getPchFile().asSet())
+            .addInputs(getPchFile().asSet())
             .addTransitiveInputs(objcProvider.get(ObjcProvider.STATIC_FRAMEWORK_FILE))
             .addTransitiveInputs(objcProvider.get(ObjcProvider.DYNAMIC_FRAMEWORK_FILE))
             .build(ruleContext));
@@ -1442,5 +1465,12 @@ public abstract class CompilationSupport {
     } else {
       return null;
     }
+  }
+
+  public static Optional<Artifact> getCustomModuleMap(RuleContext ruleContext) {
+    if (ruleContext.attributes().has("module_map", BuildType.LABEL)) {
+      return Optional.fromNullable(ruleContext.getPrerequisiteArtifact("module_map", Mode.TARGET));
+    }
+    return Optional.absent();
   }
 }

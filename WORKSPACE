@@ -35,8 +35,13 @@ bind(
 
 # For src/test/docker/...
 load("//src/test/docker:docker_repository.bzl", "docker_repository")
-
 docker_repository()
+load("//src/test/docker:flavours.bzl", "pull_images_for_docker_tests")
+pull_images_for_docker_tests()
+
+# For src/test/shell/bazel:test_srcs
+load("//src/test/shell/bazel:list_source_repository.bzl", "list_source_repository")
+list_source_repository(name = "local_bazel_source_list")
 
 # To run the Android integration tests in //src/test/shell/bazel/android:all or
 # build the Android sample app in //examples/android/java/bazel:hello_world
@@ -107,4 +112,23 @@ http_file(
         "https://bazel-mirror.storage.googleapis.com/openjdk/azul-zulu-8.21.0.1-jdk8.0.131/zulu8.21.0.1-jdk8.0.131-win_x64.zip",
         "https://cdn.azul.com/zulu/bin/zulu8.21.0.1-jdk8.0.131-win_x64.zip",
     ],
+)
+
+http_archive(
+    name = "bazel_toolchains",
+    urls = [
+        "http://mirror.bazel.build/github.com/bazelbuild/bazel-toolchains/archive/bccee4855c049d34bac481083b4c68e2fab8cc50.tar.gz",
+        "https://github.com/bazelbuild/bazel-toolchains/archive/bccee4855c049d34bac481083b4c68e2fab8cc50.tar.gz",
+    ],
+    strip_prefix = "bazel-toolchains-bccee4855c049d34bac481083b4c68e2fab8cc50",
+    sha256 = "3903fd93b96b42067e00b7973a2c16c34e761ad7a0b55e1557d408f352849e41",
+)
+
+http_archive(
+    name = "com_googlesource_code_re2",
+    urls = [
+        "https://github.com/google/re2/archive/2017-08-01.tar.gz",
+    ],
+    strip_prefix = "re2-2017-08-01",
+    sha256 = "938723dc197125392698c5fcf41acb74877866ff140b81fd50b7314bf26f1636",
 )

@@ -103,19 +103,6 @@ public class ObjcCppSemantics implements CppSemantics {
     actionBuilder.addTransitiveMandatoryInputs(objcProvider.get(STATIC_FRAMEWORK_FILE));
     actionBuilder.addTransitiveMandatoryInputs(objcProvider.get(DYNAMIC_FRAMEWORK_FILE));
 
-    ImmutableSet.Builder<Artifact> generatedHeaders = ImmutableSet.builder();
-
-    // TODO(b/62060839): Identify the mechanism used to add generated headers in c++, and recycle
-    // it here.
-    PathFragment genfilesSegment =
-        ruleContext.getConfiguration().getGenfilesDirectory().getExecPath().getLastSegment();
-    for (Artifact header : objcProvider.get(HEADER)) {
-      if (genfilesSegment.equals(header.getRoot().getExecPath().getLastSegment())) {
-        generatedHeaders.add(header);
-      }
-    }
-    actionBuilder.addMandatoryInputs(generatedHeaders.build());
-
     if (isHeaderThinningEnabled) {
       Artifact sourceFile = actionBuilder.getSourceFile();
       if (!sourceFile.isTreeArtifact()
@@ -123,6 +110,18 @@ public class ObjcCppSemantics implements CppSemantics {
         actionBuilder.addMandatoryInputs(
             ImmutableList.of(intermediateArtifacts.headersListFile(sourceFile)));
       }
+    } else {
+      // Header thinning feature will make all generated files mandatory inputs to the
+      // ObjcHeaderScanning action so this is only required when that is disabled
+      // TODO(b/62060839): Identify the mechanism used to add generated headers in c++, and recycle
+      // it here.
+      ImmutableSet.Builder<Artifact> generatedHeaders = ImmutableSet.builder();
+      for (Artifact header : objcProvider.get(HEADER)) {
+        if (!header.isSourceArtifact()) {
+          generatedHeaders.add(header);
+        }
+      }
+      actionBuilder.addMandatoryInputs(generatedHeaders.build());
     }
   }
 

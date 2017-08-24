@@ -92,7 +92,9 @@ public final class JvmConfigurationLoader implements ConfigurationFragmentFactor
       if (javaHomeTarget instanceof Rule) {
         if (!((Rule) javaHomeTarget).getRuleClass().equals("java_runtime_suite")) {
           throw new InvalidConfigurationException(
-              "Unexpected javabase rule kind '" + ((Rule) javaHomeTarget).getRuleClass() + "'");
+              "Unexpected javabase rule kind '"
+                  + ((Rule) javaHomeTarget).getRuleClass()
+                  + "'. Expected java_runtime_suite");
         }
         return createFromRuntimeSuite(lookup, (Rule) javaHomeTarget, cpu);
       }
@@ -105,7 +107,7 @@ public final class JvmConfigurationLoader implements ConfigurationFragmentFactor
   }
 
   // TODO(b/34175492): eventually the Jvm fragement will containg only the label of a java_runtime
-  // rule, and all of the configuration will be accessed using JavaRuntimeProvider.
+  // rule, and all of the configuration will be accessed using JavaRuntimeInfo.
   private static Jvm createFromRuntimeSuite(
       ConfigurationEnvironment lookup, Rule javaRuntimeSuite, String cpu)
       throws InvalidConfigurationException, InterruptedException, NoSuchTargetException,
@@ -125,7 +127,7 @@ public final class JvmConfigurationLoader implements ConfigurationFragmentFactor
           String.format("Expected a java_runtime rule, was '%s'", javaRuntimeRule.getRuleClass()));
     }
     RawAttributeMapper attributes = RawAttributeMapper.of(javaRuntimeRule);
-    PathFragment javaHomePath = defaultJavaHome(javaRuntimeLabel);
+    PathFragment javaHomePath = JavaRuntime.defaultJavaHome(javaRuntimeLabel);
     if (attributes.isAttributeValueExplicitlySpecified("java_home")) {
       javaHomePath = javaHomePath.getRelative(attributes.get("java_home", Type.STRING));
       List<Label> srcs = attributes.get("srcs", BuildType.LABEL_LIST);
@@ -137,7 +139,7 @@ public final class JvmConfigurationLoader implements ConfigurationFragmentFactor
                 javaHomePath, srcs.toString()));
       }
     }
-    return new Jvm(javaHomePath, javaRuntimeLabel);
+    return new Jvm(javaHomePath, javaRuntimeSuite.getLabel());
   }
 
   private static Label selectRuntime(Rule javaRuntimeSuite, String cpu)
@@ -152,13 +154,6 @@ public final class JvmConfigurationLoader implements ConfigurationFragmentFactor
     }
     throw new InvalidConfigurationException(
         "No JVM target found under " + javaRuntimeSuite + " that would work for " + cpu);
-  }
-
-  private static PathFragment defaultJavaHome(Label javaBase) {
-    if (javaBase.getPackageIdentifier().getRepository().isDefault()) {
-      return javaBase.getPackageFragment();
-    }
-    return javaBase.getPackageIdentifier().getSourceRoot();
   }
 
   private static Jvm createLegacy(String javaHome) throws InvalidConfigurationException {

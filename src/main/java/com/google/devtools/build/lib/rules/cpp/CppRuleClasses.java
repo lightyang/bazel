@@ -30,8 +30,12 @@ import static com.google.devtools.build.lib.rules.cpp.CppFileTypes.PIC_OBJECT_FI
 import static com.google.devtools.build.lib.rules.cpp.CppFileTypes.SHARED_LIBRARY;
 import static com.google.devtools.build.lib.rules.cpp.CppFileTypes.VERSIONED_SHARED_LIBRARY;
 
+import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.analysis.LanguageDependentFragment.LibraryLanguage;
+import com.google.devtools.build.lib.analysis.RuleDefinitionEnvironment;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
+import com.google.devtools.build.lib.analysis.config.PatchTransition;
+import com.google.devtools.build.lib.analysis.test.InstrumentedFilesCollector.InstrumentationSpec;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.packages.Attribute;
 import com.google.devtools.build.lib.packages.Attribute.LateBoundLabel;
@@ -40,9 +44,11 @@ import com.google.devtools.build.lib.packages.AttributeMap;
 import com.google.devtools.build.lib.packages.ImplicitOutputsFunction.SafeImplicitOutputsFunction;
 import com.google.devtools.build.lib.packages.Rule;
 import com.google.devtools.build.lib.packages.RuleTransitionFactory;
+import com.google.devtools.build.lib.rules.cpp.transitions.DisableLipoTransition;
 import com.google.devtools.build.lib.rules.cpp.transitions.EnableLipoTransition;
-import com.google.devtools.build.lib.rules.test.InstrumentedFilesCollector.InstrumentationSpec;
+import com.google.devtools.build.lib.rules.cpp.transitions.LipoContextCollectorTransition;
 import com.google.devtools.build.lib.util.FileTypeSet;
+import com.google.devtools.build.lib.util.OsUtils;
 
 /**
  * Rule class definitions for C++ rules.
@@ -87,6 +93,18 @@ public class CppRuleClasses {
   }
 
   /**
+   * Declares the implementations for C++ transition enums.
+   *
+   * <p>New transitions should extend {@link PatchTransition}, which avoids the need for this map.
+   */
+  public static final ImmutableMap<Transition, Transition> DYNAMIC_TRANSITIONS_MAP =
+      ImmutableMap.of(
+          Attribute.ConfigurationTransition.DATA, DisableLipoTransition.INSTANCE,
+          LipoTransition.LIPO_COLLECTOR, LipoContextCollectorTransition.INSTANCE
+      );
+
+
+  /**
    * Rule transition factory that enables LIPO on the LIPO context binary (i.e. applies a DATA ->
    * TARGET transition).
    *
@@ -104,7 +122,7 @@ public class CppRuleClasses {
    * Label of a pseudo-filegroup that contains all crosstool and libcfiles for all configurations,
    * as specified on the command-line.
    */
-  public static final String CROSSTOOL_LABEL = "//tools/defaults:crosstool";
+  public static final String CROSSTOOL_LABEL = "//tools/cpp:toolchain";
 
   public static final LateBoundLabel<BuildConfiguration> DEFAULT_MALLOC =
       new LateBoundLabel<BuildConfiguration>() {
@@ -114,13 +132,16 @@ public class CppRuleClasses {
         }
       };
 
-  public static final LateBoundLabel<BuildConfiguration> CC_TOOLCHAIN =
-      new LateBoundLabel<BuildConfiguration>(CROSSTOOL_LABEL, CppConfiguration.class) {
-        @Override
-        public Label resolve(Rule rule, AttributeMap attributes, BuildConfiguration configuration) {
-          return configuration.getFragment(CppConfiguration.class).getCcToolchainRuleLabel();
-        }
-      };
+  public static LateBoundLabel<BuildConfiguration> ccToolchainAttribute(
+      RuleDefinitionEnvironment env) {
+    return new LateBoundLabel<BuildConfiguration>(
+        env.getToolsLabel(CROSSTOOL_LABEL), CppConfiguration.class) {
+      @Override
+      public Label resolve(Rule rule, AttributeMap attributes, BuildConfiguration configuration) {
+        return configuration.getFragment(CppConfiguration.class).getCcToolchainRuleLabel();
+      }
+    };
+  }
 
   // Artifacts of these types are discarded from the 'hdrs' attribute in cc rules
   static final FileTypeSet DISALLOWED_HDRS_FILES = FileTypeSet.of(
@@ -147,17 +168,16 @@ public class CppRuleClasses {
 
   public static final LibraryLanguage LANGUAGE = new LibraryLanguage("C++");
 
-  /**
-   * Implicit outputs for cc_binary rules.
-   */
+  /** Implicit outputs for cc_binary rules. */
   public static final SafeImplicitOutputsFunction CC_BINARY_STRIPPED =
-      fromTemplates("%{name}.stripped");
-
+      fromTemplates("%{name}.stripped" + OsUtils.executableExtension());
 
   // Used for requesting dwp "debug packages".
   public static final SafeImplicitOutputsFunction CC_BINARY_DEBUG_PACKAGE =
       fromTemplates("%{name}.dwp");
 
+  /** A string constant for the copts feature. */
+  public static final String COPTS = "copts";
 
   /**
    * A string constant for the parse_headers feature.
@@ -302,6 +322,13 @@ public class CppRuleClasses {
    */
   public static final String GENERATE_PDB_FILE = "generate_pdb_file";
 
+  /**
+   * A string constant for no_stripping feature, if it's specified, then no strip action config is
+   * needed, instead the stripped binary will simply be a symlink (or a copy on Windows) of the
+   * original binary.
+   */
+  public static final String NO_STRIPPING = "no_stripping";
+
   /** A string constant for /showIncludes parsing feature, should only be used for MSVC toolchain */
   public static final String PARSE_SHOWINCLUDES = "parse_showincludes";
 
@@ -329,6 +356,12 @@ public class CppRuleClasses {
    * A string constant for the coverage feature.
    */
   public static final String COVERAGE = "coverage";
+
+  /** Produce artifacts for coverage in llvm coverage mapping format. */
+  public static final String LLVM_COVERAGE_MAP_FORMAT = "llvm_coverage_map_format";
+
+  /** Produce artifacts for coverage in gcc coverage mapping format. */
+  public static final String GCC_COVERAGE_MAP_FORMAT = "gcc_coverage_map_format";
 
   /** A string constant for the match-clif feature. */
   public static final String MATCH_CLIF = "match_clif";

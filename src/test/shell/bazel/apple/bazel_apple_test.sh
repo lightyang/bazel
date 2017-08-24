@@ -211,7 +211,7 @@ EOF
   bazel build --verbose_failures --objccopt=-DCOPTS_FOO=1 -s \
       --xcode_version=$XCODE_VERSION \
       //ios:swift_lib >$TEST_log 2>&1 || fail "should build"
-  expect_log "-module-cache-path bazel-out/darwin_x86_64-fastbuild/genfiles/_objc_module_cache"
+  expect_log "-module-cache-path bazel-out/darwin_x86_64-fastbuild/.*/_objc_module_cache"
 }
 
 function test_swift_import_objc_framework() {
@@ -276,6 +276,7 @@ apple_binary(
     name = "main_binary",
     deps = [":lib_a", ":lib_b"],
     srcs = ["main.m"],
+    platform_type = "ios",
 )
 genrule(
   name = "lipo_run",
@@ -443,6 +444,7 @@ objc_library(
 apple_binary(
     name = "main_binary",
     deps = [":lib_a", ":lib_b"],
+    platform_type = "ios",
 )
 genrule(
   name = "lipo_run",
@@ -526,18 +528,10 @@ swift_library(name = "WatchModule",
 apple_binary(name = "bin",
              deps = [":WatchModule"],
              platform_type = "watchos")
-
-apple_watch2_extension(
-    name = "WatchExtension",
-    app_bundle_id = "com.google.app.watchkit",
-    app_name = "WatchApp",
-    binary = ":bin",
-    ext_bundle_id = "com.google.app.extension",
-)
 EOF
 
   bazel build --verbose_failures --xcode_version=$XCODE_VERSION \
-      //ios:WatchExtension >$TEST_log 2>&1 || fail "should build"
+      //ios:bin >$TEST_log 2>&1 || fail "should build"
 }
 
 function test_host_xcodes() {
@@ -765,8 +759,8 @@ EOF
 
   bazel build --verbose_failures --xcode_version=$XCODE_VERSION -s \
       //ios:bin >$TEST_log 2>&1 || fail "should build"
-  expect_log "-Xlinker -add_ast_path -Xlinker bazel-out/ios_x86_64-fastbuild/genfiles/ios/dep/_objs/ios_dep.swiftmodule"
-  expect_log "-Xlinker -add_ast_path -Xlinker bazel-out/ios_x86_64-fastbuild/genfiles/ios/swift_lib/_objs/ios_swift_lib.swiftmodule"
+  expect_log "-Xlinker -add_ast_path -Xlinker bazel-out/ios_x86_64-fastbuild/.*/ios/dep/_objs/ios_dep.swiftmodule"
+  expect_log "-Xlinker -add_ast_path -Xlinker bazel-out/ios_x86_64-fastbuild/.*/ios/swift_lib/_objs/ios_swift_lib.swiftmodule"
 }
 
 function test_swiftc_script_mode() {
@@ -934,6 +928,7 @@ apple_binary(
     name = "main_binary",
     deps = [":lib_a", ":lib_b"],
     srcs = ["main.m"],
+    platform_type = "ios",
 )
 genrule(
   name = "lipo_run",

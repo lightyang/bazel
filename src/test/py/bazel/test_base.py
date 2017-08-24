@@ -1,3 +1,4 @@
+# pylint: disable=g-bad-file-header
 # Copyright 2017 The Bazel Authors. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import locale
 import os
 import subprocess
 import sys
@@ -92,10 +94,11 @@ class TestBase(unittest.TestCase):
     return os.name == 'nt'
 
   def Path(self, path):
-    """Returns the absolute path of `path` relative to the scratch directory.
+    """Returns the absolute path of `path` relative to self._test_cwd.
 
     Args:
-      path: string; a path, relative to the test's scratch directory,
+      path: string; a path, relative to self._test_cwd,
+        self._test_cwd is different for each test case.
         e.g. "foo/bar/BUILD"
     Returns:
       an absolute path
@@ -105,7 +108,7 @@ class TestBase(unittest.TestCase):
     if os.path.isabs(path) or '..' in path:
       raise ArgumentError(('path="%s" may not be absolute and may not contain '
                            'uplevel references') % path)
-    return os.path.join(self._tests_root, path)
+    return os.path.join(self._test_cwd, path)
 
   def Rlocation(self, runfile):
     """Returns the absolute path to a runfile."""
@@ -141,6 +144,8 @@ class TestBase(unittest.TestCase):
         e.g. "foo/bar/BUILD"
       lines: [string]; the contents of the file (newlines are added
         automatically)
+    Returns:
+      The absolute path of the scratch file.
     Raises:
       ArgumentError: if `path` is absolute or contains uplevel references
       IOError: if an I/O error occurs
@@ -156,14 +161,17 @@ class TestBase(unittest.TestCase):
         for l in lines:
           f.write(l)
           f.write('\n')
+    return abspath
 
-  def RunBazel(self, args, env_remove=None):
+  def RunBazel(self, args, env_remove=None, env_add=None):
     """Runs "bazel <args>", waits for it to exit.
 
     Args:
       args: [string]; flags to pass to bazel (e.g. ['--batch', 'build', '//x'])
       env_remove: set(string); optional; environment variables to NOT pass to
         Bazel
+      env_add: set(string); optional; environment variables to pass to
+        Bazel, won't be removed by env_remove.
     Returns:
       (int, [string], [string]) tuple: exit code, stdout lines, stderr lines
     """
@@ -171,15 +179,17 @@ class TestBase(unittest.TestCase):
         self.Rlocation('io_bazel/src/bazel'),
         '--bazelrc=/dev/null',
         '--nomaster_bazelrc',
-    ] + args, env_remove)
+    ] + args, env_remove, env_add)
 
-  def RunProgram(self, args, env_remove=None):
+  def RunProgram(self, args, env_remove=None, env_add=None):
     """Runs a program (args[0]), waits for it to exit.
 
     Args:
       args: [string]; the args to run; args[0] should be the program itself
       env_remove: set(string); optional; environment variables to NOT pass to
         the program
+      env_add: set(string); optional; environment variables to pass to
+        the program, won't be removed by env_remove.
     Returns:
       (int, [string], [string]) tuple: exit code, stdout lines, stderr lines
     """
@@ -190,18 +200,24 @@ class TestBase(unittest.TestCase):
             stdout=stdout,
             stderr=stderr,
             cwd=self._test_cwd,
-            env=self._EnvMap(env_remove))
+            env=self._EnvMap(env_remove, env_add))
         exit_code = proc.wait()
 
         stdout.seek(0)
-        stdout_lines = [l.strip() for l in stdout.readlines()]
+        stdout_lines = [
+            l.decode(locale.getpreferredencoding()).strip()
+            for l in stdout.readlines()
+        ]
 
         stderr.seek(0)
-        stderr_lines = [l.strip() for l in stderr.readlines()]
+        stderr_lines = [
+            l.decode(locale.getpreferredencoding()).strip()
+            for l in stderr.readlines()
+        ]
 
         return exit_code, stdout_lines, stderr_lines
 
-  def _EnvMap(self, env_remove=None):
+  def _EnvMap(self, env_remove=None, env_add=None):
     """Returns the environment variable map to run Bazel or other programs."""
     if TestBase.IsWindows():
       result = []
@@ -228,12 +244,21 @@ class TestBase(unittest.TestCase):
           'BAZEL_SH': 'c:\\tools\\msys64\\usr\\bin\\bash.exe',
           # TODO(pcloudy): Remove this after no longer need to debug
           # https://github.com/bazelbuild/bazel/issues/3273
-          'CC_CONFIGURE_DEBUG': '1',
-          # TODO(pcloudy): Remove this hardcoded path after resolving
-          # https://github.com/bazelbuild/bazel/issues/3273
-          'BAZEL_VC':
-          'C:\\Program Files (x86)\\Microsoft Visual Studio 14.0\\VC',
+          'CC_CONFIGURE_DEBUG': '1'
       }
+
+      # TODO(pcloudy): Remove these hardcoded paths after resolving
+      # https://github.com/bazelbuild/bazel/issues/3273
+      env['BAZEL_VC'] = 'visual-studio-not-found'
+      for p in [
+          (r'C:\Program Files (x86)\Microsoft Visual Studio\2017\Professional'
+           r'\VC'),
+          r'C:\Program Files (x86)\Microsoft Visual Studio\2017\BuildTools\VC',
+          r'C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC'
+      ]:
+        if os.path.exists(p):
+          env['BAZEL_VC'] = p
+          break
     else:
       env = {'HOME': os.path.join(self._temp, 'home')}
 
@@ -246,6 +271,9 @@ class TestBase(unittest.TestCase):
     if env_remove:
       for e in env_remove:
         del env[e]
+    if env_add:
+      for e in env_add:
+        env[e] = env_add[e]
     return env
 
   @staticmethod

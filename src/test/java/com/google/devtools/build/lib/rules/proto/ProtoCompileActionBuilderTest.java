@@ -17,7 +17,6 @@ package com.google.devtools.build.lib.rules.proto;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.devtools.build.lib.collect.nestedset.Order.STABLE_ORDER;
 import static com.google.devtools.build.lib.rules.proto.ProtoCompileActionBuilder.createCommandLineFromToolchains;
-import static com.google.devtools.build.lib.rules.proto.ProtoCompileActionBuilder.createStrictProtoDepsViolationErrorMessage;
 import static org.junit.Assert.fail;
 import static org.mockito.Mockito.mock;
 
@@ -91,7 +90,7 @@ public class ProtoCompileActionBuilderTest {
             supportData.getDirectProtoSources(),
             supportData.getTransitiveImports(),
             null /* protosInDirectDeps */,
-            "//foo:bar",
+            Label.parseAbsoluteUnchecked("//foo:bar"),
             true /* allowServices */,
             ImmutableList.<String>of() /* protocOpts */);
 
@@ -104,6 +103,30 @@ public class ProtoCompileActionBuilderTest {
             "-Iimport2.proto=import2.proto",
             "source_file.proto")
         .inOrder();
+  }
+
+  @Test
+  public void commandline_derivedArtifact() {
+    // Verify that the command line contains the correct path to a generated protocol buffers.
+    SupportData supportData =
+        SupportData.create(
+            Predicates.<TransitiveInfoCollection>alwaysFalse(),
+            ImmutableList.of(derivedArtifact("//:dont-care", "source_file.proto")),
+            NestedSetBuilder.<Artifact>emptySet(STABLE_ORDER) /* protosInDirectDeps */,
+            NestedSetBuilder.<Artifact>emptySet(STABLE_ORDER) /* transitiveImports */,
+            true /* hasProtoSources */);
+
+    CustomCommandLine cmdLine =
+        createCommandLineFromToolchains(
+            ImmutableList.<ToolchainInvocation>of() /* toolchainInvocations */,
+            supportData.getDirectProtoSources(),
+            supportData.getTransitiveImports(),
+            null /* protosInDirectDeps */,
+            Label.parseAbsoluteUnchecked("//foo:bar"),
+            true /* allowServices */,
+            ImmutableList.<String>of() /* protocOpts */);
+
+    assertThat(cmdLine.arguments()).containsExactly("out/source_file.proto");
   }
 
   @Test
@@ -132,7 +155,7 @@ public class ProtoCompileActionBuilderTest {
             supportData.getDirectProtoSources(),
             supportData.getTransitiveImports(),
             supportData.getProtosInDirectDeps(),
-            "//foo:bar",
+            Label.parseAbsoluteUnchecked("//foo:bar"),
             true /* allowServices */,
             ImmutableList.<String>of() /* protocOpts */);
 
@@ -142,7 +165,7 @@ public class ProtoCompileActionBuilderTest {
             "-Iimport1.proto=import1.proto",
             "-Iimport2.proto=import2.proto",
             "--direct_dependencies=import1.proto",
-            createStrictProtoDepsViolationErrorMessage("//foo:bar"),
+            String.format(ProtoCompileActionBuilder.STRICT_DEPS_FLAG_TEMPLATE, "//foo:bar"),
             "source_file.proto")
         .inOrder();
   }
@@ -163,7 +186,7 @@ public class ProtoCompileActionBuilderTest {
             supportData.getDirectProtoSources(),
             supportData.getTransitiveImports(),
             supportData.getProtosInDirectDeps(),
-            "//foo:bar",
+            Label.parseAbsoluteUnchecked("//foo:bar"),
             false /* allowServices */,
             ImmutableList.of("--foo", "--bar") /* protocOpts */);
 
@@ -205,7 +228,7 @@ public class ProtoCompileActionBuilderTest {
             supportData.getDirectProtoSources(),
             supportData.getTransitiveImports(),
             supportData.getProtosInDirectDeps(),
-            "//foo:bar",
+            Label.parseAbsoluteUnchecked("//foo:bar"),
             true /* allowServices */,
             ImmutableList.<String>of() /* protocOpts */);
 
@@ -250,7 +273,7 @@ public class ProtoCompileActionBuilderTest {
           supportData.getDirectProtoSources(),
           supportData.getTransitiveImports(),
           supportData.getProtosInDirectDeps(),
-          "//foo:bar",
+          Label.parseAbsoluteUnchecked("//foo:bar"),
           true /* allowServices */,
           ImmutableList.<String>of() /* protocOpts */);
       fail("Expected an exception");

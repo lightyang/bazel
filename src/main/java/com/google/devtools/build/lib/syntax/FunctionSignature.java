@@ -19,12 +19,11 @@ import com.google.auto.value.AutoValue;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Interner;
 import com.google.devtools.build.lib.concurrent.BlazeInterners;
-import com.google.devtools.build.lib.syntax.SkylarkList.Tuple;
+import com.google.devtools.build.lib.syntax.Printer.BasePrinter;
 import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.util.StringCanonicalizer;
 import java.io.Serializable;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
@@ -135,23 +134,6 @@ public abstract class FunctionSignature implements Serializable {
     public int getArguments() {
       return getAllNamed() + (hasStarArg() ? 1 : 0) + (hasKwArg() ? 1 : 0);
     }
-
-    /**
-     * @return this signature shape converted to a list of classes
-     */
-    public List<Class<?>> toClasses() {
-      List<Class<?>> parameters = new ArrayList<>();
-
-      parameters.addAll(Collections.nCopies(getAllNamed(), Object.class));
-      if (hasStarArg()) {
-        parameters.add(Tuple.class);
-      }
-      if (hasKwArg()) {
-        parameters.add(SkylarkDict.class);
-      }
-
-      return parameters;
-    }
   }
 
   /** Names of a FunctionSignature */
@@ -162,11 +144,6 @@ public abstract class FunctionSignature implements Serializable {
   public static ImmutableList<String> names(List<String> names) {
     return namesInterner.intern(
         names.stream().map(StringCanonicalizer::intern).collect(toImmutableList()));
-  }
-
-  /** Intern a list of names */
-  public static ImmutableList<String> names(String... names) {
-    return names(ImmutableList.<String>copyOf(names));
   }
 
   // Interner
@@ -257,16 +234,6 @@ public abstract class FunctionSignature implements Serializable {
       }
       return new AutoValue_FunctionSignature_WithValues<>(
           signature, convertedDefaultValues, convertedTypes);
-    }
-
-    public static <V, T> WithValues<V, T> create(FunctionSignature signature,
-        @Nullable List<V> defaultValues) {
-      return create(signature, defaultValues, null);
-    }
-
-    public static <V, T> WithValues<V, T> create(FunctionSignature signature,
-        @Nullable V[] defaultValues) {
-      return create(signature, Arrays.asList(defaultValues), null);
     }
 
     public static <V, T> WithValues<V, T> create(FunctionSignature signature) {
@@ -362,37 +329,38 @@ public abstract class FunctionSignature implements Serializable {
         params.add(starStar);
         types.add(starStarType);
       }
-      return WithValues.<V, T>create(
+      return WithValues.create(
           FunctionSignature.create(
               Shape.create(
                   mandatoryPositionals, optionalPositionals,
                   mandatoryNamedOnly, optionalNamedOnly,
                   star != null, starStar != null),
-              ImmutableList.<String>copyOf(params)),
-          FunctionSignature.<V>valueListOrNull(defaults),
-          FunctionSignature.<T>valueListOrNull(types));
+              ImmutableList.copyOf(params)),
+          FunctionSignature.valueListOrNull(defaults),
+          FunctionSignature.valueListOrNull(types));
     }
 
     public StringBuilder toStringBuilder(final StringBuilder sb) {
-      return toStringBuilder(sb, true, true, true, false);
+      return toStringBuilder(sb, true, true, false);
     }
 
     /**
      * Appends a representation of this signature to a string buffer.
+     *
      * @param sb Output StringBuffer
-     * @param showNames Determines whether the names of arguments should be printed
      * @param showDefaults Determines whether the default values of arguments should be printed (if
-     * present)
-     * @param skipMissingTypeNames Determines whether missing type names should be omitted (true) or
-     * replaced with "object" (false). If showNames is false, "object" is always used as a type name
-     * to prevent blank spaces.
+     *     present)
+     * @param showTypes Determines whether parameter type information should be shown
      * @param skipFirstMandatory Determines whether the first mandatory parameter should be omitted.
      */
-    public StringBuilder toStringBuilder(final StringBuilder sb, final boolean showNames,
-        final boolean showDefaults, final boolean skipMissingTypeNames,
+    public StringBuilder toStringBuilder(
+        final StringBuilder sb,
+        final boolean showDefaults,
+        final boolean showTypes,
         final boolean skipFirstMandatory) {
       FunctionSignature signature = getSignature();
       Shape shape = signature.getShape();
+      final BasePrinter printer = Printer.getPrinter(sb);
       final ImmutableList<String> names = signature.getNames();
       @Nullable final List<V> defaultValues = getDefaultValues();
       @Nullable final List<T> types = getTypes();
@@ -418,7 +386,7 @@ public abstract class FunctionSignature implements Serializable {
 
         public void comma() {
           if (isMore) {
-            sb.append(", ");
+            printer.append(", ");
           }
           isMore = true;
         }
@@ -427,35 +395,25 @@ public abstract class FunctionSignature implements Serializable {
           // This happens when either
           // a) there is no type defined (such as in user-defined functions) or
           // b) the type is java.lang.Object.
-          boolean noTypeDefined = (types == null || types.get(i) == null);
-          String typeString = noTypeDefined ? "object" : types.get(i).toString();
-          if (noTypeDefined && showNames && skipMissingTypeNames) {
-            // This is the only case where we don't want to append typeString.
-            // If showNames = false, we ignore skipMissingTypeNames = true and append "object"
-            // in order to prevent blank spaces.
-          } else {
-            // We only append colons when there is a name.
-            if (showNames) {
-              sb.append(": ");
-            }
-            sb.append(typeString);
+          boolean typeDefined = types != null && types.get(i) != null;
+          if (typeDefined && showTypes) {
+            printer.append(": ");
+            printer.append(types.get(i).toString());
           }
         }
         public void mandatory(int i) {
           comma();
-          if (showNames) {
-            sb.append(names.get(i));
-          }
+          printer.append(names.get(i));
           type(i);
         }
         public void optional(int i) {
           mandatory(i);
           if (showDefaults) {
-            sb.append(" = ");
+            printer.append(" = ");
             if (defaultValues == null) {
-              sb.append("?");
+              printer.append("?");
             } else {
-              Printer.write(sb, defaultValues.get(j++));
+              printer.repr(defaultValues.get(j++));
             }
           }
         }
@@ -472,9 +430,9 @@ public abstract class FunctionSignature implements Serializable {
       }
       if (hasStar) {
         show.comma();
-        sb.append("*");
-        if (starArg && showNames) {
-          sb.append(names.get(iStarArg));
+        printer.append("*");
+        if (starArg) {
+          printer.append(names.get(iStarArg));
         }
       }
       for (; i < endMandatoryNamedOnly; i++) {
@@ -485,10 +443,8 @@ public abstract class FunctionSignature implements Serializable {
       }
       if (kwArg) {
         show.comma();
-        sb.append("**");
-        if (showNames) {
-          sb.append(names.get(iKwArg));
-        }
+        printer.append("**");
+        printer.append(names.get(iKwArg));
       }
 
       return sb;
@@ -537,7 +493,7 @@ public abstract class FunctionSignature implements Serializable {
         names.length - (kwArg ? 1 : 0) - (starArg ? 1 : 0)
             - numMandatoryPositionals - numOptionalPositionals - numMandatoryNamedOnly,
         starArg, kwArg),
-        ImmutableList.<String>copyOf(names));
+        ImmutableList.copyOf(names));
   }
 
   /**
@@ -597,6 +553,10 @@ public abstract class FunctionSignature implements Serializable {
       return parameter;
     }
   }
+
+  /** A ready-made signature to allow only positional arguments and put them in a star parameter */
+  public static final FunctionSignature POSITIONALS =
+      FunctionSignature.of(0, 0, 0, true, false, "star");
 
   /** A ready-made signature to allow only keyword arguments and put them in a kwarg parameter */
   public static final FunctionSignature KWARGS =

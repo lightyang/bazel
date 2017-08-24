@@ -26,6 +26,7 @@ import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.OutputGroupProvider;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetBuilder;
+import com.google.devtools.build.lib.analysis.RuleConfiguredTargetFactory;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.Runfiles;
 import com.google.devtools.build.lib.analysis.RunfilesProvider;
@@ -33,19 +34,19 @@ import com.google.devtools.build.lib.analysis.RunfilesSupport;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.analysis.actions.FileWriteAction;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
+import com.google.devtools.build.lib.analysis.test.ExecutionInfo;
+import com.google.devtools.build.lib.analysis.test.InstrumentedFilesProvider;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.packages.TargetUtils;
-import com.google.devtools.build.lib.rules.RuleConfiguredTargetFactory;
-import com.google.devtools.build.lib.rules.apple.Platform;
+import com.google.devtools.build.lib.rules.apple.ApplePlatform;
+import com.google.devtools.build.lib.rules.cpp.CcLibraryHelper.Info;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.DynamicMode;
 import com.google.devtools.build.lib.rules.cpp.Link.LinkStaticness;
 import com.google.devtools.build.lib.rules.cpp.Link.LinkTargetType;
 import com.google.devtools.build.lib.rules.cpp.LinkerInputs.LibraryToLink;
-import com.google.devtools.build.lib.rules.test.ExecutionInfoProvider;
-import com.google.devtools.build.lib.rules.test.InstrumentedFilesProvider;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.OsUtils;
 import com.google.devtools.build.lib.util.Preconditions;
@@ -236,6 +237,7 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
         determineLinkerArguments(
             ruleContext,
             ccToolchain,
+            featureConfiguration,
             fdoSupport,
             common,
             precompiledFiles,
@@ -268,7 +270,6 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
     linkActionBuilder.setLinkType(linkType);
     linkActionBuilder.setLinkStaticness(linkStaticness);
     linkActionBuilder.setFake(fake);
-    linkActionBuilder.setFeatureConfiguration(featureConfiguration);
 
     if (CppLinkAction.enableSymbolsCounts(cppConfiguration, fake, linkType)) {
       linkActionBuilder.setSymbolCountsOutput(ruleContext.getBinArtifact(
@@ -282,19 +283,19 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
     // Store immutable context for use in other *_binary rules that are implemented by
     // linking the interpreter (Java, Python, etc.) together with native deps.
     CppLinkAction.Context linkContext = new CppLinkAction.Context(linkActionBuilder);
-    Iterable<LTOBackendArtifacts> ltoBackendArtifacts = ImmutableList.of();
+    Iterable<LtoBackendArtifacts> ltoBackendArtifacts = ImmutableList.of();
     boolean usePic = CppHelper.usePic(ruleContext, !isLinkShared(ruleContext));
 
     if (featureConfiguration.isEnabled(CppRuleClasses.THIN_LTO)) {
-      linkActionBuilder.setLTOIndexing(true);
-      linkActionBuilder.setUsePicForLTOBackendActions(usePic);
-      linkActionBuilder.setUseFissionForLTOBackendActions(cppConfiguration.useFission());
+      linkActionBuilder.setLtoIndexing(true);
+      linkActionBuilder.setUsePicForLtoBackendActions(usePic);
+      linkActionBuilder.setUseFissionForLtoBackendActions(cppConfiguration.useFission());
       CppLinkAction indexAction = linkActionBuilder.build();
       ruleContext.registerAction(indexAction);
 
-      ltoBackendArtifacts = indexAction.getAllLTOBackendArtifacts();
+      ltoBackendArtifacts = indexAction.getAllLtoBackendArtifacts();
 
-      linkActionBuilder.setLTOIndexing(false);
+      linkActionBuilder.setLtoIndexing(false);
     }
 
     // On Windows, if GENERATE_PDB_FILE feature is enabled
@@ -331,7 +332,7 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
     Artifact strippedFile = ruleContext.getImplicitOutputArtifact(
         CppRuleClasses.CC_BINARY_STRIPPED);
     CppHelper.createStripAction(
-        ruleContext, ccToolchain, cppConfiguration, executable, strippedFile);
+        ruleContext, ccToolchain, cppConfiguration, executable, strippedFile, featureConfiguration);
 
     DwoArtifactsCollector dwoArtifacts =
         collectTransitiveDwoArtifacts(
@@ -377,7 +378,7 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
             helper.getCompilationUnitSources(),
             linkCompileOutputSeparately);
     RunfilesSupport runfilesSupport = RunfilesSupport.withExecutable(
-        ruleContext, runfiles, executable, ruleContext.getConfiguration().buildRunfiles());
+        ruleContext, runfiles, executable);
 
     TransitiveLipoInfoProvider transitiveLipoInfo;
     if (cppConfiguration.isLipoContextCollector()) {
@@ -412,12 +413,12 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
         sourceFileMap.put(source.getExecPath(), source);
       }
     }
-   
+
     // Support test execution on darwin.
-    if (Platform.isApplePlatform(cppConfiguration.getTargetCpu())
+    if (ApplePlatform.isApplePlatform(cppConfiguration.getTargetCpu())
         && TargetUtils.isTestRule(ruleContext.getRule())) {
       ruleBuilder.addNativeDeclaredProvider(
-          new ExecutionInfoProvider(ImmutableMap.of(ExecutionRequirements.REQUIRES_DARWIN, "")));
+          new ExecutionInfo(ImmutableMap.of(ExecutionRequirements.REQUIRES_DARWIN, "")));
     }
 
     // If PDB file is generated by the link action, we add it to pdb_file output group
@@ -450,10 +451,11 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
   private static CppLinkActionBuilder determineLinkerArguments(
       RuleContext context,
       CcToolchainProvider toolchain,
+      FeatureConfiguration featureConfiguration,
       FdoSupportProvider fdoSupport,
       CcCommon common,
       PrecompiledFiles precompiledFiles,
-      CcLibraryHelper.Info info,
+      Info info,
       ImmutableSet<Artifact> compilationPrerequisites,
       boolean fake,
       Artifact binary,
@@ -462,7 +464,7 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
       boolean linkCompileOutputSeparately)
       throws InterruptedException {
     CppLinkActionBuilder builder =
-        new CppLinkActionBuilder(context, binary, toolchain, fdoSupport)
+        new CppLinkActionBuilder(context, binary, toolchain, fdoSupport, featureConfiguration)
             .setCrosstoolInputs(toolchain.getLink())
             .addNonCodeInputs(compilationPrerequisites);
 
@@ -483,7 +485,7 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
       }
     }
 
-    builder.addLTOBitcodeFiles(info.getCcCompilationOutputs().getLtoBitcodeFiles());
+    builder.addLtoBitcodeFiles(info.getCcCompilationOutputs().getLtoBitcodeFiles());
     builder.addNonCodeInputs(common.getLinkerScripts());
 
     // Determine the libraries to link in.
@@ -554,7 +556,7 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
       LinkStaticness linkStaticness,
       boolean generateDwo,
       boolean ltoBackendArtifactsUsePic,
-      Iterable<LTOBackendArtifacts> ltoBackendArtifacts) {
+      Iterable<LtoBackendArtifacts> ltoBackendArtifacts) {
     if (linkStaticness == LinkStaticness.DYNAMIC) {
       return DwoArtifactsCollector.directCollector(
           context, compilationOutputs, generateDwo, ltoBackendArtifactsUsePic, ltoBackendArtifacts);
@@ -705,7 +707,7 @@ public abstract class CcBinary implements RuleConfiguredTargetFactory {
     } else {
       builder.addTransitiveTargets(
           context.getPrerequisites("deps", Mode.TARGET),
-          CcLinkParamsProvider.TO_LINK_PARAMS, CcSpecificLinkParamsProvider.TO_LINK_PARAMS);
+          CcLinkParamsInfo.TO_LINK_PARAMS, CcSpecificLinkParamsProvider.TO_LINK_PARAMS);
       builder.addTransitiveTarget(CppHelper.mallocForTarget(context));
       builder.addLinkOpts(linkopts);
     }

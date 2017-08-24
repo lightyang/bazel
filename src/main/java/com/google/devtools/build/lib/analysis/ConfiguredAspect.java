@@ -28,15 +28,12 @@ import com.google.devtools.build.lib.events.Location;
 import com.google.devtools.build.lib.packages.AspectClass;
 import com.google.devtools.build.lib.packages.AspectDescriptor;
 import com.google.devtools.build.lib.packages.AspectParameters;
-import com.google.devtools.build.lib.packages.ClassObjectConstructor;
-import com.google.devtools.build.lib.packages.ClassObjectConstructor.Key;
-import com.google.devtools.build.lib.packages.SkylarkClassObject;
-import com.google.devtools.build.lib.packages.SkylarkClassObjectConstructor;
+import com.google.devtools.build.lib.packages.Info;
+import com.google.devtools.build.lib.packages.Provider;
 import com.google.devtools.build.lib.packages.SkylarkProviderIdentifier;
 import com.google.devtools.build.lib.syntax.EvalException;
 import com.google.devtools.build.lib.util.Preconditions;
 import java.util.Arrays;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.TreeMap;
 import javax.annotation.Nullable;
@@ -53,7 +50,7 @@ import javax.annotation.Nullable;
  * <p>For more information about aspects, see {@link
  * com.google.devtools.build.lib.packages.AspectClass}.
  *
- * @see com.google.devtools.build.lib.rules.RuleConfiguredTargetFactory
+ * @see com.google.devtools.build.lib.analysis.RuleConfiguredTargetFactory
  * @see com.google.devtools.build.lib.packages.AspectClass
  */
 @Immutable
@@ -92,10 +89,6 @@ public final class ConfiguredAspect {
     return providers.getProvider(providerClass);
   }
 
-  SkylarkProviders getSkylarkProviders() {
-    return providers.getProvider(SkylarkProviders.class);
-  }
-
   public Object getProvider(SkylarkProviderIdentifier id) {
     if (id.isLegacy()) {
       return get(id.getLegacyId());
@@ -104,22 +97,15 @@ public final class ConfiguredAspect {
     }
   }
 
-  public SkylarkClassObject get(ClassObjectConstructor.Key key) {
-    if (OutputGroupProvider.SKYLARK_CONSTRUCTOR.getKey().equals(key)) {
-      return getProvider(OutputGroupProvider.class);
-    }
-    SkylarkProviders skylarkProviders = providers.getProvider(SkylarkProviders.class);
-    return skylarkProviders != null ? skylarkProviders.getDeclaredProvider(key) : null;
+  public Info get(Provider.Key key) {
+    return providers.getProvider(key);
   }
 
   public Object get(String legacyKey) {
     if (OutputGroupProvider.SKYLARK_NAME.equals(legacyKey)) {
-      return getProvider(OutputGroupProvider.class);
+      return get(OutputGroupProvider.SKYLARK_CONSTRUCTOR.getKey());
     }
-    SkylarkProviders skylarkProviders = providers.getProvider(SkylarkProviders.class);
-    return skylarkProviders != null
-        ? skylarkProviders.get(SkylarkProviderIdentifier.forLegacy(legacyKey))
-        : null;
+    return providers.getProvider(legacyKey);
   }
 
   public static ConfiguredAspect forAlias(ConfiguredAspect real) {
@@ -142,10 +128,6 @@ public final class ConfiguredAspect {
     private final TransitiveInfoProviderMapBuilder providers =
         new TransitiveInfoProviderMapBuilder();
     private final Map<String, NestedSetBuilder<Artifact>> outputGroupBuilders = new TreeMap<>();
-    private final ImmutableMap.Builder<String, Object> skylarkProviderBuilder =
-        ImmutableMap.builder();
-    private final LinkedHashMap<Key, SkylarkClassObject>
-        skylarkDeclaredProvidersBuilder = new LinkedHashMap<>();
     private final RuleContext ruleContext;
     private final AspectDescriptor descriptor;
 
@@ -178,18 +160,11 @@ public final class ConfiguredAspect {
 
     private void checkProviderClass(Class<? extends TransitiveInfoProvider> providerClass) {
       Preconditions.checkNotNull(providerClass);
-      Preconditions.checkArgument(
-          !SkylarkProviders.class.equals(providerClass),
-          "Do not provide SkylarkProviders directly");
     }
 
     /** Adds providers to the aspect. */
     public Builder addProviders(TransitiveInfoProviderMap providers) {
-      for (int i = 0; i < providers.getProviderCount(); ++i) {
-        Class<? extends TransitiveInfoProvider> providerClass = providers.getProviderClassAt(i);
-        TransitiveInfoProvider provider = providers.getProviderAt(i);
-        addProvider(providerClass, providerClass.cast(provider));
-      }
+      this.providers.addAll(providers);
       return this;
     }
 
@@ -220,40 +195,35 @@ public final class ConfiguredAspect {
     }
 
     public Builder addSkylarkTransitiveInfo(String name, Object value) {
-      skylarkProviderBuilder.put(name, value);
+      providers.put(name, value);
       return this;
     }
 
     public Builder addSkylarkTransitiveInfo(String name, Object value, Location loc)
         throws EvalException {
-      skylarkProviderBuilder.put(name, value);
+      providers.put(name, value);
       return this;
     }
 
-    public Builder addSkylarkDeclaredProvider(SkylarkClassObject declaredProvider, Location loc)
+    public Builder addSkylarkDeclaredProvider(Info declaredProvider, Location loc)
         throws EvalException {
-      ClassObjectConstructor constructor = declaredProvider.getConstructor();
+      Provider constructor = declaredProvider.getProvider();
       if (!constructor.isExported()) {
         throw new EvalException(
             constructor.getLocation(), "All providers must be top level values");
       }
-      ClassObjectConstructor.Key key = constructor.getKey();
-      addDeclaredProvider(key, declaredProvider);
+      addDeclaredProvider(declaredProvider);
       return this;
     }
 
-    private void addDeclaredProvider(Key key, SkylarkClassObject declaredProvider) {
-      if (OutputGroupProvider.SKYLARK_CONSTRUCTOR.getKey().equals(key)) {
-        addProvider(OutputGroupProvider.class, (OutputGroupProvider) declaredProvider);
-      } else {
-        skylarkDeclaredProvidersBuilder.put(key, declaredProvider);
-      }
+    private void addDeclaredProvider(Info declaredProvider) {
+      providers.put(declaredProvider);
     }
 
-    public Builder addNativeDeclaredProvider(SkylarkClassObject declaredProvider) {
-      ClassObjectConstructor constructor = declaredProvider.getConstructor();
+    public Builder addNativeDeclaredProvider(Info declaredProvider) {
+      Provider constructor = declaredProvider.getProvider();
       Preconditions.checkState(constructor.isExported());
-      addDeclaredProvider(constructor.getKey(), declaredProvider);
+      addDeclaredProvider(declaredProvider);
       return this;
     }
 
@@ -265,20 +235,11 @@ public final class ConfiguredAspect {
           outputGroups.put(entry.getKey(), entry.getValue().build());
         }
 
-        if (skylarkDeclaredProvidersBuilder.containsKey(
-            OutputGroupProvider.SKYLARK_CONSTRUCTOR.getKey())) {
+        if (providers.contains(OutputGroupProvider.SKYLARK_CONSTRUCTOR.getKey())) {
           throw new IllegalStateException(
               "OutputGroupProvider was provided explicitly; do not use addOutputGroup");
         }
-        addDeclaredProvider(OutputGroupProvider.SKYLARK_CONSTRUCTOR.getKey(),
-            new OutputGroupProvider(outputGroups.build()));
-      }
-
-      ImmutableMap<String, Object> skylarkProvidersMap = skylarkProviderBuilder.build();
-      ImmutableMap<SkylarkClassObjectConstructor.Key, SkylarkClassObject>
-          skylarkDeclaredProvidersMap = ImmutableMap.copyOf(skylarkDeclaredProvidersBuilder);
-      if (!skylarkProvidersMap.isEmpty() || !skylarkDeclaredProvidersMap.isEmpty()) {
-        providers.add(new SkylarkProviders(skylarkProvidersMap, skylarkDeclaredProvidersMap));
+        addDeclaredProvider(new OutputGroupProvider(outputGroups.build()));
       }
 
       addProvider(

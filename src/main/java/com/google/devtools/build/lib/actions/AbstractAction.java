@@ -31,8 +31,8 @@ import com.google.devtools.build.lib.packages.AspectDescriptor;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModuleCategory;
+import com.google.devtools.build.lib.skylarkinterface.SkylarkPrinter;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkValue;
-import com.google.devtools.build.lib.syntax.Printer;
 import com.google.devtools.build.lib.syntax.SkylarkDict;
 import com.google.devtools.build.lib.syntax.SkylarkList;
 import com.google.devtools.build.lib.syntax.SkylarkNestedSet;
@@ -102,7 +102,7 @@ public abstract class AbstractAction implements Action, SkylarkValue {
   @GuardedBy("this")
   private Iterable<Artifact> inputs;
 
-  private final Iterable<String> clientEnvironmentVariables;
+  protected final ActionEnvironment env;
   private final RunfilesSupplier runfilesSupplier;
   private final ImmutableSet<Artifact> outputs;
 
@@ -142,22 +142,22 @@ public abstract class AbstractAction implements Action, SkylarkValue {
       Iterable<Artifact> inputs,
       RunfilesSupplier runfilesSupplier,
       Iterable<Artifact> outputs) {
-    this(owner, tools, inputs, ImmutableList.<String>of(), runfilesSupplier, outputs);
+    this(owner, tools, inputs, runfilesSupplier, outputs, ActionEnvironment.EMPTY);
   }
 
   protected AbstractAction(
       ActionOwner owner,
       Iterable<Artifact> tools,
       Iterable<Artifact> inputs,
-      Iterable<String> clientEnvironmentVariables,
       RunfilesSupplier runfilesSupplier,
-      Iterable<Artifact> outputs) {
+      Iterable<Artifact> outputs,
+      ActionEnvironment env) {
     Preconditions.checkNotNull(owner);
     // TODO(bazel-team): Use RuleContext.actionOwner here instead
     this.owner = owner;
     this.tools = CollectionUtils.makeImmutable(tools);
     this.inputs = CollectionUtils.makeImmutable(inputs);
-    this.clientEnvironmentVariables = clientEnvironmentVariables;
+    this.env = env;
     this.outputs = ImmutableSet.copyOf(outputs);
     this.runfilesSupplier = Preconditions.checkNotNull(runfilesSupplier,
         "runfilesSupplier may not be null");
@@ -251,7 +251,7 @@ public abstract class AbstractAction implements Action, SkylarkValue {
 
   @Override
   public Iterable<String> getClientEnvironmentVariables() {
-    return clientEnvironmentVariables;
+    return env.getInheritedEnv();
   }
 
   @Override
@@ -361,13 +361,8 @@ public abstract class AbstractAction implements Action, SkylarkValue {
   }
 
   @Override
-  public boolean isImmutable() {
-    return false;
-  }
-
-  @Override
-  public void write(Appendable buffer, char quotationMark) {
-    Printer.append(buffer, prettyPrint()); // TODO(bazel-team): implement a readable representation
+  public void repr(SkylarkPrinter printer) {
+    printer.append(prettyPrint()); // TODO(bazel-team): implement a readable representation
   }
 
   /**
@@ -420,16 +415,20 @@ public abstract class AbstractAction implements Action, SkylarkValue {
    * If the action might read directories as inputs in a way that is unsound wrt dependency
    * checking, this method must be called.
    */
-  protected void checkInputsForDirectories(EventHandler eventHandler,
-                                           MetadataHandler metadataHandler) {
+  protected void checkInputsForDirectories(
+      EventHandler eventHandler, MetadataHandler metadataHandler) throws ExecException {
     // Report "directory dependency checking" warning only for non-generated directories (generated
     // ones will be reported earlier).
     for (Artifact input : getMandatoryInputs()) {
       // Assume that if the file did not exist, we would not have gotten here.
-      if (input.isSourceArtifact() && !metadataHandler.isRegularFile(input)) {
-        eventHandler.handle(Event.warn(getOwner().getLocation(), "input '"
-            + input.prettyPrint() + "' to " + getOwner().getLabel()
-            + " is a directory; dependency checking of directories is unsound"));
+      try {
+        if (input.isSourceArtifact() && !metadataHandler.getMetadata(input).isFile()) {
+          eventHandler.handle(Event.warn(getOwner().getLocation(), "input '"
+              + input.prettyPrint() + "' to " + getOwner().getLabel()
+              + " is a directory; dependency checking of directories is unsound"));
+        }
+      } catch (IOException e) {
+        throw new UserExecException(e);
       }
     }
   }
@@ -532,7 +531,7 @@ public abstract class AbstractAction implements Action, SkylarkValue {
    * correctly when run remotely. This is at least the normal inputs of the action, but may include
    * other files as well. For example C(++) compilation may perform include file header scanning.
    * This needs to be mirrored by the extra_action rule. Called by
-   * {@link com.google.devtools.build.lib.rules.extra.ExtraAction} at execution time for actions
+   * {@link com.google.devtools.build.lib.analysis.extra.ExtraAction} at execution time for actions
    * that return true for {link #discoversInputs()}.
    *
    * @param actionExecutionContext Services in the scope of the action, like the Out/Err streams.
@@ -540,6 +539,7 @@ public abstract class AbstractAction implements Action, SkylarkValue {
    *     throws that exception.
    * @throws InterruptedException if interrupted
    */
+  @Override
   public Iterable<Artifact> getInputFilesForExtraAction(
       ActionExecutionContext actionExecutionContext)
       throws ActionExecutionException, InterruptedException {
@@ -566,10 +566,11 @@ public abstract class AbstractAction implements Action, SkylarkValue {
 
   @SkylarkCallable(
       name = "argv",
-      doc = "For actions created by <a href=\"ctx.html#action\">ctx.action()</a>, an immutable "
-          + "list of the arguments for the command line to be executed. Note that when using the "
-          + "shell (i.e., when <a href=\"ctx.html#action.executable\">executable</a> is not set), "
-          + "the first two arguments will be the shell path and <code>\"-c\"</code>.",
+      doc = "For actions created by <a href=\"actions.html#run\">ctx.actions.run()</a> "
+          + "or <a href=\"actions.html#run_shell\">ctx.actions.run_shell()</a>  an immutable "
+          + "list of the arguments for the command line to be executed. Note that "
+          + "for shell actions the first two arguments will be the shell path "
+          + "and <code>\"-c\"</code>.",
       structField = true,
       allowReturnNones = true)
   public SkylarkList<String> getSkylarkArgv() {
@@ -579,8 +580,8 @@ public abstract class AbstractAction implements Action, SkylarkValue {
   @SkylarkCallable(
       name = "content",
       doc = "For actions created by <a href=\"actions.html#write\">ctx.actions.write()</a> or "
-          + "<a href=\"ctx.html#template_action\">ctx.template_action()</a>, the contents of the "
-          + "file to be written.",
+          + "<a href=\"actions.html#expand_template\">ctx.actions.expand_template()</a>,"
+          + " the contents of the file to be written.",
       structField = true,
       allowReturnNones = true)
   public String getSkylarkContent() throws IOException {
@@ -589,8 +590,9 @@ public abstract class AbstractAction implements Action, SkylarkValue {
 
   @SkylarkCallable(
       name = "substitutions",
-      doc = "For actions created by <a href=\"ctx.html#template_action\">"
-          + "ctx.template_action()</a>, an immutable dict holding the substitution mapping.",
+      doc = "For actions created by "
+          + "<a href=\"actions.html#expand_template\">ctx.actions.expand_template()</a>,"
+          + " an immutable dict holding the substitution mapping.",
       structField = true,
       allowReturnNones = true)
   public SkylarkDict<String, String> getSkylarkSubstitutions() {

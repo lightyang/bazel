@@ -8,7 +8,7 @@ load("//tools/build_defs/pkg:pkg.bzl", "pkg_tar", "pkg_deb")
 
 pkg_tar(
     name = "bazel-bin",
-    files = [
+    srcs = [
         "//scripts/packages:without-jdk/bazel",
         "//scripts/packages:without-jdk/bazel-real",
     ],
@@ -19,7 +19,7 @@ pkg_tar(
 
 pkg_tar(
     name = "bazel-rc",
-    files = ["//scripts/packages:bazel.bazelrc"],
+    srcs = ["//scripts/packages:bazel.bazelrc"],
     mode = "0644",
     package_dir = "/etc",
     strip_prefix = "/scripts/packages",
@@ -34,7 +34,7 @@ genrule(
 
 pkg_tar(
     name = "bazel-completion",
-    files = [":etc/bash_completion.d/bazel"],
+    srcs = [":etc/bash_completion.d/bazel"],
     mode = "0644",
     strip_prefix = ".",
 )
@@ -70,9 +70,6 @@ pkg_deb(
     name = "bazel-debian",
     architecture = "amd64",
     built_using = "bazel (HEAD)",
-    conflicts = [
-        "openjdk-9-jdk",
-    ],
     data = ":debian-data",
     depends = select({
         "//tools/jdk:jdk7": [

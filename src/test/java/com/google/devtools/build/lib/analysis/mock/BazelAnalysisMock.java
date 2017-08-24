@@ -13,21 +13,15 @@
 // limitations under the License.
 package com.google.devtools.build.lib.analysis.mock;
 
-import static com.google.devtools.build.lib.bazel.rules.BazelRuleClassProvider.FEATURE_POLICY_FEATURES;
-
 import com.google.common.base.Functions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
-import com.google.devtools.build.lib.analysis.ConfigurationCollectionFactory;
 import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider;
 import com.google.devtools.build.lib.analysis.PlatformConfigurationLoader;
-import com.google.devtools.build.lib.analysis.config.ConfigurationFactory;
 import com.google.devtools.build.lib.analysis.config.ConfigurationFragmentFactory;
-import com.google.devtools.build.lib.analysis.featurecontrol.FeaturePolicyLoader;
 import com.google.devtools.build.lib.analysis.util.AnalysisMock;
 import com.google.devtools.build.lib.bazel.rules.BazelConfiguration;
-import com.google.devtools.build.lib.bazel.rules.BazelConfigurationCollection;
 import com.google.devtools.build.lib.bazel.rules.python.BazelPythonConfiguration;
 import com.google.devtools.build.lib.packages.util.BazelMockCcSupport;
 import com.google.devtools.build.lib.packages.util.MockCcSupport;
@@ -130,15 +124,6 @@ public final class BazelAnalysisMock extends AnalysisMock {
 
     config.create(
         "/bazel_tools_workspace/tools/genrule/BUILD", "exports_files(['genrule-setup.sh'])");
-    config.create(
-        "/bazel_tools_workspace/third_party/java/jarjar/BUILD",
-        "package(default_visibility=['//visibility:public'])",
-        "licenses(['notice'])",
-        "java_binary(name = 'jarjar_bin',",
-        "            runtime_deps = [ ':jarjar_import' ],",
-        "            main_class = 'com.tonicsystems.jarjar.Main')",
-        "java_import(name = 'jarjar_import',",
-        "            jars = [ 'jarjar.jar' ])");
 
     config.create("/bazel_tools_workspace/tools/test/BUILD",
         "filegroup(name = 'runtime', srcs = ['test-setup.sh'],)",
@@ -151,11 +136,29 @@ public final class BazelAnalysisMock extends AnalysisMock {
         "exports_files(['precompile.py'])",
         "sh_binary(name='2to3', srcs=['2to3.sh'])");
 
+    // Use an alias package group to allow for modification at the simpler path
+    config.create(
+        "/bazel_tools_workspace/tools/whitelists/config_feature_flag/BUILD",
+        "package_group(",
+        "    name='config_feature_flag',",
+        "    includes=['@//tools/whitelists/config_feature_flag'],",
+        ")");
+
+    config.create(
+        "tools/whitelists/config_feature_flag/BUILD",
+        "package_group(name='config_feature_flag', packages=['//...'])");
+
     config.create(
         "/bazel_tools_workspace/tools/zip/BUILD",
         "package(default_visibility=['//visibility:public'])",
         "exports_files(['precompile.py'])",
         "cc_binary(name='zipper', srcs=['zip_main.cc'])");
+
+    config.create(
+        "/bazel_tools_workspace/tools/launcher/BUILD",
+        "package(default_visibility=['//visibility:public'])",
+        "cc_binary(name='launcher', srcs=['launcher_main.cc'])");
+
     ccSupport().setup(config);
   }
 
@@ -214,16 +217,6 @@ public final class BazelAnalysisMock extends AnalysisMock {
         .add("sh_binary(name = 'strip_resources', srcs = ['empty.sh'])")
         .add("sh_binary(name = 'build_incremental_dexmanifest', srcs = ['empty.sh'])")
         .add("sh_binary(name = 'incremental_install', srcs = ['empty.sh'])")
-        .add("java_binary(name = 'JarFilter',")
-        .add("          runtime_deps = [ ':JarFilter_import'],")
-        .add("          main_class = 'com.google.devtools.build.android.ideinfo.JarFilter')")
-        .add("java_import(name = 'JarFilter_import',")
-        .add("          jars = [ 'jar_filter_deploy.jar' ])")
-        .add("java_binary(name = 'PackageParser',")
-        .add("          runtime_deps = [ ':PackageParser_import'],")
-        .add("          main_class = 'com.google.devtools.build.android.ideinfo.PackageParser')")
-        .add("java_import(name = 'PackageParser_import',")
-        .add("          jars = [ 'package_parser_deploy.jar' ])")
         .add("java_binary(name = 'IdlClass',")
         .add("            runtime_deps = [ ':idlclass_import' ],")
         .add("            main_class = 'com.google.devtools.build.android.idlclass.IdlClass')")
@@ -235,7 +228,8 @@ public final class BazelAnalysisMock extends AnalysisMock {
         .add("sh_binary(name = 'android_runtest', srcs = ['empty.sh'])")
         .add("sh_binary(name = 'instrumentation_test_entry_point', srcs = ['empty.sh'])")
         .add("java_plugin(name = 'databinding_annotation_processor',")
-        .add("    processor_class = 'android.databinding.annotationprocessor.ProcessDataBinding')");
+        .add("    processor_class = 'android.databinding.annotationprocessor.ProcessDataBinding')")
+        .add("sh_binary(name = 'jarjar_bin', srcs = ['empty.sh'])");
 
     return androidBuildContents.build();
   }
@@ -248,19 +242,7 @@ public final class BazelAnalysisMock extends AnalysisMock {
   }
 
   @Override
-  public ConfigurationFactory createConfigurationFactory() {
-    return createConfigurationFactory(getDefaultConfigurationFactories());
-  }
-
-  @Override
-  public ConfigurationFactory createConfigurationFactory(
-      List<ConfigurationFragmentFactory> configurationFragmentFactories) {
-    return new ConfigurationFactory(
-        new BazelConfigurationCollection(),
-        configurationFragmentFactories);
-  }
-
-  private static List<ConfigurationFragmentFactory> getDefaultConfigurationFactories() {
+  public List<ConfigurationFragmentFactory> getDefaultConfigurationFragmentFactories() {
     return ImmutableList.<ConfigurationFragmentFactory>of(
         new BazelConfiguration.Loader(),
         new CppConfigurationLoader(Functions.<String>identity()),
@@ -274,14 +256,8 @@ public final class BazelAnalysisMock extends AnalysisMock {
         new J2ObjcConfiguration.Loader(),
         new ProtoConfiguration.Loader(),
         new ConfigFeatureFlagConfiguration.Loader(),
-        new FeaturePolicyLoader(FEATURE_POLICY_FEATURES),
         new AndroidConfiguration.Loader(),
         new PlatformConfigurationLoader());
-  }
-
-  @Override
-  public ConfigurationCollectionFactory createConfigurationCollectionFactory() {
-    return new BazelConfigurationCollection();
   }
 
   @Override

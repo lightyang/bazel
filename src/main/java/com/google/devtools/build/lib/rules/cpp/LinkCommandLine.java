@@ -385,6 +385,9 @@ public final class LinkCommandLine extends CommandLine {
     if (forcedToolPath != null) {
       argv.add(forcedToolPath);
     } else {
+      Preconditions.checkArgument(
+          featureConfiguration.actionIsConfigured(actionName),
+          String.format("Expected action_config for '%s' to be configured", actionName));
       argv.add(
           featureConfiguration
               .getToolForAction(linkTargetType.getActionName())
@@ -657,8 +660,7 @@ public final class LinkCommandLine extends CommandLine {
       if (linkstampCompileOptions.isEmpty()) {
         actualLinkstampCompileOptions = DEFAULT_LINKSTAMP_OPTIONS;
       } else {
-        actualLinkstampCompileOptions =
-            ImmutableList.copyOf(
+        actualLinkstampCompileOptions = ImmutableList.copyOf(
                 Iterables.concat(DEFAULT_LINKSTAMP_OPTIONS, linkstampCompileOptions));
       }
 
@@ -670,10 +672,7 @@ public final class LinkCommandLine extends CommandLine {
 
       // The ruleContext can be null for some tests.
       if (ruleContext != null) {
-        if (featureConfiguration == null) {
-          featureConfiguration =
-              CcCommon.configureFeatures(ruleContext, toolchain, CcLibraryHelper.SourceCategory.CC);
-        }
+        Preconditions.checkNotNull(featureConfiguration);
 
         if (fdoSupport == null) {
           fdoSupport =

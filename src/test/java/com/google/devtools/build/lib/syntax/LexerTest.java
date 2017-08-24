@@ -167,6 +167,14 @@ public class LexerTest {
   }
 
   @Test
+  public void testNonAsciiIdentifiers() throws Exception {
+    tokens("ümlaut");
+    assertThat(lastError.toString()).contains("invalid character: 'ü'");
+    tokens("umläut");
+    assertThat(lastError.toString()).contains("invalid character: 'ä'");
+  }
+
+  @Test
   public void testCrLf() throws Exception {
     assertThat(names(tokens("\r\n\r\n"))).isEqualTo("NEWLINE EOF");
     assertThat(names(tokens("\r\n\r1\r\r\n"))).isEqualTo("NEWLINE INT NEWLINE EOF");
@@ -353,6 +361,12 @@ public class LexerTest {
             "INT(1) NEWLINE INDENT INT(2) NEWLINE INDENT INT(3) NEWLINE "
                 + "OUTDENT INT(4) NEWLINE OUTDENT INT(5) NEWLINE EOF");
     assertThat(lastError.toString()).isEqualTo("/some/path.txt:4: indentation error");
+  }
+
+  @Test
+  public void testIndentationWithTab() throws Exception {
+    tokens("def x():\n\tpass");
+    assertThat(lastError.toString()).contains("Tabulations are not allowed");
   }
 
   @Test

@@ -26,6 +26,7 @@ import com.google.devtools.build.lib.analysis.LanguageDependentFragment.LibraryL
 import com.google.devtools.build.lib.analysis.OutputGroupProvider;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetBuilder;
 import com.google.devtools.build.lib.analysis.RuleContext;
+import com.google.devtools.build.lib.analysis.RuleDefinitionEnvironment;
 import com.google.devtools.build.lib.analysis.Runfiles;
 import com.google.devtools.build.lib.analysis.Runfiles.Builder;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
@@ -42,6 +43,7 @@ import com.google.devtools.build.lib.rules.java.DeployArchiveBuilder.Compression
 import com.google.devtools.build.lib.rules.java.JavaCompilationArgs.ClasspathType;
 import com.google.devtools.build.lib.rules.java.JavaConfiguration.JavaOptimizationMode;
 import com.google.devtools.build.lib.rules.java.proto.GeneratedExtensionRegistryProvider;
+import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.FileType;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.Collection;
@@ -81,6 +83,8 @@ public interface JavaSemantics {
       fromTemplates("%{name}_proguard.usage");
   SafeImplicitOutputsFunction JAVA_BINARY_PROGUARD_CONFIG =
       fromTemplates("%{name}_proguard.config");
+  SafeImplicitOutputsFunction JAVA_ONE_VERSION_ARTIFACT =
+      fromTemplates("%{name}-one-version.txt");
 
   SafeImplicitOutputsFunction JAVA_BINARY_DEPLOY_SOURCE_JAR =
       fromTemplates("%{name}_deploy-src.jar");
@@ -129,35 +133,32 @@ public interface JavaSemantics {
   String GENERATED_JARS_OUTPUT_GROUP =
       OutputGroupProvider.HIDDEN_OUTPUT_GROUP_PREFIX + "gen_jars";
 
+  /** Implementation for the :jvm attribute. */
+  static LateBoundLabel<BuildConfiguration> jvmAttribute(RuleDefinitionEnvironment env) {
+    return new LateBoundLabel<BuildConfiguration>(
+        env.getToolsLabel(JavaImplicitAttributes.JDK_LABEL), Jvm.class) {
+      @Override
+      public Label resolve(Rule rule, AttributeMap attributes, BuildConfiguration configuration) {
+        return configuration.getFragment(Jvm.class).getJvmLabel();
+      }
+    };
+  }
 
-  /**
-   * Implementation for the :jvm attribute.
-   */
-  LateBoundLabel<BuildConfiguration> JVM =
-      new LateBoundLabel<BuildConfiguration>(JavaImplicitAttributes.JDK_LABEL, Jvm.class) {
-        @Override
-        public Label resolve(Rule rule, AttributeMap attributes,
-            BuildConfiguration configuration) {
-          return configuration.getFragment(Jvm.class).getJvmLabel();
-        }
-      };
+  /** Implementation for the :host_jdk attribute. */
+  static LateBoundLabel<BuildConfiguration> hostJdkAttribute(RuleDefinitionEnvironment env) {
+    return new LateBoundLabel<BuildConfiguration>(
+        env.getToolsLabel(JavaImplicitAttributes.JDK_LABEL), Jvm.class) {
+      @Override
+      public boolean useHostConfiguration() {
+        return true;
+      }
 
-  /**
-   * Implementation for the :host_jdk attribute.
-   */
-  LateBoundLabel<BuildConfiguration> HOST_JDK =
-      new LateBoundLabel<BuildConfiguration>(JavaImplicitAttributes.JDK_LABEL, Jvm.class) {
-        @Override
-        public boolean useHostConfiguration() {
-          return true;
-        }
-
-        @Override
-        public Label resolve(Rule rule, AttributeMap attributes,
-            BuildConfiguration configuration) {
-          return configuration.getFragment(Jvm.class).getJvmLabel();
-        }
-      };
+      @Override
+      public Label resolve(Rule rule, AttributeMap attributes, BuildConfiguration configuration) {
+        return configuration.getFragment(Jvm.class).getJvmLabel();
+      }
+    };
+  }
 
   /**
    * Implementation for the :java_launcher attribute. Note that the Java launcher is disabled by
@@ -167,9 +168,19 @@ public interface JavaSemantics {
       new LateBoundLabel<BuildConfiguration>(JavaConfiguration.class) {
         @Override
         public Label resolve(Rule rule, AttributeMap attributes, BuildConfiguration configuration) {
-          // don't read --java_launcher if this target overrides via a launcher attribute
-          if (attributes != null && attributes.isAttributeValueExplicitlySpecified("launcher")) {
-            return attributes.get("launcher", LABEL);
+          // This nullness check is purely for the sake of a test that doesn't bother to include an
+          // attribute map when calling this method.
+          if (attributes != null) {
+            // Don't depend on the launcher if we don't create an executable anyway
+            if (attributes.has("create_executable")
+                && !attributes.get("create_executable", Type.BOOLEAN)) {
+              return null;
+            }
+
+            // don't read --java_launcher if this target overrides via a launcher attribute
+            if (attributes.isAttributeValueExplicitlySpecified("launcher")) {
+              return attributes.get("launcher", LABEL);
+            }
           }
           return configuration.getFragment(JavaConfiguration.class).getJavaLauncherLabel();
         }

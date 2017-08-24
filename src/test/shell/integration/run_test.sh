@@ -85,9 +85,6 @@ function test_run_py_test() {
 }
 
 function test_runfiles_present_cc_binary() {
-  # cc_binary is needed because runfiles are always created for Python
-  # and shell binaries, so --nobuild_runfile_links does not apply to them.
-  # (see RuleConfiguredTarget.shouldCreateRunfilesSymlinks())
   write_cc_source_files
 
   cat > cc/hello_kitty.txt <<EOF
@@ -177,7 +174,7 @@ function test_interrupt_kills_child() {
   rm -f "$pipe_file"
   mkfifo "$pipe_file" || fail "make pipe failed"
   echo 'sh_binary(name = "sleep-minute", srcs = ["sleep-minute.sh"])' > foo/BUILD
-  echo -e "#!/bin/bash\n"'echo $$ >'"${pipe_file}\n"'sleep 60' > foo/sleep-minute.sh
+  echo -e "#!/bin/sh\n"'echo $$ >'"${pipe_file}\n"'sleep 60' > foo/sleep-minute.sh
   chmod +x foo/sleep-minute.sh
   # Note that if bazel info is not executed before the actual bazel run, this script would have to
   # be run in "monitor mode" (with the command set -m) for bazel or the server to receive SIGINT.
@@ -293,7 +290,7 @@ sh_binary(
 EOF
 
   cat > some/testing/test.sh <<'EOF'
-#!/bin/bash
+#!/usr/bin/env bash
 set -ex
 echo "Got $@"
 i=1
@@ -319,7 +316,7 @@ alias(name='b', actual='a')
 EOF
 
   cat > a/a.sh <<EOF
-#!/bin/bash
+#!/bin/sh
 echo "Dancing with wolves"
 exit 0
 EOF

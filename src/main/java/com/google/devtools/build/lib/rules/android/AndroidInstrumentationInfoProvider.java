@@ -15,23 +15,21 @@ package com.google.devtools.build.lib.rules.android;
 
 import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.actions.Artifact;
-import com.google.devtools.build.lib.analysis.TransitiveInfoProvider;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
-import com.google.devtools.build.lib.packages.NativeClassObjectConstructor;
-import com.google.devtools.build.lib.packages.SkylarkClassObject;
+import com.google.devtools.build.lib.packages.NativeInfo;
+import com.google.devtools.build.lib.packages.NativeProvider;
 
 /**
  * A provider for targets that create Android instrumentations. Consumed by {@link
  * AndroidInstrumentationTest}.
  */
 @Immutable
-public class AndroidInstrumentationInfoProvider extends SkylarkClassObject
-    implements TransitiveInfoProvider {
+public class AndroidInstrumentationInfoProvider extends NativeInfo {
 
   private static final String SKYLARK_NAME = "AndroidInstrumentationInfo";
-  static final NativeClassObjectConstructor ANDROID_INSTRUMENTATION_INFO =
-      new NativeClassObjectConstructor(SKYLARK_NAME) {
-      };
+  static final NativeProvider<AndroidInstrumentationInfoProvider> ANDROID_INSTRUMENTATION_INFO =
+      new NativeProvider<AndroidInstrumentationInfoProvider>(
+          AndroidInstrumentationInfoProvider.class, SKYLARK_NAME) {};
 
   private final Artifact targetApk;
   private final Artifact instrumentationApk;

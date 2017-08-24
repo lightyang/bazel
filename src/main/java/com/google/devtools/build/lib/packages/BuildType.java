@@ -19,12 +19,16 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Maps;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
 import com.google.devtools.build.lib.packages.License.DistributionType;
 import com.google.devtools.build.lib.packages.License.LicenseParsingException;
+import com.google.devtools.build.lib.skylarkinterface.SkylarkPrinter;
+import com.google.devtools.build.lib.skylarkinterface.SkylarkValue;
 import com.google.devtools.build.lib.syntax.EvalException;
 import com.google.devtools.build.lib.syntax.Printer;
+import com.google.devtools.build.lib.syntax.Printer.BasePrinter;
 import com.google.devtools.build.lib.syntax.Runtime;
 import com.google.devtools.build.lib.syntax.SelectorValue;
 import com.google.devtools.build.lib.syntax.Type;
@@ -249,6 +253,9 @@ public final class BuildType {
         return (Label) x;
       }
       try {
+        if (x instanceof String && context == null) {
+          return Label.parseAbsolute((String) x, false);
+        }
         return ((Label) context).getRelative(STRING.convert(x, what, context));
       } catch (LabelSyntaxException e) {
         throw new ConversionException("invalid label '" + x + "' in "
@@ -293,10 +300,10 @@ public final class BuildType {
         convertedFrom.computeIfAbsent(label, k -> new ArrayList<Object>());
         convertedFrom.get(label).add(original);
       }
-      StringBuilder errorMessage = new StringBuilder();
+      BasePrinter errorMessage = Printer.getPrinter();
       errorMessage.append("duplicate labels");
       if (what != null) {
-        errorMessage.append(" in ").append(what);
+        errorMessage.append(" in ").append(what.toString());
       }
       errorMessage.append(':');
       boolean isFirstEntry = true;
@@ -310,9 +317,9 @@ public final class BuildType {
           errorMessage.append(',');
         }
         errorMessage.append(' ');
-        errorMessage.append(entry.getKey());
+        errorMessage.str(entry.getKey());
         errorMessage.append(" (as ");
-        Printer.write(errorMessage, entry.getValue());
+        errorMessage.repr(entry.getValue());
         errorMessage.append(')');
       }
       throw new ConversionException(errorMessage.toString());
@@ -457,7 +464,7 @@ public final class BuildType {
    * {@code attr = rawValue + select(...) + select(...) + ..."} syntax. For consistency's
    * sake, raw values are stored as selects with only a default condition.
    */
-  public static final class SelectorList<T> {
+  public static final class SelectorList<T> implements SkylarkValue {
     private final Type<T> originalType;
     private final List<Selector<T>> elements;
 
@@ -521,6 +528,11 @@ public final class BuildType {
 
     @Override
     public String toString() {
+      return Printer.repr(this);
+    }
+
+    @Override
+    public void repr(SkylarkPrinter printer) {
       // Convert to a lib.syntax.SelectorList to guarantee consistency with callers that serialize
       // directly on that type.
       List<SelectorValue> selectorValueList = new ArrayList<>();
@@ -528,7 +540,7 @@ public final class BuildType {
         selectorValueList.add(new SelectorValue(element.getEntries(), element.getNoMatchError()));
       }
       try {
-        return com.google.devtools.build.lib.syntax.SelectorList.of(selectorValueList).toString();
+        printer.repr(com.google.devtools.build.lib.syntax.SelectorList.of(null, selectorValueList));
       } catch (EvalException e) {
         throw new IllegalStateException("this list should have been validated on creation");
       }
@@ -569,7 +581,7 @@ public final class BuildType {
     Selector(ImmutableMap<?, ?> x, Object what, @Nullable Label context, Type<T> originalType,
         String noMatchError) throws ConversionException {
       this.originalType = originalType;
-      LinkedHashMap<Label, T> result = new LinkedHashMap<>();
+      LinkedHashMap<Label, T> result = Maps.newLinkedHashMapWithExpectedSize(x.size());
       ImmutableSet.Builder<Label> defaultValuesBuilder = ImmutableSet.builder();
       boolean foundDefaultCondition = false;
       for (Entry<?, ?> entry : x.entrySet()) {

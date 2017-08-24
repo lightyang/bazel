@@ -352,7 +352,7 @@ public final class PackageFactory {
     protected Iterable<EnvironmentExtension> environmentExtensions = ImmutableList.of();
     protected Map<String, String> platformSetRegexps = null;
     protected Function<RuleClass, AttributeContainer> attributeContainerFactory =
-        AttributeContainer.ATTRIBUTE_CONTAINER_FACTORY;
+        AttributeContainer::new;
     protected boolean doChecksForTesting = true;
 
     public BuilderForTesting setEnvironmentExtensions(
@@ -381,6 +381,11 @@ public final class PackageFactory {
   @VisibleForTesting
   public abstract static class BuilderFactoryForTesting {
     public abstract BuilderForTesting builder();
+  }
+
+  @VisibleForTesting
+  public Package.Builder.Helper getPackageBuilderHelperForTesting() {
+    return packageBuilderHelper;
   }
 
   /**
@@ -573,11 +578,12 @@ public final class PackageFactory {
     try {
       Globber.Token globToken = context.globber.runAsync(includes, excludes, excludeDirs);
       matches = context.globber.fetch(globToken);
-    } catch (IOException expected) {
-      context.eventHandler.handle(Event.error(ast.getLocation(),
-              "error globbing [" + Joiner.on(", ").join(includes) + "]: " + expected.getMessage()));
-      context.pkgBuilder.setContainsErrors();
-      matches = ImmutableList.<String>of();
+    } catch (IOException e) {
+      String errorMessage =
+          "error globbing [" + Joiner.on(", ").join(includes) + "]: " + e.getMessage();
+      context.eventHandler.handle(Event.error(ast.getLocation(), errorMessage));
+      context.pkgBuilder.setIOExceptionAndMessage(e, errorMessage);
+      matches = ImmutableList.of();
     } catch (BadGlobException e) {
       throw new EvalException(ast.getLocation(), e.getMessage());
     }
@@ -1265,10 +1271,12 @@ public final class PackageFactory {
    */
   private static BuiltinFunction newRuleFunction(
       final RuleFactory ruleFactory, final String ruleClass) {
-    return new BuiltinFunction(ruleClass, FunctionSignature.KWARGS, BuiltinFunction.USE_AST_ENV) {
+    return new BuiltinFunction(
+        ruleClass, FunctionSignature.KWARGS, BuiltinFunction.USE_AST_ENV, /*isRule=*/ true) {
+
       @SuppressWarnings({"unchecked", "unused"})
-      public Runtime.NoneType invoke(Map<String, Object> kwargs,
-          FuncallExpression ast, Environment env)
+      public Runtime.NoneType invoke(
+          Map<String, Object> kwargs, FuncallExpression ast, Environment env)
           throws EvalException, InterruptedException {
         env.checkLoadingOrWorkspacePhase(ruleClass, ast.getLocation());
         try {
@@ -1584,8 +1592,7 @@ public final class PackageFactory {
         builder.put(function.getName(), function);
       }
     }
-    return NativeClassObjectConstructor.STRUCT.create(
-        builder.build(), "no native function or rule '%s'");
+    return NativeProvider.STRUCT.create(builder.build(), "no native function or rule '%s'");
   }
 
   /** @param fakeEnv specify if we declare no-op functions, or real functions. */

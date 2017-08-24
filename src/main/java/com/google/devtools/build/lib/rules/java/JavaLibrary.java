@@ -19,15 +19,15 @@ import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.OutputGroupProvider;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetBuilder;
+import com.google.devtools.build.lib.analysis.RuleConfiguredTargetFactory;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.RunfilesProvider;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
-import com.google.devtools.build.lib.rules.RuleConfiguredTargetFactory;
 import com.google.devtools.build.lib.rules.cpp.CcLinkParams;
-import com.google.devtools.build.lib.rules.cpp.CcLinkParamsProvider;
+import com.google.devtools.build.lib.rules.cpp.CcLinkParamsInfo;
 import com.google.devtools.build.lib.rules.cpp.CcLinkParamsStore;
 import com.google.devtools.build.lib.rules.cpp.CppCompilationContext;
 import com.google.devtools.build.lib.rules.cpp.LinkerInput;
@@ -48,13 +48,16 @@ public class JavaLibrary implements RuleConfiguredTargetFactory {
   public ConfiguredTarget create(RuleContext ruleContext)
       throws InterruptedException, RuleErrorException {
     JavaCommon common = new JavaCommon(ruleContext, semantics);
-    RuleConfiguredTargetBuilder builder =
-        init(ruleContext, common, false /* includeGeneratedExtensionRegistry */);
-    return builder != null ? builder.build() : null;
+    return init(
+        ruleContext,
+        common,
+        /* includeGeneratedExtensionRegistry = */false,
+        /* isJavaPluginRule = */ false);
   }
 
-  final RuleConfiguredTargetBuilder init(
-      RuleContext ruleContext, final JavaCommon common, boolean includeGeneratedExtensionRegistry)
+  final ConfiguredTarget init(
+      RuleContext ruleContext, final JavaCommon common, boolean includeGeneratedExtensionRegistry,
+      boolean isJavaPluginRule)
       throws InterruptedException {
     JavaTargetAttributes.Builder attributesBuilder = common.initCommon();
 
@@ -172,7 +175,7 @@ public class JavaLibrary implements RuleConfiguredTargetFactory {
       protected void collect(CcLinkParams.Builder builder, boolean linkingStatically,
                              boolean linkShared) {
         builder.addTransitiveTargets(common.targetsTreatedAsDeps(ClasspathType.BOTH),
-            JavaCcLinkParamsProvider.TO_LINK_PARAMS, CcLinkParamsProvider.TO_LINK_PARAMS);
+            JavaCcLinkParamsProvider.TO_LINK_PARAMS, CcLinkParamsInfo.TO_LINK_PARAMS);
       }
     };
 
@@ -180,7 +183,7 @@ public class JavaLibrary implements RuleConfiguredTargetFactory {
         ProtoJavaApiInfoAspectProvider.builder();
     for (TransitiveInfoCollection dep : common.getDependencies()) {
       ProtoJavaApiInfoAspectProvider protoProvider =
-          JavaProvider.getProvider(ProtoJavaApiInfoAspectProvider.class, dep);
+          JavaInfo.getProvider(ProtoJavaApiInfoAspectProvider.class, dep);
       if (protoProvider != null) {
         protoAspectBuilder.addTransitive(protoProvider);
       }
@@ -210,14 +213,22 @@ public class JavaLibrary implements RuleConfiguredTargetFactory {
 
     NestedSet<Artifact> proguardSpecs = new ProguardLibrary(ruleContext).collectProguardSpecs();
 
-    CcLinkParamsProvider ccLinkParamsProvider = new CcLinkParamsProvider(ccLinkParamsStore);
-    JavaProvider javaProvider = JavaProvider.Builder.create()
+    CcLinkParamsInfo ccLinkParamsInfo = new CcLinkParamsInfo(ccLinkParamsStore);
+    JavaPluginInfoProvider pluginInfoProvider = isJavaPluginRule
+        // For java_plugin we create the provider with content retrieved from the rule attributes.
+        ? common.getJavaPluginInfoProvider(ruleContext)
+        // For java_library we add the transitive plugins from plugins and exported_plugins attrs.
+        : JavaCommon.getTransitivePlugins(ruleContext);
+
+    // java_library doesn't need to return JavaRunfilesProvider
+    JavaInfo javaInfo = JavaInfo.Builder.create()
         .addProvider(JavaCompilationArgsProvider.class, compilationArgsProvider)
         .addProvider(JavaSourceJarsProvider.class, sourceJarsProvider)
         .addProvider(ProtoJavaApiInfoAspectProvider.class, protoAspectBuilder.build())
         .addProvider(JavaRuleOutputJarsProvider.class, ruleOutputJarsProvider)
-        // java_library doesn't need to return JavaRunfilesProvider
+        .addProvider(JavaPluginInfoProvider.class, pluginInfoProvider)
         .build();
+
     builder
         .addSkylarkTransitiveInfo(
             JavaSkylarkApiProvider.NAME, JavaSkylarkApiProvider.fromRuleContext())
@@ -230,23 +241,22 @@ public class JavaLibrary implements RuleConfiguredTargetFactory {
         .addProvider(new JavaNeverlinkInfoProvider(neverLink))
         .addProvider(transitiveCppDeps)
         .addProvider(JavaCompilationArgsProvider.class, compilationArgsProvider)
-        .addProvider(javaProvider)
-        .addProvider(ccLinkParamsProvider)
-        .addNativeDeclaredProvider(ccLinkParamsProvider)
-        .addNativeDeclaredProvider(javaProvider)
+        .addNativeDeclaredProvider(ccLinkParamsInfo)
         .addProvider(new JavaNativeLibraryProvider(transitiveJavaNativeLibraries))
         .addProvider(JavaSourceInfoProvider.fromJavaTargetAttributes(attributes, semantics))
         // TODO(bazel-team): this should only happen for java_plugin
-        .addProvider(JavaCommon.getTransitivePlugins(ruleContext))
+        .addProvider(pluginInfoProvider)
         .addProvider(new ProguardSpecProvider(proguardSpecs))
         .addProvider(sourceJarsProvider)
+        .addNativeDeclaredProvider(javaInfo)
         .addOutputGroup(JavaSemantics.SOURCE_JARS_OUTPUT_GROUP, transitiveSourceJars)
         .addOutputGroup(OutputGroupProvider.HIDDEN_TOP_LEVEL, proguardSpecs);
+
 
     if (ruleContext.hasErrors()) {
       return null;
     }
 
-    return builder;
+    return builder.build();
   }
 }

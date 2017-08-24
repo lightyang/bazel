@@ -16,6 +16,8 @@ package com.google.devtools.build.lib.syntax;
 import static com.google.common.truth.Truth.assertThat;
 
 import com.google.common.collect.ImmutableMap;
+import com.google.devtools.build.lib.skylarkinterface.SkylarkPrinter;
+import com.google.devtools.build.lib.skylarkinterface.SkylarkValue;
 import com.google.devtools.build.lib.syntax.SkylarkList.MutableList;
 import com.google.devtools.build.lib.syntax.SkylarkList.Tuple;
 import com.google.devtools.build.lib.syntax.util.EvaluationTestCase;
@@ -45,8 +47,8 @@ public class EvaluationTest extends EvaluationTestCase {
    * <p>If a test uses this method, it allows potential subclasses to run the very same test in a
    * different mode in subclasses
    */
-  protected ModalTestCase newTest() {
-    return new BuildTest();
+  protected ModalTestCase newTest(String... skylarkOptions) {
+    return new BuildTest(skylarkOptions);
   }
 
   @Test
@@ -140,6 +142,12 @@ public class EvaluationTest extends EvaluationTestCase {
   }
 
   @Test
+  public void testComplexFunctionCall() throws Exception {
+    newTest().setUp("functions = [min, max]", "l = [1,2]")
+        .testEval("(functions[0](l), functions[1](l))", "(1, 2)");
+  }
+
+  @Test
   public void testKeywordArgs() throws Exception {
 
     // This function returns the map of keyword arguments passed to it.
@@ -212,6 +220,18 @@ public class EvaluationTest extends EvaluationTestCase {
         .testStatement("2147483647 // 2", 1073741823)
         .testIfErrorContains("unsupported operand type(s) for /: 'string' and 'int'", "'str' / 2")
         .testIfExactError("integer division by zero", "5 // 0");
+  }
+
+  @Test
+  public void testCheckedArithmetic() throws Exception {
+    new SkylarkTest("--incompatible_checked_arithmetic=true")
+        .testIfErrorContains("integer overflow", "2000000000 + 2000000000")
+        .testIfErrorContains("integer overflow", "1234567890 * 987654321")
+        .testIfErrorContains("integer overflow", "- 2000000000 - 2000000000")
+
+        // literal 2147483648 is not allowed, so we compute it
+        .setUp("minint = - 2147483647 - 1")
+        .testIfErrorContains("integer overflow", "-minint");
   }
 
   @Test
@@ -310,7 +330,9 @@ public class EvaluationTest extends EvaluationTestCase {
 
   @Test
   public void testListComprehensionsMultipleVariablesFail() throws Exception {
-    newTest().testIfExactError("lvalue has length 3, but rvalue has has length 2",
+    newTest().testIfErrorContains(
+        "assignment length mismatch: left-hand side has length 3, but right-hand side evaluates to "
+            + "value of length 2",
         "[x + y for x, y, z in [(1, 2), (3, 4)]]").testIfExactError(
         "type 'int' is not a collection", "[x + y for x, y in (1, 2)]");
   }
@@ -444,13 +466,30 @@ public class EvaluationTest extends EvaluationTestCase {
         .testStatement("[1, 2] * 3", MutableList.of(env, 1, 2, 1, 2, 1, 2))
         .testStatement("[1, 2] * 4", MutableList.of(env, 1, 2, 1, 2, 1, 2, 1, 2))
         .testStatement("[8] * 5", MutableList.of(env, 8, 8, 8, 8, 8))
-        .testStatement("[    ] * 10", MutableList.EMPTY)
-        .testStatement("[1, 2] * 0", MutableList.EMPTY)
-        .testStatement("[1, 2] * -4", MutableList.EMPTY)
+        .testStatement("[    ] * 10", MutableList.empty())
+        .testStatement("[1, 2] * 0", MutableList.empty())
+        .testStatement("[1, 2] * -4", MutableList.empty())
         .testStatement(" 2 * [1, 2]", MutableList.of(env, 1, 2, 1, 2))
-        .testStatement("10 * []", MutableList.EMPTY)
-        .testStatement(" 0 * [1, 2]", MutableList.EMPTY)
-        .testStatement("-4 * [1, 2]", MutableList.EMPTY);
+        .testStatement("10 * []", MutableList.empty())
+        .testStatement(" 0 * [1, 2]", MutableList.empty())
+        .testStatement("-4 * [1, 2]", MutableList.empty());
+  }
+
+  @Test
+  public void testTupleMultiply() throws Exception {
+    newTest()
+        .testStatement("(1, 2, 3) * 1", Tuple.of(1, 2, 3))
+        .testStatement("(1, 2) * 2", Tuple.of(1, 2, 1, 2))
+        .testStatement("(1, 2) * 3", Tuple.of(1, 2, 1, 2, 1, 2))
+        .testStatement("(1, 2) * 4", Tuple.of(1, 2, 1, 2, 1, 2, 1, 2))
+        .testStatement("(8,) * 5", Tuple.of(8, 8, 8, 8, 8))
+        .testStatement("(    ) * 10", Tuple.empty())
+        .testStatement("(1, 2) * 0", Tuple.empty())
+        .testStatement("(1, 2) * -4", Tuple.empty())
+        .testStatement(" 2 * (1, 2)", Tuple.of(1, 2, 1, 2))
+        .testStatement("10 * ()", Tuple.empty())
+        .testStatement(" 0 * (1, 2)", Tuple.empty())
+        .testStatement("-4 * (1, 2)", Tuple.empty());
   }
 
   @SuppressWarnings("unchecked")
@@ -487,7 +526,14 @@ public class EvaluationTest extends EvaluationTestCase {
 
   @Test
   public void testListComprehensionOnString() throws Exception {
-    newTest().testExactOrder("[x for x in 'abc']", "a", "b", "c");
+    newTest("--incompatible_string_is_not_iterable=false")
+        .testExactOrder("[x for x in 'abc']", "a", "b", "c");
+  }
+
+  @Test
+  public void testListComprehensionOnStringIsForbidden() throws Exception {
+    newTest("--incompatible_string_is_not_iterable=true")
+        .testIfErrorContains("type 'string' is not iterable", "[x for x in 'abc']");
   }
 
   @Test
@@ -583,30 +629,56 @@ public class EvaluationTest extends EvaluationTestCase {
     newTest().testStatement("not 'a' in ['a'] or 0", 0);
   }
 
-  private Object createObjWithStr() {
-    return new Object() {
+  private SkylarkValue createObjWithStr() {
+    return new SkylarkValue() {
       @Override
-      public String toString() {
-        return "str marker";
+      public void repr(SkylarkPrinter printer) {
+        printer.append("<str marker>");
+      }
+
+      @Override
+      public void reprLegacy(SkylarkPrinter printer) {
+        printer.append("<str legacy marker>");
       }
     };
   }
 
   @Test
   public void testPercOnObject() throws Exception {
-    newTest().update("obj", createObjWithStr()).testStatement("'%s' % obj", "str marker");
+    newTest("--incompatible_descriptive_string_representations=true")
+        .update("obj", createObjWithStr())
+        .testStatement("'%s' % obj", "<str marker>");
+    newTest("--incompatible_descriptive_string_representations=false")
+        .update("obj", createObjWithStr())
+        .testStatement("'%s' % obj", "<str legacy marker>");
+    newTest()
+        .update("unknown", new Object())
+        .testStatement("'%s' % unknown", "<unknown object java.lang.Object>");
   }
 
   @Test
   public void testPercOnObjectList() throws Exception {
-    newTest().update("obj", createObjWithStr()).testStatement("'%s %s' % (obj, obj)",
-        "str marker str marker");
+    newTest("--incompatible_descriptive_string_representations=true")
+        .update("obj", createObjWithStr())
+        .testStatement("'%s %s' % (obj, obj)", "<str marker> <str marker>");
+    newTest("--incompatible_descriptive_string_representations=false")
+        .update("obj", createObjWithStr())
+        .testStatement("'%s %s' % (obj, obj)", "<str legacy marker> <str legacy marker>");
+    newTest()
+        .update("unknown", new Object())
+        .testStatement(
+            "'%s %s' % (unknown, unknown)",
+            "<unknown object java.lang.Object> <unknown object java.lang.Object>");
   }
 
   @Test
   public void testPercOnObjectInvalidFormat() throws Exception {
-    newTest().update("obj", createObjWithStr()).testIfExactError(
-        "invalid argument str marker for format pattern %d", "'%d' % obj");
+    newTest("--incompatible_descriptive_string_representations=true")
+        .update("obj", createObjWithStr())
+        .testIfExactError("invalid argument <str marker> for format pattern %d", "'%d' % obj");
+    newTest("--incompatible_descriptive_string_representations=false")
+        .update("obj", createObjWithStr())
+        .testIfExactError("invalid argument <str marker> for format pattern %d", "'%d' % obj");
   }
 
   @Test
@@ -628,7 +700,7 @@ public class EvaluationTest extends EvaluationTestCase {
 
   @Test
   public void testDictKeysDuplicateKeyArgs() throws Exception {
-    newTest().testIfExactError("duplicate keywords 'arg', 'k' in call to keys",
+    newTest().testIfExactError("duplicate keywords 'arg', 'k' in call to {\"a\": 1}.keys",
         "{'a': 1}.keys(arg='abc', arg='def', k=1, k=2)");
   }
 

@@ -57,11 +57,13 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
+import com.google.devtools.build.lib.rules.apple.AppleCommandLineOptions;
 import com.google.devtools.build.lib.rules.apple.AppleCommandLineOptions.AppleBitcodeMode;
 import com.google.devtools.build.lib.rules.apple.AppleConfiguration;
+import com.google.devtools.build.lib.rules.apple.ApplePlatform;
 import com.google.devtools.build.lib.rules.apple.AppleToolchain;
 import com.google.devtools.build.lib.rules.apple.DottedVersion;
-import com.google.devtools.build.lib.rules.apple.Platform;
+import com.google.devtools.build.lib.rules.apple.XcodeConfig;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainProvider;
 import com.google.devtools.build.lib.rules.cpp.CppCompileAction.DotdFile;
 import com.google.devtools.build.lib.rules.cpp.CppModuleMap;
@@ -123,7 +125,6 @@ public class LegacyCompilationSupport extends CompilationSupport {
         .addPrivateHdrs(srcs.filter(HEADERS).list())
         .addPrecompiledSrcs(srcs.filter(PRECOMPILED_SRCS_TYPE).list())
         .setIntermediateArtifacts(intermediateArtifacts)
-        .setPchFile(Optional.fromNullable(ruleContext.getPrerequisiteArtifact("pch", Mode.TARGET)))
         .build();
   }
 
@@ -147,7 +148,8 @@ public class LegacyCompilationSupport extends CompilationSupport {
       CompilationAttributes compilationAttributes,
       boolean useDeps,
       Map<String, NestedSet<Artifact>> outputGroupCollector,
-      boolean isTestRule) {
+      boolean isTestRule,
+      boolean usePch) {
     super(
         ruleContext,
         buildConfiguration,
@@ -155,7 +157,8 @@ public class LegacyCompilationSupport extends CompilationSupport {
         compilationAttributes,
         useDeps,
         outputGroupCollector,
-        isTestRule);
+        isTestRule,
+        usePch);
   }
 
   @Override
@@ -286,7 +289,7 @@ public class LegacyCompilationSupport extends CompilationSupport {
       commandLine.add("-g");
     }
 
-    List<String> coverageFlags = ImmutableList.of();
+    ImmutableList<String> coverageFlags = ImmutableList.of();
     if (collectCodeCoverage) {
       if (buildConfiguration.isLLVMCoverageMapFormatEnabled()) {
         coverageFlags = CLANG_LLVM_COVERAGE_FLAGS;
@@ -296,19 +299,20 @@ public class LegacyCompilationSupport extends CompilationSupport {
     }
 
     commandLine
-        .add(compileFlagsForClang(appleConfiguration))
-        .add(commonLinkAndCompileFlagsForClang(objcProvider, objcConfiguration, appleConfiguration))
-        .add(objcConfiguration.getCoptsForCompilationMode())
+        .addAll(ImmutableList.copyOf(compileFlagsForClang(appleConfiguration)))
+        .addAll(
+            commonLinkAndCompileFlagsForClang(objcProvider, objcConfiguration, appleConfiguration))
+        .addAll(objcConfiguration.getCoptsForCompilationMode())
         .addBeforeEachPath(
             "-iquote", ObjcCommon.userHeaderSearchPaths(objcProvider, buildConfiguration))
         .addBeforeEachExecPath("-include", pchFile.asSet())
-        .addBeforeEachPath("-I", priorityHeaders)
+        .addBeforeEachPath("-I", ImmutableList.copyOf(priorityHeaders))
         .addBeforeEachPath("-I", objcProvider.get(INCLUDE))
         .addBeforeEachPath("-isystem", objcProvider.get(INCLUDE_SYSTEM))
-        .add(otherFlags)
+        .addAll(ImmutableList.copyOf(otherFlags))
         .addFormatEach("-D%s", objcProvider.get(DEFINE))
-        .add(coverageFlags)
-        .add(getCompileRuleCopts());
+        .addAll(coverageFlags)
+        .addAll(ImmutableList.copyOf(getCompileRuleCopts()));
 
     // Add input source file arguments
     commandLine.add("-c");
@@ -332,7 +336,7 @@ public class LegacyCompilationSupport extends CompilationSupport {
     }
 
     // Add module map arguments.
-    if (moduleMap.isPresent()) {
+    if (moduleMap.isPresent() && !getCustomModuleMap(ruleContext).isPresent()) {
       // If modules are enabled for the rule, -fmodules is added to the copts already. (This implies
       // module map usage). Otherwise, we need to pass -fmodule-maps.
       if (!attributes.enableModules()) {
@@ -343,8 +347,8 @@ public class LegacyCompilationSupport extends CompilationSupport {
       // TODO(bazel-team): Use -fmodule-map-file when Xcode 6 support is dropped.
       commandLine
           .add("-iquote")
-          .add(moduleMap.get().getArtifact().getExecPath().getParentDirectory().toString())
-          .add("-fmodule-name=" + moduleMap.get().getName());
+          .addPath(moduleMap.get().getArtifact().getExecPath().getParentDirectory())
+          .addFormatted("-fmodule-name=%s", moduleMap.get().getName());
     }
 
     return commandLine.build();
@@ -371,7 +375,7 @@ public class LegacyCompilationSupport extends CompilationSupport {
             objcProvider,
             priorityHeaders,
             moduleMap,
-            compilationArtifacts.getPchFile(),
+            getPchFile(),
             Optional.of(dotdFile.artifact()),
             otherFlags,
             runCodeCoverage,
@@ -399,7 +403,7 @@ public class LegacyCompilationSupport extends CompilationSupport {
             .addTransitiveMandatoryInputs(objcProvider.get(STATIC_FRAMEWORK_FILE))
             .addTransitiveMandatoryInputs(objcProvider.get(DYNAMIC_FRAMEWORK_FILE))
             .setDotdFile(dotdFile)
-            .addMandatoryInputs(compilationArtifacts.getPchFile().asSet());
+            .addMandatoryInputs(getPchFile().asSet());
 
     Artifact headersListFile = null;
     if (isHeaderThinningEnabled()
@@ -456,14 +460,14 @@ public class LegacyCompilationSupport extends CompilationSupport {
             objcProvider,
             priorityHeaders,
             moduleMap,
-            compilationArtifacts.getPchFile(),
+            getPchFile(),
             Optional.<Artifact>absent(),
             otherFlags,
             /* runCodeCoverage=*/ false,
             /* isCPlusPlusSource=*/ false);
 
     AppleConfiguration appleConfiguration = ruleContext.getFragment(AppleConfiguration.class);
-    Platform platform = appleConfiguration.getSingleArchPlatform();
+    ApplePlatform platform = appleConfiguration.getSingleArchPlatform();
 
     NestedSet<Artifact> moduleMapInputs = NestedSetBuilder.emptySet(Order.STABLE_ORDER);
     if (objcConfiguration.moduleMapsEnabled()) {
@@ -483,7 +487,7 @@ public class LegacyCompilationSupport extends CompilationSupport {
             .addCommonInputs(compilationArtifacts.getPrivateHdrs())
             .addCommonTransitiveInputs(objcProvider.get(STATIC_FRAMEWORK_FILE))
             .addCommonTransitiveInputs(objcProvider.get(DYNAMIC_FRAMEWORK_FILE))
-            .addCommonInputs(compilationArtifacts.getPchFile().asSet())
+            .addCommonInputs(getPchFile().asSet())
             .build(ruleContext.getActionOwner()));
   }
 
@@ -497,16 +501,18 @@ public class LegacyCompilationSupport extends CompilationSupport {
       Iterable<Artifact> objFiles,
       Artifact archive) {
     Artifact objList = intermediateArtifacts.archiveObjList();
-    ruleContext.registerAction(ObjcRuleClasses.spawnAppleEnvActionBuilder(
+    ruleContext.registerAction(
+        ObjcRuleClasses.spawnAppleEnvActionBuilder(
                 appleConfiguration, appleConfiguration.getSingleArchPlatform())
             .setMnemonic("ObjcLink")
             .setExecutable(libtool(ruleContext))
-            .setCommandLine(new CustomCommandLine.Builder()
+            .setCommandLine(
+                new CustomCommandLine.Builder()
                     .add("-static")
-                    .add("-filelist").add(objList.getExecPathString())
-                    .add("-arch_only").add(appleConfiguration.getSingleArchitecture())
-                    .add("-syslibroot").add(AppleToolchain.sdkDir())
-                    .add("-o").add(archive.getExecPathString())
+                    .addExecPath("-filelist", objList)
+                    .add("-arch_only", appleConfiguration.getSingleArchitecture())
+                    .add("-syslibroot", AppleToolchain.sdkDir())
+                    .addExecPath("-o", archive)
                     .build())
             .addInputs(objFiles)
             .addInput(objList)
@@ -526,10 +532,10 @@ public class LegacyCompilationSupport extends CompilationSupport {
             .setCommandLine(
                 new CustomCommandLine.Builder()
                     .add("-static")
-                    .add("-arch_only").add(appleConfiguration.getSingleArchitecture())
-                    .add("-syslibroot").add(AppleToolchain.sdkDir())
-                    .add("-o").add(outputArchive.getExecPathString())
-                    .addExecPaths(inputArtifacts)
+                    .add("-arch_only", appleConfiguration.getSingleArchitecture())
+                    .add("-syslibroot", AppleToolchain.sdkDir())
+                    .addExecPath("-o", outputArchive)
+                    .addExecPaths(ImmutableList.copyOf(inputArtifacts))
                     .build())
             .addInputs(inputArtifacts)
             .addOutput(outputArchive)
@@ -657,9 +663,10 @@ public class LegacyCompilationSupport extends CompilationSupport {
       Iterable<Artifact> bazelBuiltLibraries,
       Optional<Artifact> linkmap,
       Optional<Artifact> bitcodeSymbolMap) {
-    Iterable<String> libraryNames = libraryNames(objcProvider);
+    ImmutableList<String> libraryNames = libraryNames(objcProvider);
 
-    CustomCommandLine.Builder commandLine = CustomCommandLine.builder()
+    CustomCommandLine.Builder commandLine =
+        CustomCommandLine.builder()
             .addPath(xcrunwrapper(ruleContext).getExecutable().getExecPath());
     if (objcProvider.is(USES_CPP)) {
       commandLine
@@ -692,12 +699,10 @@ public class LegacyCompilationSupport extends CompilationSupport {
 
     registerObjFilelistAction(objFiles, inputFileList);
 
-    if (objcConfiguration.shouldPrioritizeStaticLibs()) {
-      commandLine.add("-filelist").add(inputFileList.getExecPathString());
-    }
+    commandLine.add("-filelist", inputFileList.getExecPathString());
 
     AppleBitcodeMode bitcodeMode = appleConfiguration.getBitcodeMode();
-    commandLine.add(bitcodeMode.getCompileAndLinkFlags());
+    commandLine.addAll(bitcodeMode.getCompileAndLinkFlags());
 
     if (bitcodeMode == AppleBitcodeMode.EMBEDDED) {
       commandLine.add("-Xlinker").add("-bitcode_verify");
@@ -706,11 +711,12 @@ public class LegacyCompilationSupport extends CompilationSupport {
           .add("-Xlinker")
           .add("-bitcode_symbol_map")
           .add("-Xlinker")
-          .add(bitcodeSymbolMap.get().getExecPathString());
+          .addExecPath(bitcodeSymbolMap.get());
     }
 
     commandLine
-        .add(commonLinkAndCompileFlagsForClang(objcProvider, objcConfiguration, appleConfiguration))
+        .addAll(
+            commonLinkAndCompileFlagsForClang(objcProvider, objcConfiguration, appleConfiguration))
         .add("-Xlinker")
         .add("-objc_abi_version")
         .add("-Xlinker")
@@ -722,37 +728,29 @@ public class LegacyCompilationSupport extends CompilationSupport {
         .add("-Xlinker")
         .add("@executable_path/Frameworks")
         .add("-fobjc-link-runtime")
-        .add(DEFAULT_LINKER_FLAGS)
+        .addAll(DEFAULT_LINKER_FLAGS)
         .addBeforeEach("-framework", frameworkNames(objcProvider))
         .addBeforeEach("-weak_framework", SdkFramework.names(objcProvider.get(WEAK_SDK_FRAMEWORK)))
-        .addFormatEach("-l%s", libraryNames);
-
-    if (!objcConfiguration.shouldPrioritizeStaticLibs()) {
-      commandLine.add("-filelist").add(inputFileList.getExecPathString());
-    }
-
-    commandLine
+        .addFormatEach("-l%s", libraryNames)
         .addExecPath("-o", linkedBinary)
         .addBeforeEachExecPath("-force_load", forceLinkArtifacts)
-        .add(extraLinkArgs)
-        .add(objcProvider.get(ObjcProvider.LINKOPT));
+        .addAll(ImmutableList.copyOf(extraLinkArgs))
+        .addAll(objcProvider.get(ObjcProvider.LINKOPT));
 
     if (buildConfiguration.isCodeCoverageEnabled()) {
       if (buildConfiguration.isLLVMCoverageMapFormatEnabled()) {
-        commandLine.add(LINKER_LLVM_COVERAGE_FLAGS);
+        commandLine.addAll(LINKER_LLVM_COVERAGE_FLAGS);
       } else {
-        commandLine.add(LINKER_COVERAGE_FLAGS);
+        commandLine.addAll(LINKER_COVERAGE_FLAGS);
       }
     }
 
     for (String linkopt : attributes.linkopts()) {
-      commandLine.add("-Wl," + linkopt);
+      commandLine.addFormatted("-Wl,%s", linkopt);
     }
 
     if (linkmap.isPresent()) {
-      commandLine
-        .add("-Xlinker -map")
-        .add("-Xlinker " + linkmap.get().getExecPath());
+      commandLine.add("-Xlinker -map").addPath("-Xlinker ", linkmap.get().getExecPath());
     }
 
     // Call to dsymutil for debug symbol generation must happen in the link action.
@@ -765,10 +763,11 @@ public class LegacyCompilationSupport extends CompilationSupport {
           .add("&&")
           .addPath(xcrunwrapper(ruleContext).getExecutable().getExecPath())
           .add(DSYMUTIL)
-          .add(linkedBinary.getExecPathString())
-          .add("-o " + dsymPath)
-          .add("&& zipped_bundle=${PWD}/" + dsymBundleZip.get().getShellEscapedExecPathString())
-          .add("&& cd " + dsymPath)
+          .addExecPath(linkedBinary)
+          .addPath("-o", dsymPath)
+          .addDynamicString(
+              "&& zipped_bundle=${PWD}/" + dsymBundleZip.get().getShellEscapedExecPathString())
+          .addDynamicString("&& cd " + dsymPath)
           .add("&& /usr/bin/zip -q -r \"${zipped_bundle}\" .");
     }
 
@@ -795,12 +794,41 @@ public class LegacyCompilationSupport extends CompilationSupport {
     }
   }
 
+  /**
+   * This method is necessary because
+   * {@link XcodeConfig#getMinimumOsForPlatformType(RuleContext, ApplePlatform.PlatformType)} uses
+   * the configuration of whichever rule it was called from; however, we are interested in the
+   * minimum versions for the dependencies here, which are possibly behind a configuration
+   * transition.
+   *
+   * <p>It's kosher to reach into {@link }AppleConfiguration} this way because we don't touch
+   * anything that may be tainted by data from BUILD files, only the options, which are directly
+   * passed into the configuration loader.
+   */
+  private DottedVersion getExplicitMinimumOsVersion(
+      AppleConfiguration configuration, ApplePlatform.PlatformType platformType) {
+    AppleCommandLineOptions options = configuration.getOptions();
+    switch (platformType) {
+      case IOS:
+        return options.iosMinimumOs;
+      case WATCHOS:
+        return options.watchosMinimumOs;
+      case TVOS:
+        return options.tvosMinimumOs;
+      case MACOS:
+        return options.macosMinimumOs;
+      default:
+        throw new IllegalStateException("Unhandled platform type: " + platformType);
+    }
+  }
+
   /** Returns a list of clang flags used for all link and compile actions executed through clang. */
-  private List<String> commonLinkAndCompileFlagsForClang(
-      ObjcProvider provider, ObjcConfiguration objcConfiguration,
+  private ImmutableList<String> commonLinkAndCompileFlagsForClang(
+      ObjcProvider provider,
+      ObjcConfiguration objcConfiguration,
       AppleConfiguration appleConfiguration) {
     ImmutableList.Builder<String> builder = new ImmutableList.Builder<>();
-    Platform platform = appleConfiguration.getSingleArchPlatform();
+    ApplePlatform platform = appleConfiguration.getSingleArchPlatform();
     String minOSVersionArg;
     switch (platform) {
       case IOS_SIMULATOR:
@@ -824,7 +852,11 @@ public class LegacyCompilationSupport extends CompilationSupport {
       default:
         throw new IllegalArgumentException("Unhandled platform " + platform);
     }
-    DottedVersion minOSVersion = appleConfiguration.getMinimumOsForPlatformType(platform.getType());
+    DottedVersion minOSVersion =
+        getExplicitMinimumOsVersion(appleConfiguration, platform.getType());
+    if (minOSVersion == null) {
+      minOSVersion = XcodeConfig.getMinimumOsForPlatformType(ruleContext, platform.getType());
+    }
     builder.add(minOSVersionArg + "=" + minOSVersion);
 
     if (objcConfiguration.generateDsym()) {
@@ -835,7 +867,7 @@ public class LegacyCompilationSupport extends CompilationSupport {
         .add("-arch", appleConfiguration.getSingleArchitecture())
         .add("-isysroot", AppleToolchain.sdkDir())
         // TODO(bazel-team): Pass framework search paths to Xcodegen.
-        .addAll(commonFrameworkFlags(provider, appleConfiguration))
+        .addAll(commonFrameworkFlags(provider, ruleContext, platform))
         .build();
   }
 

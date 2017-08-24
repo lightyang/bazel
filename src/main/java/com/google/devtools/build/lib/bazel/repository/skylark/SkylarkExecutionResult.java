@@ -20,7 +20,6 @@ import com.google.devtools.build.lib.shell.BadExitStatusException;
 import com.google.devtools.build.lib.shell.Command;
 import com.google.devtools.build.lib.shell.CommandException;
 import com.google.devtools.build.lib.shell.CommandResult;
-import com.google.devtools.build.lib.shell.TimeoutKillableObserver;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModuleCategory;
@@ -30,6 +29,7 @@ import com.google.devtools.build.lib.util.io.DelegatingOutErr;
 import com.google.devtools.build.lib.util.io.OutErr;
 import com.google.devtools.build.lib.util.io.RecordingOutErr;
 import java.io.File;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -107,7 +107,7 @@ final class SkylarkExecutionResult {
     private final Map<String, String> envBuilder = Maps.newLinkedHashMap();
     private long timeout = -1;
     private boolean executed = false;
-    private boolean quiet;
+    private OutErr outErr;
 
     private Builder(Map<String, String> environment) {
       envBuilder.putAll(environment);
@@ -162,8 +162,8 @@ final class SkylarkExecutionResult {
       return this;
     }
 
-    Builder setQuiet(boolean quiet) {
-      this.quiet = quiet;
+    Builder setOutErr(OutErr outErr) {
+      this.outErr = outErr;
       return this;
     }
 
@@ -183,18 +183,17 @@ final class SkylarkExecutionResult {
       // Bazel will crash. Maybe we should use custom output streams that throw an appropriate
       // exception when reaching a specific size.
       delegator.addSink(recorder);
-      if (!quiet) {
-        delegator.addSink(OutErr.create(System.out, System.err));
+      if (outErr != null) {
+        delegator.addSink(outErr);
       }
       try {
         String[] argsArray = new String[args.size()];
         for (int i = 0; i < args.size(); i++) {
           argsArray[i] = args.get(i);
         }
-        Command command = new Command(argsArray, envBuilder, directory);
-        CommandResult result = command.execute(
-            new byte[]{}, new TimeoutKillableObserver(timeout),
-            delegator.getOutputStream(), delegator.getErrorStream());
+        Command command = new Command(argsArray, envBuilder, directory, Duration.ofMillis(timeout));
+        CommandResult result =
+            command.execute(delegator.getOutputStream(), delegator.getErrorStream());
         return new SkylarkExecutionResult(
             result.getTerminationStatus().getExitCode(),
             recorder.outAsLatin1(),

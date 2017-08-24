@@ -21,10 +21,10 @@ import com.google.devtools.build.lib.util.OptionsUtils;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.common.options.Option;
 import com.google.devtools.common.options.OptionDocumentationCategory;
+import com.google.devtools.common.options.OptionEffectTag;
 import com.google.devtools.common.options.Options;
 import com.google.devtools.common.options.OptionsBase;
-import com.google.devtools.common.options.OptionsParser.OptionUsageRestrictions;
-import com.google.devtools.common.options.proto.OptionFilters.OptionEffectTag;
+import java.time.Duration;
 import java.util.Map;
 
 /**
@@ -204,7 +204,7 @@ public class ExecutionOptions extends OptionsBase {
             + "moderate, long and eternal (in that order). In either form, a value of -1 tells "
             + "blaze to use its default timeouts for that category."
   )
-  public Map<TestTimeout, Integer> testTimeout;
+  public Map<TestTimeout, Duration> testTimeout;
 
   @Option(
     name = "resource_autosense",
@@ -272,8 +272,7 @@ public class ExecutionOptions extends OptionsBase {
   @Option(
     name = "debug_print_action_contexts",
     defaultValue = "false",
-    optionUsageRestrictions = OptionUsageRestrictions.UNDOCUMENTED,
-    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+    documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help = "Print the contents of the SpawnActionContext and ContextProviders maps."
   )
@@ -282,8 +281,7 @@ public class ExecutionOptions extends OptionsBase {
   @Option(
     name = "cache_computed_file_digests",
     defaultValue = "50000",
-    optionUsageRestrictions = OptionUsageRestrictions.UNDOCUMENTED,
-    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+    documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help =
         "If greater than 0, configures Blaze to cache file digests in memory based on their "
@@ -297,8 +295,7 @@ public class ExecutionOptions extends OptionsBase {
   @Option(
     name = "experimental_enable_critical_path_profiling",
     defaultValue = "true",
-    optionUsageRestrictions = OptionUsageRestrictions.UNDOCUMENTED,
-    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+    documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
     effectTags = {OptionEffectTag.UNKNOWN},
     help =
         "If set (the default), critical path profiling is enabled for the execution phase. "

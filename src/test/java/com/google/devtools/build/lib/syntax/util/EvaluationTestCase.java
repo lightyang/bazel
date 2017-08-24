@@ -26,6 +26,7 @@ import com.google.devtools.build.lib.events.util.EventCollectionApparatus;
 import com.google.devtools.build.lib.syntax.BazelLibrary;
 import com.google.devtools.build.lib.syntax.BuildFileAST;
 import com.google.devtools.build.lib.syntax.Environment;
+import com.google.devtools.build.lib.syntax.Environment.FailFastException;
 import com.google.devtools.build.lib.syntax.Environment.Phase;
 import com.google.devtools.build.lib.syntax.EvalException;
 import com.google.devtools.build.lib.syntax.Expression;
@@ -158,30 +159,24 @@ public class EvaluationTestCase {
 
   /** Parses a statement, possibly followed by newlines. */
   protected Statement parseStatement(Parser.ParsingLevel parsingLevel, String... input) {
-    return Parser.parseStatement(
-        makeParserInputSource(input), getEventHandler(),
-        parsingLevel, Parser.Dialect.SKYLARK);
+    return Parser.parseStatement(makeParserInputSource(input), getEventHandler(), parsingLevel);
   }
 
   /** Parses a top-level statement, possibly followed by newlines. */
   protected Statement parseTopLevelStatement(String... input) {
     return Parser.parseStatement(
-        makeParserInputSource(input), getEventHandler(),
-        Parser.ParsingLevel.TOP_LEVEL, Parser.Dialect.SKYLARK);
+        makeParserInputSource(input), getEventHandler(), Parser.ParsingLevel.TOP_LEVEL);
   }
 
   /** Parses a local statement, possibly followed by newlines. */
   protected Statement parseLocalLevelStatement(String... input) {
     return Parser.parseStatement(
-        makeParserInputSource(input), getEventHandler(),
-        Parser.ParsingLevel.LOCAL_LEVEL, Parser.Dialect.SKYLARK);
+        makeParserInputSource(input), getEventHandler(), Parser.ParsingLevel.LOCAL_LEVEL);
   }
 
   /** Parses an expression, possibly followed by newlines. */
   protected Expression parseExpression(String... input) {
-    return Parser.parseExpression(
-        makeParserInputSource(input), getEventHandler(),
-        Parser.Dialect.SKYLARK);
+    return Parser.parseExpression(makeParserInputSource(input), getEventHandler());
   }
 
   public EvaluationTestCase update(String varname, Object value) throws Exception {
@@ -201,12 +196,11 @@ public class EvaluationTestCase {
   }
 
   public void checkEvalError(String msg, String... input) throws Exception {
-    setFailFast(true);
     try {
       eval(input);
       fail("Expected error '" + msg + "' but got no error");
-    } catch (IllegalArgumentException | EvalException e) {
-      assertThat(e).hasMessage(msg);
+    } catch (EvalException | FailFastException e) {
+      assertThat(e).hasMessageThat().isEqualTo(msg);
     }
   }
 
@@ -214,7 +208,7 @@ public class EvaluationTestCase {
     try {
       eval(input);
       fail("Expected error containing '" + msg + "' but got no error");
-    } catch (IllegalArgumentException | EvalException e) {
+    } catch (EvalException | FailFastException e) {
       assertThat(e).hasMessageThat().contains(msg);
     }
   }
@@ -240,6 +234,10 @@ public class EvaluationTestCase {
 
   public Event assertContainsWarning(String expectedMessage) {
     return eventCollectionApparatus.assertContainsWarning(expectedMessage);
+  }
+
+  public Event assertContainsDebug(String expectedMessage) {
+    return eventCollectionApparatus.assertContainsDebug(expectedMessage);
   }
 
   public EvaluationTestCase clearEvents() {
@@ -579,11 +577,15 @@ public class EvaluationTestCase {
    * A class that runs all tests in Build mode
    */
   protected class BuildTest extends ModalTestCase {
-    public BuildTest() {}
+    private final String[] skylarkOptions;
+
+    public BuildTest(String... skylarkOptions) {
+      this.skylarkOptions = skylarkOptions;
+    }
 
     @Override
     protected void run(Testable testable) throws Exception {
-      enableBuildMode();
+      enableBuildMode(skylarkOptions);
       testable.run();
     }
   }

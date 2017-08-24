@@ -16,7 +16,7 @@ package com.google.devtools.build.lib.analysis;
 
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
-import static com.google.devtools.build.lib.testutil.MoreAsserts.assertEventCount;
+import static com.google.devtools.build.lib.packages.Attribute.attr;
 import static com.google.devtools.build.lib.testutil.MoreAsserts.assertEventCountAtLeast;
 import static org.junit.Assert.fail;
 
@@ -33,11 +33,12 @@ import com.google.devtools.build.lib.actions.FailAction;
 import com.google.devtools.build.lib.analysis.BuildView.AnalysisResult;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.InvalidConfigurationException;
-import com.google.devtools.build.lib.analysis.util.AnalysisMock;
 import com.google.devtools.build.lib.analysis.util.BuildViewTestBase;
 import com.google.devtools.build.lib.analysis.util.ExpectedDynamicConfigurationErrors;
+import com.google.devtools.build.lib.analysis.util.MockRule;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.packages.Attribute;
+import com.google.devtools.build.lib.packages.BuildType;
 import com.google.devtools.build.lib.packages.Rule;
 import com.google.devtools.build.lib.skyframe.SkyFunctions;
 import com.google.devtools.build.lib.skyframe.TargetPatternValue.TargetPatternKey;
@@ -339,7 +340,7 @@ public class BuildViewTest extends BuildViewTestBase {
     ConfiguredTarget ct = Iterables.getOnlyElement(update("//package:binary").getTargetsToBuild());
     BuildConfiguration.Options options =
         ct.getConfiguration().getOptions().get(BuildConfiguration.Options.class);
-    assertThat(options.testArguments).containsExactly("CONFIG HOOK 1");
+    assertThat(options.hostCpu).isEqualTo("$CONFIG HOOK 1");
   }
 
   @Test
@@ -353,7 +354,7 @@ public class BuildViewTest extends BuildViewTestBase {
     ConfiguredTarget ct = Iterables.getOnlyElement(update("//package:binary").getTargetsToBuild());
     BuildConfiguration.Options options =
         ct.getConfiguration().getOptions().get(BuildConfiguration.Options.class);
-    assertThat(options.testArguments).containsExactly("CONFIG HOOK 1", "CONFIG HOOK 2");
+    assertThat(options.hostCpu).isEqualTo("$CONFIG HOOK 1$CONFIG HOOK 2");
   }
 
   @Test
@@ -391,21 +392,12 @@ public class BuildViewTest extends BuildViewTestBase {
     Iterable<Dependency> targets = getView().getDirectPrerequisiteDependenciesForTesting(
         reporter, top, getBuildConfigurationCollection()).values();
 
-    Dependency innerDependency;
-    Dependency fileDependency;
-    if (top.getConfiguration().useDynamicConfigurations()) {
-      innerDependency =
-          Dependency.withTransitionAndAspects(
-              Label.parseAbsolute("//package:inner"),
-              Attribute.ConfigurationTransition.NONE,
-              AspectCollection.EMPTY);
-    } else {
-      innerDependency =
-          Dependency.withConfiguration(
-              Label.parseAbsolute("//package:inner"),
-              getTargetConfiguration());
-    }
-    fileDependency =
+    Dependency innerDependency =
+        Dependency.withTransitionAndAspects(
+            Label.parseAbsolute("//package:inner"),
+            Attribute.ConfigurationTransition.NONE,
+            AspectCollection.EMPTY);
+    Dependency fileDependency =
         Dependency.withNullConfiguration(
             Label.parseAbsolute("//package:file"));
 
@@ -539,11 +531,9 @@ public class BuildViewTest extends BuildViewTestBase {
     // the transitive target closure) and in the normal configured target cycle detection path.
     // So we get an additional instance of this check (which varies depending on whether Skyframe
     // loading phase is enabled).
-    // TODO(gregce): refactor away this variation. Note that the duplicate doesn't make it into
+    // TODO(gregce): Fix above and uncomment the below. Note that the duplicate doesn't make it into
     // real user output (it only affects tests).
-    if (!getTargetConfiguration().useDynamicConfigurations()) {
-      assertEventCount(3, eventCollector);
-    }
+    //  assertEventCount(3, eventCollector);
   }
 
   @Test
@@ -1106,7 +1096,6 @@ public class BuildViewTest extends BuildViewTestBase {
         "filegroup(name = 'jdk', srcs = [",
         "    '//does/not/exist:a-piii', '//does/not/exist:b-k8', '//does/not/exist:c-default'])");
     scratch.file("does/not/exist/BUILD");
-    useConfigurationFactory(AnalysisMock.get().createConfigurationFactory());
     useConfiguration("--javabase=//jdk");
     reporter.removeHandler(failFastHandler);
     try {
@@ -1305,7 +1294,7 @@ public class BuildViewTest extends BuildViewTestBase {
         "",
         "def _action_rule_impl(ctx):",
         "  out = ctx.actions.declare_file(ctx.label.name)",
-        "  ctx.action(outputs = [out], command = 'dontcare', mnemonic='Mnemonic')",
+        "  ctx.actions.run_shell(outputs = [out], command = 'dontcare', mnemonic='Mnemonic')",
         "  return struct()",
         "action_rule = rule(_action_rule_impl, attrs = { 'deps' : attr.label_list() })");
 
@@ -1338,6 +1327,56 @@ public class BuildViewTest extends BuildViewTestBase {
       // Expected.
     }
     assertDoesNotContainEvent("implicitly depends upon");
+  }
+
+  @Test
+  public void allowedRuleClassesAndAllowedRuleClassesWithWarning() throws Exception {
+    setRulesAvailableInTests(
+        (MockRule) () -> MockRule.define(
+            "custom_rule",
+            attr("deps", BuildType.LABEL_LIST)
+                .allowedFileTypes()
+                .allowedRuleClasses("java_library", "java_binary")
+                .allowedRuleClassesWithWarning("genrule")));
+
+    scratch.file("foo/BUILD",
+        "genrule(",
+        "    name = 'genlib',",
+        "    srcs = [],",
+        "    outs = ['genlib.out'],",
+        "    cmd = 'echo hi > $@')",
+        "custom_rule(",
+        "    name = 'foo',",
+        "    deps = [':genlib'])");
+
+    update("//foo");
+    assertContainsEvent("WARNING /workspace/foo/BUILD:8:12: in deps attribute of custom_rule rule "
+        + "//foo:foo: genrule rule '//foo:genlib' is unexpected here (expected java_library or "
+        + "java_binary); continuing anyway");
+  }
+
+  @Test
+  public void onlyAllowedRuleClassesWithWarning() throws Exception {
+    setRulesAvailableInTests(
+        (MockRule) () -> MockRule.define(
+            "custom_rule",
+            attr("deps", BuildType.LABEL_LIST)
+                .allowedFileTypes()
+                .allowedRuleClassesWithWarning("genrule")));
+
+    scratch.file("foo/BUILD",
+        "genrule(",
+        "    name = 'genlib',",
+        "    srcs = [],",
+        "    outs = ['genlib.out'],",
+        "    cmd = 'echo hi > $@')",
+        "custom_rule(",
+        "    name = 'foo',",
+        "    deps = [':genlib'])");
+
+    update("//foo");
+    assertContainsEvent("WARNING /workspace/foo/BUILD:8:12: in deps attribute of custom_rule rule "
+        + "//foo:foo: genrule rule '//foo:genlib' is unexpected here; continuing anyway");
   }
 
   /** Runs the same test with the reduced loading phase. */

@@ -21,35 +21,30 @@ import java.io.IOException;
  */
 public final class ExpressionStatement extends Statement {
 
-  private final Expression expr;
+  private final Expression expression;
 
-  public ExpressionStatement(Expression expr) {
-    this.expr = expr;
+  public ExpressionStatement(Expression expression) {
+    this.expression = expression;
   }
 
   public Expression getExpression() {
-    return expr;
+    return expression;
   }
 
   @Override
   public void prettyPrint(Appendable buffer, int indentLevel) throws IOException {
     printIndent(buffer, indentLevel);
-    expr.prettyPrint(buffer);
+    expression.prettyPrint(buffer);
     buffer.append('\n');
   }
 
   @Override
   void doExec(Environment env) throws EvalException, InterruptedException {
-    expr.eval(env);
+    expression.eval(env);
   }
 
   @Override
   public void accept(SyntaxTreeVisitor visitor) {
     visitor.visit(this);
-  }
-
-  @Override
-  void validate(ValidationEnvironment env) throws EvalException {
-    expr.validate(env);
   }
 }

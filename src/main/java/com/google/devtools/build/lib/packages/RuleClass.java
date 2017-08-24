@@ -27,6 +27,7 @@ import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Ordering;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
@@ -39,7 +40,7 @@ import com.google.devtools.build.lib.packages.Attribute.SkylarkComputedDefaultTe
 import com.google.devtools.build.lib.packages.Attribute.Transition;
 import com.google.devtools.build.lib.packages.BuildType.SelectorList;
 import com.google.devtools.build.lib.packages.ConfigurationFragmentPolicy.MissingFragmentPolicy;
-import com.google.devtools.build.lib.packages.RuleFactory.AttributeValuesMap;
+import com.google.devtools.build.lib.packages.RuleFactory.AttributeValues;
 import com.google.devtools.build.lib.syntax.Argument;
 import com.google.devtools.build.lib.syntax.BaseFunction;
 import com.google.devtools.build.lib.syntax.Environment;
@@ -56,6 +57,7 @@ import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -168,20 +170,6 @@ public class RuleClass {
   }
 
   /**
-   * Using this callback function, rules can override their own configuration during the
-   * analysis phase.
-   */
-  public interface Configurator<TConfig, TRule> {
-    TConfig apply(TRule rule, TConfig configuration);
-
-    /**
-     * Describes the Bazel feature this configurator is used for. Used for checking that dynamic
-     * configuration transitions are only applied to expected configurator types.
-     */
-    String getCategory();
-  }
-
-  /**
    * A factory or builder class for rule implementations.
    */
   public interface ConfiguredTargetFactory<TConfiguredTarget, TContext> {
@@ -200,22 +188,6 @@ public class RuleClass {
      */
     public static final class RuleErrorException extends Exception {}
   }
-
-  /**
-   * Default rule configurator, it doesn't change the assigned configuration.
-   */
-  public static final RuleClass.Configurator<Object, Object> NO_CHANGE =
-      new RuleClass.Configurator<Object, Object>() {
-        @Override
-        public Object apply(Object rule, Object configuration) {
-          return configuration;
-        }
-
-        @Override
-        public String getCategory() {
-          return "core";
-        }
-  };
 
   /**
    * For Bazel's constraint system: the attribute that declares the set of environments a rule
@@ -421,10 +393,6 @@ public class RuleClass {
         this.ruleClasses = ImmutableSet.copyOf(ruleClasses);
       }
 
-      public RuleClassNamePredicate() {
-        this(ImmutableSet.<String>of());
-      }
-
       @Override
       public boolean apply(RuleClass ruleClass) {
         return ruleClasses.contains(ruleClass.getName());
@@ -439,6 +407,13 @@ public class RuleClass {
       public boolean equals(Object o) {
         return (o instanceof RuleClassNamePredicate)
             && ruleClasses.equals(((RuleClassNamePredicate) o).ruleClasses);
+      }
+
+      /**
+       * Returns true if this and the other predicate have common rule class entries.
+       */
+      public boolean intersects(RuleClassNamePredicate other) {
+        return !Collections.disjoint(ruleClasses, other.ruleClasses);
       }
 
       @Override
@@ -488,8 +463,8 @@ public class RuleClass {
     private boolean outputsDefaultExecutable = false;
     private boolean isConfigMatcher = false;
     private ImplicitOutputsFunction implicitOutputsFunction = ImplicitOutputsFunction.NONE;
-    private Configurator<?, ?> configurator = NO_CHANGE;
     private RuleTransitionFactory transitionFactory;
+    private RuleTransitionFactory outgoingTransitionFactory;
     private ConfiguredTargetFactory<?, ?> configuredTargetFactory = null;
     private PredicateWithMessage<Rule> validityPredicate =
         PredicatesWithMessage.<Rule>alwaysTrue();
@@ -508,13 +483,13 @@ public class RuleClass {
     private boolean supportsConstraintChecking = true;
 
     private final Map<String, Attribute> attributes = new LinkedHashMap<>();
-    private final List<ClassObjectConstructor.Key> requiredToolchains = new ArrayList<>();
+    private final List<Label> requiredToolchains = new ArrayList<>();
 
     /**
      * Constructs a new {@code RuleClassBuilder} using all attributes from all
      * parent rule classes. An attribute cannot exist in more than one parent.
      *
-     * <p>The rule type affects the the allowed names and the required
+     * <p>The rule type affects the allowed names and the required
      * attributes (see {@link RuleClassType}).
      *
      * @throws IllegalArgumentException if an attribute with the same name exists
@@ -538,6 +513,8 @@ public class RuleClass {
         configurationFragmentPolicy.setMissingFragmentPolicy(
             parent.getConfigurationFragmentPolicy().getMissingFragmentPolicy());
         supportsConstraintChecking = parent.supportsConstraintChecking;
+
+        addRequiredToolchains(parent.getRequiredToolchains());
 
         for (Attribute attribute : parent.getAttributes()) {
           String attrName = attribute.getName();
@@ -606,8 +583,8 @@ public class RuleClass {
           outputsDefaultExecutable,
           implicitOutputsFunction,
           isConfigMatcher,
-          configurator,
           transitionFactory,
+          outgoingTransitionFactory,
           configuredTargetFactory,
           validityPredicate,
           preferredDependencyPredicate,
@@ -740,22 +717,14 @@ public class RuleClass {
       return this;
     }
 
-    public Builder cfg(Configurator<?, ?> configurator) {
-      Preconditions.checkState(type != RuleClassType.ABSTRACT,
-          "Setting not inherited property (cfg) of abstract rule class '%s'", name);
-      Preconditions.checkState(this.transitionFactory == null && this.configurator == NO_CHANGE,
-          "Property cfg has already been set");
-      Preconditions.checkNotNull(configurator);
-      this.configurator = configurator;
-      return this;
-    }
-
     /**
-     * Applies the given transition to all incoming edges for this rule class.  Does not work with
-     * static configurations.
+     * Applies the given transition to all incoming edges for this rule class.
      *
-     * <p>Note that the given transition must be a PatchTransition instance.  We use the more
-     * general Transtion here because PatchTransition is not available in this package.
+     * <p>The given transition must be a PatchTransition.  We use the more general Transition
+     * here because PatchTransition is not available in this package.
+     *
+     * <p>If you need the transition to depend on the rule it's being applied to, use
+     * {@link #cfg(RuleTransitionFactory)}.
      */
     public Builder cfg(Transition transition) {
       Preconditions.checkState(type != RuleClassType.ABSTRACT,
@@ -767,6 +736,12 @@ public class RuleClass {
       return this;
     }
 
+    /**
+     * Applies the given transition factory to all incoming edges for this rule class.
+     *
+     * <p>Unlike{@link #cfg(Transition)}, the factory can examine the rule when deciding what
+     * transition to use.
+     */
     public Builder cfg(RuleTransitionFactory transitionFactory) {
       Preconditions.checkState(type != RuleClassType.ABSTRACT,
           "Setting not inherited property (cfg) of abstract rule class '%s'", name);
@@ -774,6 +749,22 @@ public class RuleClass {
           "Property cfg has already been set");
       Preconditions.checkNotNull(transitionFactory);
       this.transitionFactory = transitionFactory;
+      return this;
+    }
+
+    /**
+     * Applies the given transition factory to all deps of this rule class.
+     *
+     * <p>This means that for each dep, the factory can examine the dep's {@link Rule} to
+     * determine the right transition for that dep.
+     */
+    public Builder depsCfg(RuleTransitionFactory outgoingTransitionFactory) {
+      Preconditions.checkState(type != RuleClassType.ABSTRACT,
+          "Setting not inherited property (configureDeps) of abstract rule class '%s'", name);
+      Preconditions.checkState(this.outgoingTransitionFactory == null,
+          "Property configureDeps has already been set");
+      Preconditions.checkNotNull(outgoingTransitionFactory);
+      this.outgoingTransitionFactory = outgoingTransitionFactory;
       return this;
     }
 
@@ -1000,8 +991,8 @@ public class RuleClass {
       return this;
     }
 
-    public Builder addRequiredToolchain(ClassObjectConstructor.Key toolchain) {
-      this.requiredToolchains.add(toolchain);
+    public Builder addRequiredToolchains(Iterable<Label> toolchainLabels) {
+      Iterables.addAll(this.requiredToolchains, toolchainLabels);
       return this;
     }
 
@@ -1060,16 +1051,15 @@ public class RuleClass {
   private final ImplicitOutputsFunction implicitOutputsFunction;
 
   /**
-   * The set of implicit outputs generated by a rule, expressed as a function
-   * of that rule.
-   */
-  private final Configurator<?, ?> configurator;
-
-  /**
    * A factory which will produce a configuration transition that should be applied on any edge of
    * the configured target graph that leads into a target of this rule class.
    */
   private final RuleTransitionFactory transitionFactory;
+
+  /**
+   * A factory which will produce custom configuration transitions for each dep of this rule.
+   */
+  private final RuleTransitionFactory outgoingTransitionFactory;
 
   /**
    * The factory that creates configured targets from this rule.
@@ -1125,7 +1115,7 @@ public class RuleClass {
    */
   private final boolean supportsConstraintChecking;
 
-  private final ImmutableList<ClassObjectConstructor.Key> requiredToolchains;
+  private final ImmutableList<Label> requiredToolchains;
 
   /**
    * Constructs an instance of RuleClass whose name is 'name', attributes are 'attributes'. The
@@ -1160,8 +1150,8 @@ public class RuleClass {
       boolean outputsDefaultExecutable,
       ImplicitOutputsFunction implicitOutputsFunction,
       boolean isConfigMatcher,
-      Configurator<?, ?> configurator,
       RuleTransitionFactory transitionFactory,
+      RuleTransitionFactory outgoingRuleTransitionFactory,
       ConfiguredTargetFactory<?, ?> configuredTargetFactory,
       PredicateWithMessage<Rule> validityPredicate,
       Predicate<String> preferredDependencyPredicate,
@@ -1173,7 +1163,7 @@ public class RuleClass {
       String ruleDefinitionEnvironmentHashCode,
       ConfigurationFragmentPolicy configurationFragmentPolicy,
       boolean supportsConstraintChecking,
-      List<ClassObjectConstructor.Key> requiredToolchains,
+      List<Label> requiredToolchains,
       Attribute... attributes) {
     this.name = name;
     this.isSkylark = isSkylark;
@@ -1185,8 +1175,8 @@ public class RuleClass {
     this.binaryOutput = binaryOutput;
     this.implicitOutputsFunction = implicitOutputsFunction;
     this.isConfigMatcher = isConfigMatcher;
-    this.configurator = Preconditions.checkNotNull(configurator);
     this.transitionFactory = transitionFactory;
+    this.outgoingTransitionFactory = outgoingRuleTransitionFactory;
     this.configuredTargetFactory = configuredTargetFactory;
     this.validityPredicate = validityPredicate;
     this.preferredDependencyPredicate = preferredDependencyPredicate;
@@ -1253,13 +1243,12 @@ public class RuleClass {
     return implicitOutputsFunction;
   }
 
-  @SuppressWarnings("unchecked")
-  public <C, R> Configurator<C, R> getConfigurator() {
-    return (Configurator<C, R>) configurator;
-  }
-
   public RuleTransitionFactory getTransitionFactory() {
     return transitionFactory;
+  }
+
+  public RuleTransitionFactory getOutgoingTransitionFactory() {
+    return outgoingTransitionFactory;
   }
 
   @SuppressWarnings("unchecked")
@@ -1418,10 +1407,10 @@ public class RuleClass {
    * {@link CannotPrecomputeDefaultsException}. All other errors are reported on {@code
    * eventHandler}.
    */
-  Rule createRule(
+  <T> Rule createRule(
       Package.Builder pkgBuilder,
       Label ruleLabel,
-      AttributeValuesMap attributeValues,
+      AttributeValues<T> attributeValues,
       EventHandler eventHandler,
       @Nullable FuncallExpression ast,
       Location location,
@@ -1447,14 +1436,14 @@ public class RuleClass {
    *
    * <p>Don't call this function unless you know what you're doing.
    */
-  Rule createRuleUnchecked(
+  <T> Rule createRuleUnchecked(
       Package.Builder pkgBuilder,
       Label ruleLabel,
-      AttributeValuesMap attributeValues,
+      AttributeValues<T> attributeValues,
       Location location,
       AttributeContainer attributeContainer,
       ImplicitOutputsFunction implicitOutputsFunction)
-      throws LabelSyntaxException, InterruptedException, CannotPrecomputeDefaultsException {
+      throws InterruptedException, CannotPrecomputeDefaultsException {
     Rule rule = pkgBuilder.createRule(
         ruleLabel,
         this,
@@ -1462,7 +1451,7 @@ public class RuleClass {
         attributeContainer,
         implicitOutputsFunction);
     populateRuleAttributeValues(rule, pkgBuilder, attributeValues, NullEventHandler.INSTANCE);
-    rule.populateOutputFiles(NullEventHandler.INSTANCE, pkgBuilder);
+    rule.populateOutputFilesUnchecked(NullEventHandler.INSTANCE, pkgBuilder);
     return rule;
   }
 
@@ -1473,10 +1462,10 @@ public class RuleClass {
    *
    * <p>Errors are reported on {@code eventHandler}.
    */
-  private void populateRuleAttributeValues(
+  private <T> void populateRuleAttributeValues(
       Rule rule,
       Package.Builder pkgBuilder,
-      AttributeValuesMap attributeValues,
+      AttributeValues<T> attributeValues,
       EventHandler eventHandler)
       throws InterruptedException, CannotPrecomputeDefaultsException {
     BitSet definedAttrIndices =
@@ -1497,11 +1486,12 @@ public class RuleClass {
    * value for the attribute with index {@code i} in this {@link RuleClass}. Errors are reported
    * on {@code eventHandler}.
    */
-  private BitSet populateDefinedRuleAttributeValues(
-      Rule rule, AttributeValuesMap attributeValues, EventHandler eventHandler) {
+  private <T> BitSet populateDefinedRuleAttributeValues(
+      Rule rule, AttributeValues<T> attributeValues, EventHandler eventHandler) {
     BitSet definedAttrIndices = new BitSet();
-    for (String attributeName : attributeValues.getAttributeNames()) {
-      Object attributeValue = attributeValues.getAttributeValue(attributeName);
+    for (T attributeAccessor : attributeValues.getAttributeAccessors()) {
+      String attributeName = attributeValues.getName(attributeAccessor);
+      Object attributeValue = attributeValues.getValue(attributeAccessor);
       // Ignore all None values.
       if (attributeValue == Runtime.NONE) {
         continue;
@@ -1531,7 +1521,7 @@ public class RuleClass {
         nativeAttributeValue = attributeValue;
       }
 
-      boolean explicit = attributeValues.isAttributeExplicitlySpecified(attributeName);
+      boolean explicit = attributeValues.isExplicitlySpecified(attributeAccessor);
       setRuleAttributeValue(rule, eventHandler, attr, nativeAttributeValue, explicit);
       definedAttrIndices.set(attrIndex);
     }
@@ -2012,7 +2002,7 @@ public class RuleClass {
     return outputsDefaultExecutable;
   }
 
-  public ImmutableList<ClassObjectConstructor.Key> getRequiredToolchains() {
+  public ImmutableList<Label> getRequiredToolchains() {
     return requiredToolchains;
   }
 

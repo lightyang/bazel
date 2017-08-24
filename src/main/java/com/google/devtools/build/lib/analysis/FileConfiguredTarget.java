@@ -15,12 +15,14 @@
 package com.google.devtools.build.lib.analysis;
 
 import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.analysis.fileset.FilesetProvider;
+import com.google.devtools.build.lib.analysis.test.InstrumentedFilesProvider;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.packages.FileTarget;
-import com.google.devtools.build.lib.rules.fileset.FilesetProvider;
-import com.google.devtools.build.lib.rules.test.InstrumentedFilesProvider;
+import com.google.devtools.build.lib.packages.Info;
+import com.google.devtools.build.lib.packages.Provider;
 import com.google.devtools.build.lib.util.FileType;
 
 /**
@@ -76,5 +78,15 @@ public abstract class FileConfiguredTarget extends AbstractConfiguredTarget
   public <P extends TransitiveInfoProvider> P getProvider(Class<P> provider) {
     AnalysisUtils.checkProvider(provider);
     return providers.getProvider(provider);
+  }
+
+  @Override
+  protected Info rawGetSkylarkProvider(Provider.Key providerKey) {
+    return providers.getProvider(providerKey);
+  }
+
+  @Override
+  protected Object rawGetSkylarkProvider(String providerKey) {
+    return providers.getProvider(providerKey);
   }
 }

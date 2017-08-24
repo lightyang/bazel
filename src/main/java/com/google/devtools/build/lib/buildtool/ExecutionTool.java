@@ -35,6 +35,7 @@ import com.google.devtools.build.lib.actions.ActionContext;
 import com.google.devtools.build.lib.actions.ActionContextMarker;
 import com.google.devtools.build.lib.actions.ActionGraph;
 import com.google.devtools.build.lib.actions.ActionInputFileCache;
+import com.google.devtools.build.lib.actions.ActionInputPrefetcher;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.ArtifactFactory;
 import com.google.devtools.build.lib.actions.BuildFailedException;
@@ -56,6 +57,7 @@ import com.google.devtools.build.lib.analysis.WorkspaceStatusAction;
 import com.google.devtools.build.lib.analysis.actions.SymlinkTreeActionContext;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.BuildConfigurationCollection;
+import com.google.devtools.build.lib.analysis.test.TestActionContext;
 import com.google.devtools.build.lib.buildtool.buildevent.ExecutionPhaseCompleteEvent;
 import com.google.devtools.build.lib.buildtool.buildevent.ExecutionStartingEvent;
 import com.google.devtools.build.lib.cmdline.PackageIdentifier;
@@ -65,13 +67,11 @@ import com.google.devtools.build.lib.events.EventKind;
 import com.google.devtools.build.lib.events.Reporter;
 import com.google.devtools.build.lib.exec.ActionContextConsumer;
 import com.google.devtools.build.lib.exec.ActionContextProvider;
-import com.google.devtools.build.lib.exec.ActionInputPrefetcher;
 import com.google.devtools.build.lib.exec.BlazeExecutor;
 import com.google.devtools.build.lib.exec.CheckUpToDateFilter;
 import com.google.devtools.build.lib.exec.ExecutionOptions;
 import com.google.devtools.build.lib.exec.ExecutorBuilder;
 import com.google.devtools.build.lib.exec.FilesetActionContextImpl;
-import com.google.devtools.build.lib.exec.OutputService;
 import com.google.devtools.build.lib.exec.SingleBuildFileCache;
 import com.google.devtools.build.lib.exec.SymlinkTreeStrategy;
 import com.google.devtools.build.lib.profiler.AutoProfiler;
@@ -79,12 +79,12 @@ import com.google.devtools.build.lib.profiler.ProfilePhase;
 import com.google.devtools.build.lib.profiler.Profiler;
 import com.google.devtools.build.lib.profiler.ProfilerTask;
 import com.google.devtools.build.lib.rules.fileset.FilesetActionContext;
-import com.google.devtools.build.lib.rules.test.TestActionContext;
 import com.google.devtools.build.lib.runtime.BlazeModule;
 import com.google.devtools.build.lib.runtime.BlazeRuntime;
 import com.google.devtools.build.lib.runtime.CommandEnvironment;
 import com.google.devtools.build.lib.skyframe.AspectValue;
 import com.google.devtools.build.lib.skyframe.Builder;
+import com.google.devtools.build.lib.skyframe.OutputService;
 import com.google.devtools.build.lib.skyframe.SkyframeExecutor;
 import com.google.devtools.build.lib.util.AbruptExitException;
 import com.google.devtools.build.lib.util.ExitCode;
@@ -137,6 +137,7 @@ public class ExecutionTool {
         for (ActionContext strategy : provider.getActionContexts()) {
           ExecutionStrategy annotation =
               strategy.getClass().getAnnotation(ExecutionStrategy.class);
+          // TODO(ulfjack): Don't silently ignore action contexts without annotation.
           if (annotation != null) {
             defaultClassMap.put(annotation.contextType(), strategy);
 
@@ -229,7 +230,7 @@ public class ExecutionTool {
         
     this.actionContextProviders = builder.getActionContextProviders();
     for (ActionContextProvider provider : actionContextProviders) {
-      provider.init(fileCache, prefetcher);
+      provider.init(fileCache);
     }
 
     StrategyConverter strategyConverter = new StrategyConverter(actionContextProviders);
@@ -342,8 +343,9 @@ public class ExecutionTool {
     OutputService outputService = env.getOutputService();
     ModifiedFileSet modifiedOutputFiles = ModifiedFileSet.EVERYTHING_MODIFIED;
     if (outputService != null) {
-      modifiedOutputFiles = outputService.startBuild(buildId,
-              request.getBuildOptions().finalizeActions);
+      modifiedOutputFiles =
+          outputService.startBuild(
+              env.getReporter(), buildId, request.getBuildOptions().finalizeActions);
     } else {
       // TODO(bazel-team): this could be just another OutputService
       startLocalOutputBuild();
@@ -401,7 +403,10 @@ public class ExecutionTool {
 
     if (request.isRunningInEmacs()) {
       // The syntax of this message is tightly constrained by lisp/progmodes/compile.el in emacs
-      request.getOutErr().printErrLn("blaze: Entering directory `" + getExecRoot() + "/'");
+      request
+          .getOutErr()
+          .printErrLn(
+              env.getRuntime().getProductName() + ": Entering directory `" + getExecRoot() + "/'");
     }
     boolean buildCompleted = false;
     try {
@@ -429,6 +434,7 @@ public class ExecutionTool {
           analysisResult.getParallelTests(),
           analysisResult.getExclusiveTests(),
           analysisResult.getTargetsToBuild(),
+          analysisResult.getTargetsToSkip(),
           analysisResult.getAspects(),
           executor,
           builtTargets,
@@ -442,7 +448,10 @@ public class ExecutionTool {
     } finally {
       env.recordLastExecutionTime();
       if (request.isRunningInEmacs()) {
-        request.getOutErr().printErrLn("blaze: Leaving directory `" + getExecRoot() + "/'");
+        request
+            .getOutErr()
+            .printErrLn(
+                env.getRuntime().getProductName() + ": Leaving directory `" + getExecRoot() + "/'");
       }
       if (buildCompleted) {
         getReporter().handle(Event.progress("Building complete."));
@@ -466,9 +475,10 @@ public class ExecutionTool {
       try (AutoProfiler p = AutoProfiler.profiled("Show results", ProfilerTask.INFO)) {
         buildResult.setSuccessfulTargets(
             determineSuccessfulTargets(configuredTargets, builtTargets, timer));
+        buildResult.setSkippedTargets(analysisResult.getTargetsToSkip());
         BuildResultPrinter buildResultPrinter = new BuildResultPrinter(env);
-        buildResultPrinter.showBuildResult(
-            request, buildResult, configuredTargets, analysisResult.getAspects());
+        buildResultPrinter.showBuildResult(request, buildResult, configuredTargets,
+            analysisResult.getTargetsToSkip(), analysisResult.getAspects());
       }
 
       try (AutoProfiler p = AutoProfiler.profiled("Show artifacts", ProfilerTask.INFO)) {
@@ -680,6 +690,7 @@ public class ExecutionTool {
             : ModifiedFileSet.NOTHING_MODIFIED,
         options.finalizeActions,
         fileCache,
+        prefetcher,
         request.getBuildOptions().progressReportInterval);
   }
 

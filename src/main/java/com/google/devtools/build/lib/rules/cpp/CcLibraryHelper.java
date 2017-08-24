@@ -104,6 +104,7 @@ public final class CcLibraryHelper {
             CppFileTypes.ASSEMBLER_WITH_C_PREPROCESSOR),
         ImmutableSet.<String>of(
             CppCompileAction.CC_FLAGS_MAKE_VARIABLE_ACTION_NAME,
+            CppCompileAction.STRIP_ACTION_NAME,
             CppCompileAction.C_COMPILE,
             CppCompileAction.CPP_COMPILE,
             CppCompileAction.CPP_HEADER_PARSING,
@@ -263,7 +264,7 @@ public final class CcLibraryHelper {
   private final List<Artifact> objectFiles = new ArrayList<>();
   private final List<Artifact> picObjectFiles = new ArrayList<>();
   private final List<Artifact> nonCodeLinkerInputs = new ArrayList<>();
-  private final List<String> copts = new ArrayList<>();
+  private ImmutableList<String> copts = ImmutableList.of();
   private final List<String> linkopts = new ArrayList<>();
   @Nullable private Pattern nocopts;
   private final Set<String> defines = new LinkedHashSet<>();
@@ -303,6 +304,7 @@ public final class CcLibraryHelper {
   private final FdoSupportProvider fdoSupport;
   private String linkedArtifactNameSuffix = "";
   private boolean useDeps = true;
+  private boolean generateModuleMap = true;
 
   /**
    * Creates a CcLibraryHelper.
@@ -370,15 +372,14 @@ public final class CcLibraryHelper {
 
   /** Sets fields that overlap for cc_library and cc_binary rules. */
   public CcLibraryHelper fromCommon(CcCommon common) {
-    this
-        .addCopts(common.getCopts())
-        .addDefines(common.getDefines())
-        .addDeps(ruleContext.getPrerequisites("deps", Mode.TARGET))
-        .addLooseIncludeDirs(common.getLooseIncludeDirs())
-        .addNonCodeLinkerInputs(common.getLinkerScripts())
-        .addSystemIncludeDirs(common.getSystemIncludeDirs())
-        .setNoCopts(common.getNoCopts())
-        .setHeadersCheckingMode(semantics.determineHeadersCheckingMode(ruleContext));
+    setCopts(common.getCopts());
+    addDefines(common.getDefines());
+    addDeps(ruleContext.getPrerequisites("deps", Mode.TARGET));
+    addLooseIncludeDirs(common.getLooseIncludeDirs());
+    addNonCodeLinkerInputs(common.getLinkerScripts());
+    addSystemIncludeDirs(common.getSystemIncludeDirs());
+    setNoCopts(common.getNoCopts());
+    setHeadersCheckingMode(semantics.determineHeadersCheckingMode(ruleContext));
     return this;
   }
 
@@ -634,11 +635,8 @@ public final class CcLibraryHelper {
     return this;
   }
 
-  /**
-   * Adds the copts to the compile command line.
-   */
-  public CcLibraryHelper addCopts(Iterable<String> copts) {
-    Iterables.addAll(this.copts, copts);
+  public CcLibraryHelper setCopts(ImmutableList<String> copts) {
+    this.copts = Preconditions.checkNotNull(copts);
     return this;
   }
 
@@ -850,7 +848,7 @@ public final class CcLibraryHelper {
 
   /**
    * This adds the {@link CcSpecificLinkParamsProvider} to the providers created by this class.
-   * Otherwise the result will contain an instance of {@link CcLinkParamsProvider}.
+   * Otherwise the result will contain an instance of {@link CcLinkParamsInfo}.
    */
   public CcLibraryHelper enableCcSpecificLinkParamsProvider() {
     this.emitCcSpecificLinkParamsProvider = true;
@@ -960,7 +958,7 @@ public final class CcLibraryHelper {
       ccOutputs =
           new CcCompilationOutputs.Builder()
               .merge(ccOutputs)
-              .addLTOBitcodeFile(ccOutputs.getLtoBitcodeFiles())
+              .addLtoBitcodeFile(ccOutputs.getLtoBitcodeFiles())
               .addObjectFiles(objectFiles)
               .addPicObjectFiles(picObjectFiles)
               .build();
@@ -1035,7 +1033,7 @@ public final class CcLibraryHelper {
             deps, /*generateDwo=*/
             false, /*ltoBackendArtifactsUsePic=*/
             false, /*ltoBackendArtifacts=*/
-            ImmutableList.<LTOBackendArtifacts>of());
+            ImmutableList.<LtoBackendArtifacts>of());
     Runfiles cppStaticRunfiles = collectCppRunfiles(ccLinkingOutputs, true);
     Runfiles cppSharedRunfiles = collectCppRunfiles(ccLinkingOutputs, false);
 
@@ -1083,8 +1081,8 @@ public final class CcLibraryHelper {
           new CcSpecificLinkParamsProvider(
               createCcLinkParamsStore(ccLinkingOutputs, cppCompilationContext, forcePic)));
     } else {
-      providers.add(
-          new CcLinkParamsProvider(
+      providers.put(
+          new CcLinkParamsInfo(
               createCcLinkParamsStore(ccLinkingOutputs, cppCompilationContext, forcePic)));
     }
     return new Info(
@@ -1151,9 +1149,14 @@ public final class CcLibraryHelper {
    * Creates the C/C++ compilation action creator.
    */
   private CppModel initializeCppModel() {
-    return new CppModel(ruleContext, semantics, ccToolchain, fdoSupport, configuration)
+    return new CppModel(
+            ruleContext,
+            semantics,
+            ccToolchain,
+            fdoSupport,
+            configuration,
+            copts)
         .addCompilationUnitSources(compilationUnitSources)
-        .addCopts(copts)
         .setLinkTargetType(linkType)
         .setNeverLink(neverlink)
         .addLinkActionInputs(linkActionInputs)
@@ -1388,13 +1391,17 @@ public final class CcLibraryHelper {
           featureConfiguration.isEnabled(CppRuleClasses.HEADER_MODULES)
               || featureConfiguration.isEnabled(CppRuleClasses.COMPILE_ALL_MODULES);
       Iterable<CppModuleMap> dependentModuleMaps = collectModuleMaps();
-      Optional<Artifact> umbrellaHeader = cppModuleMap.getUmbrellaHeader();
-      if (umbrellaHeader.isPresent()) {
+
+      if (generateModuleMap) {
+        Optional<Artifact> umbrellaHeader = cppModuleMap.getUmbrellaHeader();
+        if (umbrellaHeader.isPresent()) {
+          ruleContext.registerAction(
+              createUmbrellaHeaderAction(umbrellaHeader.get(), publicHeaders));
+        }
+
         ruleContext.registerAction(
-            createUmbrellaHeaderAction(umbrellaHeader.get(), publicHeaders));
+            createModuleMapAction(cppModuleMap, publicHeaders, dependentModuleMaps, compiled));
       }
-      ruleContext.registerAction(
-          createModuleMapAction(cppModuleMap, publicHeaders, dependentModuleMaps, compiled));
       if (model.getGeneratesPicHeaderModule()) {
         contextBuilder.setPicHeaderModule(model.getPicHeaderModule(cppModuleMap.getArtifact()));
       }
@@ -1487,8 +1494,8 @@ public final class CcLibraryHelper {
       RuleContext ruleContext, CcCompilationOutputs ccCompilationOutputs) {
     NestedSetBuilder<Artifact> headerTokens = NestedSetBuilder.stableOrder();
     for (OutputGroupProvider dep :
-        ruleContext.getPrerequisites("deps", Mode.TARGET,
-            OutputGroupProvider.SKYLARK_CONSTRUCTOR.getKey(), OutputGroupProvider.class)) {
+        ruleContext.getPrerequisites(
+            "deps", Mode.TARGET, OutputGroupProvider.SKYLARK_CONSTRUCTOR)) {
       headerTokens.addTransitive(dep.getOutputGroup(CcLibraryHelper.HIDDEN_HEADER_TOKENS));
     }
     if (ruleContext.getFragment(CppConfiguration.class).processHeadersInDependencies()) {
@@ -1544,7 +1551,7 @@ public final class CcLibraryHelper {
         builder.addLinkstamps(linkstamps.build(), cppCompilationContext);
         builder.addTransitiveTargets(
             deps,
-            CcLinkParamsProvider.TO_LINK_PARAMS,
+            CcLinkParamsInfo.TO_LINK_PARAMS,
             CcSpecificLinkParamsProvider.TO_LINK_PARAMS);
         if (!neverlink) {
           builder.addLibraries(
@@ -1593,5 +1600,13 @@ public final class CcLibraryHelper {
 
   public void registerAdditionalModuleMap(CppModuleMap cppModuleMap) {
     this.additionalCppModuleMaps.add(Preconditions.checkNotNull(cppModuleMap));
+  }
+
+  /**
+   * Don't generate a module map for this target if a custom module map is provided.
+   */
+  public CcLibraryHelper doNotGenerateModuleMap() {
+    generateModuleMap = false;
+    return this;
   }
 }

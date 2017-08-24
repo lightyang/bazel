@@ -16,7 +16,7 @@ package com.google.devtools.build.lib.rules.objc;
 
 import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
-import com.google.common.base.Predicates;
+import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.ImmutableSetMultimap;
@@ -27,6 +27,7 @@ import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
+import com.google.devtools.build.lib.analysis.actions.CustomCommandLine.Builder;
 import com.google.devtools.build.lib.analysis.actions.FileWriteAction;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
@@ -37,6 +38,7 @@ import com.google.devtools.build.lib.rules.proto.ProtoSourcesProvider;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Set;
 import java.util.TreeMap;
 
@@ -68,7 +70,7 @@ final class ProtobufSupport {
   private final BuildConfiguration buildConfiguration;
   private final ProtoAttributes attributes;
   private final IntermediateArtifacts intermediateArtifacts;
-  private final Set<Artifact> dylibHandledProtos;
+  private final Set<PathFragment> dylibHandledProtoPaths;
   private final Iterable<ObjcProtoProvider> objcProtoProviders;
   private final NestedSet<Artifact> portableProtoFilters;
 
@@ -140,7 +142,7 @@ final class ProtobufSupport {
     this.ruleContext = ruleContext;
     this.buildConfiguration = buildConfiguration;
     this.attributes = new ProtoAttributes(ruleContext);
-    this.dylibHandledProtos = dylibHandledProtos.toSet();
+    this.dylibHandledProtoPaths = runfilesPaths(dylibHandledProtos.toSet());
     this.objcProtoProviders = objcProtoProviders;
     this.portableProtoFilters = portableProtoFilters;
     this.intermediateArtifacts =
@@ -172,7 +174,6 @@ final class ProtobufSupport {
     CompilationArtifacts.Builder moduleMapCompilationArtifacts =
         new CompilationArtifacts.Builder()
             .setIntermediateArtifacts(intermediateArtifacts)
-            .setPchFile(Optional.<Artifact>absent())
             .addAdditionalHdrs(getProtobufHeaders())
             .addAdditionalHdrs(
                 getGeneratedProtoOutputs(inputsToOutputsMap.values(), HEADER_SUFFIX));
@@ -181,6 +182,7 @@ final class ProtobufSupport {
         new CompilationSupport.Builder()
             .setRuleContext(ruleContext)
             .setCompilationAttributes(new CompilationAttributes.Builder().build())
+            .doNotUsePch()
             .build();
 
     compilationSupport.registerGenerateModuleMapAction(moduleMapCompilationArtifacts.build());
@@ -211,7 +213,8 @@ final class ProtobufSupport {
               new CompilationAttributes.Builder().build(),
               /*useDeps=*/ false,
               new TreeMap<String, NestedSet<Artifact>>(),
-              /*isTestRule=*/ false)
+              /*isTestRule=*/ false,
+              /*usePch=*/ false)
           .registerCompileAndArchiveActions(common, userHeaderSearchPaths);
 
       actionId++;
@@ -300,6 +303,14 @@ final class ProtobufSupport {
     return protobufHeaderSearchPaths.build();
   }
 
+  private static Set<PathFragment> runfilesPaths(Set<Artifact> artifacts) {
+    HashSet<PathFragment> pathsSet = new HashSet<>();
+    for (Artifact artifact : artifacts) {
+      pathsSet.add(artifact.getRunfilesPath());
+    }
+    return pathsSet;
+  }
+
   private static ImmutableSetMultimap<ImmutableSet<Artifact>, Artifact> getInputsToOutputsMap(
       ProtoAttributes attributes,
       Iterable<ProtoSourcesProvider> protoProviders,
@@ -383,7 +394,7 @@ final class ProtobufSupport {
     } else {
       commonBuilder.addDepObjcProviders(
           ruleContext.getPrerequisites(
-              ObjcRuleClasses.PROTO_LIB_ATTR, Mode.TARGET, ObjcProvider.class));
+              ObjcRuleClasses.PROTO_LIB_ATTR, Mode.TARGET, ObjcProvider.SKYLARK_CONSTRUCTOR));
     }
     return commonBuilder.build();
   }
@@ -399,7 +410,6 @@ final class ProtobufSupport {
     CompilationArtifacts.Builder compilationArtifacts =
         new CompilationArtifacts.Builder()
             .setIntermediateArtifacts(intermediateArtifacts)
-            .setPchFile(Optional.<Artifact>absent())
             .addAdditionalHdrs(getGeneratedProtoOutputs(filteredInputProtos, HEADER_SUFFIX))
             .addAdditionalHdrs(getProtobufHeaders());
 
@@ -412,8 +422,10 @@ final class ProtobufSupport {
 
   private Iterable<Artifact> getProtoSourceFilesForCompilation(
       Iterable<Artifact> outputProtoFiles) {
+    Predicate<Artifact> notDylibHandled =
+        artifact -> !dylibHandledProtoPaths.contains(artifact.getRunfilesPath());
     Iterable<Artifact> filteredOutputs =
-        Iterables.filter(outputProtoFiles, Predicates.not(Predicates.in(dylibHandledProtos)));
+        Iterables.filter(outputProtoFiles, notDylibHandled);
     return getGeneratedProtoOutputs(filteredOutputs, SOURCE_SUFFIX);
   }
 
@@ -455,14 +467,14 @@ final class ProtobufSupport {
   }
 
   private CustomCommandLine getGenerationCommandLine(Artifact protoInputsFile) {
-    return new CustomCommandLine.Builder()
+    return new Builder()
         .add("--input-file-list")
-        .add(protoInputsFile.getExecPathString())
+        .addExecPath(protoInputsFile)
         .add("--output-dir")
-        .add(getWorkspaceRelativeOutputDir().getSafePathString())
+        .addDynamicString(getWorkspaceRelativeOutputDir().getSafePathString())
         .add("--force")
         .add("--proto-root-dir")
-        .add(getGenfilesPathString())
+        .addDynamicString(getGenfilesPathString())
         .add("--proto-root-dir")
         .add(".")
         .addBeforeEachExecPath("--config", portableProtoFilters)

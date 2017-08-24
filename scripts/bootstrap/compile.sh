@@ -17,7 +17,7 @@
 # Script for building bazel from scratch without bazel
 
 PROTO_FILES=$(ls src/main/protobuf/*.proto src/main/java/com/google/devtools/build/lib/buildeventstream/proto/*.proto)
-LIBRARY_JARS=$(find third_party -name '*.jar' | grep -Fv /javac-9-dev-r3297-4.jar | grep -Fv /javac-9-dev-4023-2.jar | grep -Fv /javac7.jar | grep -Fv JavaBuilder | grep -Fv third_party/guava | grep -Fv third_party/guava | grep -ve third_party/grpc/grpc.*jar | tr "\n" " ")
+LIBRARY_JARS=$(find third_party -name '*.jar' | grep -Fv /javac-9-dev-r3297-4.jar | grep -Fv /javac-9-dev-4023-3.jar | grep -Fv /javac7.jar | grep -Fv JavaBuilder | grep -Fv third_party/guava | grep -Fv third_party/guava | grep -ve third_party/grpc/grpc.*jar | tr "\n" " ")
 GRPC_JAVA_VERSION=1.3.0
 GRPC_LIBRARY_JARS=$(find third_party/grpc -name '*.jar' | grep -e .*${GRPC_JAVA_VERSION}.*jar | tr "\n" " ")
 # Guava jars are different for JDK 7 build and JDK 8 build, we select the good
@@ -248,12 +248,12 @@ function build_jni() {
     mkdir -p "$(dirname "$output")"
 
     # Keep this `find` command in sync with the `srcs` of
-    # //src/main/native:windows_jni
+    # //src/main/native/windows:windows_jni
     local srcs=$(find src/main/native/windows -name '*.cc' -o -name '*.h')
     [ -n "$srcs" ] || fail "Could not find sources for Windows JNI library"
 
     # do not quote $srcs because we need to expand it to multiple args
-    src/main/native/build_windows_jni.sh "$tmp_output" ${srcs}
+    src/main/native/windows/build_windows_jni.sh "$tmp_output" ${srcs}
 
     cp "$tmp_output" "$output"
     chmod 0555 "$output"
@@ -345,6 +345,7 @@ function run_bazel_jar() {
       --ignore_unsupported_sandboxing \
       --startup_time=329 --extract_data_time=523 \
       --rc_source=/dev/null --isatty=1 \
+      --build_python_zip \
       "${client_env[@]}" \
       --client_cwd="$(get_cwd)" \
       "${@}"

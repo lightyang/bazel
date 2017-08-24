@@ -19,7 +19,6 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import com.google.common.base.Functions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
-import com.google.devtools.build.lib.analysis.BaseRuleClasses;
 import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider;
 import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider.Builder;
 import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider.RuleSet;
@@ -27,8 +26,6 @@ import com.google.devtools.build.lib.analysis.PlatformConfigurationLoader;
 import com.google.devtools.build.lib.analysis.PlatformOptions;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.constraints.EnvironmentRule;
-import com.google.devtools.build.lib.analysis.featurecontrol.FeaturePolicyLoader;
-import com.google.devtools.build.lib.analysis.featurecontrol.FeaturePolicyOptions;
 import com.google.devtools.build.lib.bazel.rules.BazelToolchainType.BazelToolchainTypeRule;
 import com.google.devtools.build.lib.bazel.rules.android.AndroidNdkRepositoryRule;
 import com.google.devtools.build.lib.bazel.rules.android.AndroidSdkRepositoryRule;
@@ -61,6 +58,7 @@ import com.google.devtools.build.lib.bazel.rules.java.proto.BazelJavaProtoLibrar
 import com.google.devtools.build.lib.bazel.rules.python.BazelPyBinaryRule;
 import com.google.devtools.build.lib.bazel.rules.python.BazelPyLibraryRule;
 import com.google.devtools.build.lib.bazel.rules.python.BazelPyRuleClasses;
+import com.google.devtools.build.lib.bazel.rules.python.BazelPyRuntimeRule;
 import com.google.devtools.build.lib.bazel.rules.python.BazelPyTestRule;
 import com.google.devtools.build.lib.bazel.rules.python.BazelPythonConfiguration;
 import com.google.devtools.build.lib.bazel.rules.sh.BazelShBinaryRule;
@@ -76,7 +74,7 @@ import com.google.devtools.build.lib.bazel.rules.workspace.MavenServerRule;
 import com.google.devtools.build.lib.bazel.rules.workspace.NewGitRepositoryRule;
 import com.google.devtools.build.lib.bazel.rules.workspace.NewHttpArchiveRule;
 import com.google.devtools.build.lib.cmdline.Label;
-import com.google.devtools.build.lib.ideinfo.AndroidStudioInfoAspect;
+import com.google.devtools.build.lib.packages.Attribute.LateBoundLabel;
 import com.google.devtools.build.lib.rules.Alias.AliasRule;
 import com.google.devtools.build.lib.rules.android.AarImportBaseRule;
 import com.google.devtools.build.lib.rules.android.AndroidBinaryOnlyRule;
@@ -98,12 +96,15 @@ import com.google.devtools.build.lib.rules.apple.swift.SwiftConfiguration;
 import com.google.devtools.build.lib.rules.config.ConfigFeatureFlagConfiguration;
 import com.google.devtools.build.lib.rules.config.ConfigRuleClasses;
 import com.google.devtools.build.lib.rules.config.ConfigSkylarkCommon;
+import com.google.devtools.build.lib.rules.core.CoreRules;
 import com.google.devtools.build.lib.rules.cpp.CcIncLibraryRule;
+import com.google.devtools.build.lib.rules.cpp.CcToolchainAlias;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainRule;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainSuiteRule;
 import com.google.devtools.build.lib.rules.cpp.CppBuildInfo;
 import com.google.devtools.build.lib.rules.cpp.CppConfigurationLoader;
 import com.google.devtools.build.lib.rules.cpp.CppOptions;
+import com.google.devtools.build.lib.rules.cpp.CppRuleClasses;
 import com.google.devtools.build.lib.rules.cpp.proto.CcProtoAspect;
 import com.google.devtools.build.lib.rules.cpp.proto.CcProtoLibraryRule;
 import com.google.devtools.build.lib.rules.extra.ActionListenerRule;
@@ -113,9 +114,12 @@ import com.google.devtools.build.lib.rules.genrule.GenRuleBaseRule;
 import com.google.devtools.build.lib.rules.java.JavaConfigurationLoader;
 import com.google.devtools.build.lib.rules.java.JavaImportBaseRule;
 import com.google.devtools.build.lib.rules.java.JavaOptions;
+import com.google.devtools.build.lib.rules.java.JavaRuntimeAlias;
 import com.google.devtools.build.lib.rules.java.JavaRuntimeRule;
 import com.google.devtools.build.lib.rules.java.JavaRuntimeSuiteRule;
+import com.google.devtools.build.lib.rules.java.JavaSemantics;
 import com.google.devtools.build.lib.rules.java.JavaSkylarkCommon;
+import com.google.devtools.build.lib.rules.java.JavaToolchainAlias;
 import com.google.devtools.build.lib.rules.java.JavaToolchainRule;
 import com.google.devtools.build.lib.rules.java.JvmConfigurationLoader;
 import com.google.devtools.build.lib.rules.java.ProguardLibraryRule;
@@ -124,9 +128,6 @@ import com.google.devtools.build.lib.rules.objc.AppleBinaryRule;
 import com.google.devtools.build.lib.rules.objc.AppleSkylarkCommon;
 import com.google.devtools.build.lib.rules.objc.AppleStaticLibraryRule;
 import com.google.devtools.build.lib.rules.objc.AppleStubBinaryRule;
-import com.google.devtools.build.lib.rules.objc.AppleWatch1ExtensionRule;
-import com.google.devtools.build.lib.rules.objc.AppleWatch2ExtensionRule;
-import com.google.devtools.build.lib.rules.objc.AppleWatchExtensionBinaryRule;
 import com.google.devtools.build.lib.rules.objc.IosApplicationRule;
 import com.google.devtools.build.lib.rules.objc.IosDeviceRule;
 import com.google.devtools.build.lib.rules.objc.IosExtensionBinaryRule;
@@ -148,13 +149,12 @@ import com.google.devtools.build.lib.rules.objc.ObjcImportRule;
 import com.google.devtools.build.lib.rules.objc.ObjcLibraryRule;
 import com.google.devtools.build.lib.rules.objc.ObjcProtoAspect;
 import com.google.devtools.build.lib.rules.objc.ObjcProtoLibraryRule;
-import com.google.devtools.build.lib.rules.objc.ObjcProvider;
 import com.google.devtools.build.lib.rules.objc.ObjcRuleClasses;
-import com.google.devtools.build.lib.rules.objc.XcTestAppProvider;
 import com.google.devtools.build.lib.rules.platform.ConstraintSettingRule;
 import com.google.devtools.build.lib.rules.platform.ConstraintValueRule;
 import com.google.devtools.build.lib.rules.platform.PlatformCommon;
 import com.google.devtools.build.lib.rules.platform.PlatformRule;
+import com.google.devtools.build.lib.rules.platform.ToolchainRule;
 import com.google.devtools.build.lib.rules.proto.BazelProtoLibraryRule;
 import com.google.devtools.build.lib.rules.proto.ProtoConfiguration;
 import com.google.devtools.build.lib.rules.proto.ProtoLangToolchainRule;
@@ -208,37 +208,15 @@ public class BazelRuleClassProvider {
         public void init(Builder builder) {
           builder
               .setProductName("bazel")
-              .setConfigurationCollectionFactory(new BazelConfigurationCollection())
               .setPrelude("//tools/build_rules:prelude_bazel")
+              .setNativeLauncherLabel("//tools/launcher:launcher")
               .setRunfilesPrefix(Label.DEFAULT_REPOSITORY_DIRECTORY)
               .setPrerequisiteValidator(new BazelPrerequisiteValidator());
 
           builder.setUniversalConfigurationFragment(BazelConfiguration.class);
           builder.addConfigurationFragment(new BazelConfiguration.Loader());
+          builder.addConfigurationOptions(BazelConfiguration.Options.class);
           builder.addConfigurationOptions(BuildConfiguration.Options.class);
-        }
-
-        @Override
-        public ImmutableList<RuleSet> requires() {
-          return ImmutableList.of();
-        }
-      };
-
-  public static final ImmutableSet<String> FEATURE_POLICY_FEATURES = ImmutableSet.<String>of();
-
-  public static final RuleSet CORE_RULES =
-      new RuleSet() {
-        @Override
-        public void init(Builder builder) {
-          builder.addConfigurationOptions(FeaturePolicyOptions.class);
-          builder.addConfigurationFragment(new FeaturePolicyLoader(FEATURE_POLICY_FEATURES));
-
-          builder.addRuleDefinition(new BaseRuleClasses.RootRule());
-          builder.addRuleDefinition(new BaseRuleClasses.BaseRule());
-          builder.addRuleDefinition(new BaseRuleClasses.RuleBase());
-          builder.addRuleDefinition(new BaseRuleClasses.BinaryBaseRule());
-          builder.addRuleDefinition(new BaseRuleClasses.TestBaseRule());
-          builder.addRuleDefinition(new BaseRuleClasses.ErrorRule());
         }
 
         @Override
@@ -258,12 +236,14 @@ public class BazelRuleClassProvider {
           builder.addRuleDefinition(new ConstraintValueRule());
           builder.addRuleDefinition(new PlatformRule());
 
+          builder.addRuleDefinition(new ToolchainRule());
+
           builder.addSkylarkAccessibleTopLevels("platform_common", new PlatformCommon());
         }
 
         @Override
         public ImmutableList<RuleSet> requires() {
-          return ImmutableList.of(CORE_RULES);
+          return ImmutableList.of(CoreRules.INSTANCE);
         }
       };
 
@@ -288,7 +268,7 @@ public class BazelRuleClassProvider {
 
         @Override
         public ImmutableList<RuleSet> requires() {
-          return ImmutableList.of(CORE_RULES);
+          return ImmutableList.of(CoreRules.INSTANCE);
         }
       };
 
@@ -308,7 +288,7 @@ public class BazelRuleClassProvider {
 
         @Override
         public ImmutableList<RuleSet> requires() {
-          return ImmutableList.of(CORE_RULES);
+          return ImmutableList.of(CoreRules.INSTANCE);
         }
       };
 
@@ -323,7 +303,7 @@ public class BazelRuleClassProvider {
 
         @Override
         public ImmutableList<RuleSet> requires() {
-          return ImmutableList.of(CORE_RULES);
+          return ImmutableList.of(CoreRules.INSTANCE);
         }
       };
 
@@ -339,7 +319,7 @@ public class BazelRuleClassProvider {
 
         @Override
         public ImmutableList<RuleSet> requires() {
-          return ImmutableList.of(CORE_RULES);
+          return ImmutableList.of(CoreRules.INSTANCE);
         }
       };
 
@@ -352,7 +332,7 @@ public class BazelRuleClassProvider {
 
         @Override
         public ImmutableList<RuleSet> requires() {
-          return ImmutableList.of(CORE_RULES);
+          return ImmutableList.of(CoreRules.INSTANCE);
         }
       };
 
@@ -368,7 +348,7 @@ public class BazelRuleClassProvider {
 
         @Override
         public ImmutableList<RuleSet> requires() {
-          return ImmutableList.of(CORE_RULES);
+          return ImmutableList.of(CoreRules.INSTANCE);
         }
       };
 
@@ -380,9 +360,11 @@ public class BazelRuleClassProvider {
               CppOptions.class, new CppConfigurationLoader(Functions.<String>identity()));
 
           builder.addBuildInfoFactory(new CppBuildInfo());
+          builder.addDynamicTransitionMaps(CppRuleClasses.DYNAMIC_TRANSITIONS_MAP);
 
           builder.addRuleDefinition(new CcToolchainRule());
           builder.addRuleDefinition(new CcToolchainSuiteRule());
+          builder.addRuleDefinition(new CcToolchainAlias.CcToolchainAliasRule());
           builder.addRuleDefinition(new CcIncLibraryRule());
           builder.addRuleDefinition(new BazelCppRuleClasses.CcLinkingRule());
           builder.addRuleDefinition(new BazelCppRuleClasses.CcDeclRule());
@@ -398,7 +380,7 @@ public class BazelRuleClassProvider {
 
         @Override
         public ImmutableList<RuleSet> requires() {
-          return ImmutableList.of(CORE_RULES);
+          return ImmutableList.of(CoreRules.INSTANCE);
         }
       };
 
@@ -406,14 +388,14 @@ public class BazelRuleClassProvider {
       new RuleSet() {
         @Override
         public void init(Builder builder) {
-          CcProtoAspect ccProtoAspect = new BazelCcProtoAspect(BazelCppSemantics.INSTANCE);
+          CcProtoAspect ccProtoAspect = new BazelCcProtoAspect(BazelCppSemantics.INSTANCE, builder);
           builder.addNativeAspectClass(ccProtoAspect);
           builder.addRuleDefinition(new CcProtoLibraryRule(ccProtoAspect));
         }
 
         @Override
         public ImmutableList<RuleSet> requires() {
-          return ImmutableList.of(CORE_RULES, CPP_RULES);
+          return ImmutableList.of(CoreRules.INSTANCE, CPP_RULES);
         }
       };
 
@@ -441,6 +423,8 @@ public class BazelRuleClassProvider {
           builder.addRuleDefinition(new JavaToolchainRule());
           builder.addRuleDefinition(new JavaRuntimeRule());
           builder.addRuleDefinition(new JavaRuntimeSuiteRule());
+          builder.addRuleDefinition(new JavaRuntimeAlias.JavaRuntimeAliasRule());
+          builder.addRuleDefinition(new JavaToolchainAlias.JavaToolchainAliasRule());
 
           builder.addRuleDefinition(new ExtraActionRule());
           builder.addRuleDefinition(new ActionListenerRule());
@@ -455,7 +439,7 @@ public class BazelRuleClassProvider {
 
         @Override
         public ImmutableList<RuleSet> requires() {
-          return ImmutableList.of(CORE_RULES, CPP_RULES);
+          return ImmutableList.of(CoreRules.INSTANCE, CPP_RULES);
         }
       };
 
@@ -463,8 +447,11 @@ public class BazelRuleClassProvider {
       new RuleSet() {
         @Override
         public void init(Builder builder) {
-          BazelJavaProtoAspect bazelJavaProtoAspect = new BazelJavaProtoAspect();
-          BazelJavaLiteProtoAspect bazelJavaLiteProtoAspect = new BazelJavaLiteProtoAspect();
+          LateBoundLabel<BuildConfiguration> hostJdkAttribute =
+              JavaSemantics.hostJdkAttribute(builder);
+          BazelJavaProtoAspect bazelJavaProtoAspect = new BazelJavaProtoAspect(hostJdkAttribute);
+          BazelJavaLiteProtoAspect bazelJavaLiteProtoAspect =
+              new BazelJavaLiteProtoAspect(hostJdkAttribute);
           builder.addNativeAspectClass(bazelJavaProtoAspect);
           builder.addNativeAspectClass(bazelJavaLiteProtoAspect);
           builder.addRuleDefinition(new BazelJavaProtoLibraryRule(bazelJavaProtoAspect));
@@ -473,7 +460,7 @@ public class BazelRuleClassProvider {
 
         @Override
         public ImmutableList<RuleSet> requires() {
-          return ImmutableList.of(CORE_RULES, JAVA_RULES);
+          return ImmutableList.of(CoreRules.INSTANCE, JAVA_RULES);
         }
       };
 
@@ -493,7 +480,6 @@ public class BazelRuleClassProvider {
           builder.addRuleDefinition(new AndroidRuleClasses.AndroidSdkRule());
           builder.addRuleDefinition(new BazelAndroidToolsDefaultsJarRule());
           builder.addRuleDefinition(new AndroidRuleClasses.AndroidBaseRule());
-          builder.addRuleDefinition(new AndroidRuleClasses.AndroidAaptBaseRule());
           builder.addRuleDefinition(new AndroidRuleClasses.AndroidResourceSupportRule());
           builder.addRuleDefinition(
               new AndroidRuleClasses.AndroidBinaryBaseRule(
@@ -507,8 +493,8 @@ public class BazelRuleClassProvider {
           builder.addRuleDefinition(new AndroidDeviceRule());
 
           builder.addSkylarkAccessibleTopLevels("android_common", new AndroidSkylarkCommon());
-          builder.addSkylarkAccessibleTopLevels(
-              "java_common", new JavaSkylarkCommon(BazelJavaSemantics.INSTANCE));
+          builder.addSkylarkAccessibleTopLevels("java_common",
+              new JavaSkylarkCommon(BazelJavaSemantics.INSTANCE));
           builder.addSkylarkAccessibleTopLevels("java_proto_common", JavaProtoSkylarkCommon.class);
 
           try {
@@ -521,7 +507,7 @@ public class BazelRuleClassProvider {
 
         @Override
         public ImmutableList<RuleSet> requires() {
-          return ImmutableList.of(CORE_RULES, CPP_RULES, JAVA_RULES);
+          return ImmutableList.of(CoreRules.INSTANCE, CPP_RULES, JAVA_RULES);
         }
       };
 
@@ -538,11 +524,12 @@ public class BazelRuleClassProvider {
           builder.addRuleDefinition(new BazelPyLibraryRule());
           builder.addRuleDefinition(new BazelPyBinaryRule());
           builder.addRuleDefinition(new BazelPyTestRule());
+          builder.addRuleDefinition(new BazelPyRuntimeRule());
         }
 
         @Override
         public ImmutableList<RuleSet> requires() {
-          return ImmutableList.of(CORE_RULES, CPP_RULES);
+          return ImmutableList.of(CoreRules.INSTANCE, CPP_RULES);
         }
       };
 
@@ -553,10 +540,6 @@ public class BazelRuleClassProvider {
           String toolsRepository = checkNotNull(builder.getToolsRepository());
 
           builder.addBuildInfoFactory(new ObjcBuildInfoFactory());
-          builder.registerSkylarkProvider(
-              ObjcProvider.OBJC_SKYLARK_PROVIDER_NAME, ObjcProvider.class);
-          builder.registerSkylarkProvider(
-              XcTestAppProvider.XCTEST_APP_SKYLARK_PROVIDER_NAME, XcTestAppProvider.class);
           builder.addSkylarkAccessibleTopLevels("apple_common", new AppleSkylarkCommon());
 
           builder.addConfig(ObjcCommandLineOptions.class, new ObjcConfigurationLoader());
@@ -576,9 +559,6 @@ public class BazelRuleClassProvider {
 
           builder.addRuleDefinition(new AppleCcToolchainRule());
           builder.addRuleDefinition(new AppleToolchain.RequiresXcodeConfigRule(toolsRepository));
-          builder.addRuleDefinition(new AppleWatch1ExtensionRule());
-          builder.addRuleDefinition(new AppleWatch2ExtensionRule());
-          builder.addRuleDefinition(new AppleWatchExtensionBinaryRule());
           builder.addRuleDefinition(new IosApplicationRule());
           builder.addRuleDefinition(new IosDeviceRule());
           builder.addRuleDefinition(new IosExtensionBinaryRule());
@@ -617,7 +597,7 @@ public class BazelRuleClassProvider {
 
         @Override
         public ImmutableList<RuleSet> requires() {
-          return ImmutableList.of(CORE_RULES, CPP_RULES);
+          return ImmutableList.of(CoreRules.INSTANCE, CPP_RULES);
         }
       };
 
@@ -643,21 +623,7 @@ public class BazelRuleClassProvider {
 
         @Override
         public ImmutableList<RuleSet> requires() {
-          return ImmutableList.of(CORE_RULES, CPP_RULES, JAVA_RULES, OBJC_RULES);
-        }
-      };
-
-  public static final RuleSet ANDROID_STUDIO_ASPECT =
-      new RuleSet() {
-        @Override
-        public void init(Builder builder) {
-          AndroidStudioInfoAspect androidStudioInfoAspect = new AndroidStudioInfoAspect();
-          builder.addNativeAspectClass(androidStudioInfoAspect);
-        }
-
-        @Override
-        public ImmutableList<RuleSet> requires() {
-          return ImmutableList.of(CORE_RULES);
+          return ImmutableList.of(CoreRules.INSTANCE, CPP_RULES, JAVA_RULES, OBJC_RULES);
         }
       };
 
@@ -681,14 +647,14 @@ public class BazelRuleClassProvider {
 
         @Override
         public ImmutableList<RuleSet> requires() {
-          return ImmutableList.of(CORE_RULES, CORE_WORKSPACE_RULES);
+          return ImmutableList.of(CoreRules.INSTANCE, CORE_WORKSPACE_RULES);
         }
       };
 
   private static final ImmutableSet<RuleSet> RULE_SETS =
       ImmutableSet.of(
           BAZEL_SETUP,
-          CORE_RULES,
+          CoreRules.INSTANCE,
           CORE_WORKSPACE_RULES,
           GENERIC_RULES,
           CONFIG_RULES,
@@ -703,7 +669,6 @@ public class BazelRuleClassProvider {
           PYTHON_RULES,
           OBJC_RULES,
           J2OBJC_RULES,
-          ANDROID_STUDIO_ASPECT,
           TESTING_SUPPORT,
           VARIOUS_WORKSPACE_RULES,
           // This rule set is a little special: it needs to depend on every configuration fragment

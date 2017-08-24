@@ -18,7 +18,7 @@ import static com.google.common.truth.Truth.assertThat;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTarget;
 import com.google.devtools.build.lib.events.Event;
-import com.google.devtools.build.lib.packages.SkylarkClassObject;
+import com.google.devtools.build.lib.packages.Info;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
 import com.google.devtools.build.lib.syntax.SkylarkList.MutableList;
 import com.google.devtools.build.lib.syntax.SkylarkList.Tuple;
@@ -36,6 +36,11 @@ public class ValidationTest extends EvaluationTestCase {
   @Test
   public void testAssignmentNotValidLValue() {
     checkError("cannot assign to '\"a\"'", "'a' = 1");
+  }
+
+  @Test
+  public void testAugmentedAssignmentWithMultipleLValues() {
+    checkError("cannot perform augmented assignment on a list or tuple expression", "a, b += 2, 3");
   }
 
   @Test
@@ -175,73 +180,6 @@ public class ValidationTest extends EvaluationTestCase {
   }
 
   @Test
-  public void testReadOnlyWorksForSimpleBranching() {
-    parse("if 1:", "  v = 'a'", "else:", "  v = 'b'");
-  }
-
-  @Test
-  public void testReadOnlyWorksForNestedBranching() {
-    parse(
-        "if 1:",
-        "  if 0:",
-        "    v = 'a'",
-        "  else:",
-        "    v = 'b'",
-        "else:",
-        "  if 0:",
-        "    v = 'c'",
-        "  else:",
-        "    v = 'd'\n");
-  }
-
-  @Test
-  public void testReadOnlyWorksForDifferentLevelBranches() {
-    checkError("Variable v is read only", "if 1:", "  if 1:", "    v = 'a'", "  v = 'b'\n");
-  }
-
-  @Test
-  public void testReadOnlyWorksWithinSimpleBranch() {
-    checkError(
-        "Variable v is read only", "if 1:", "  v = 'a'", "else:", "  v = 'b'", "  v = 'c'\n");
-  }
-
-  @Test
-  public void testReadOnlyWorksWithinNestedBranch() {
-    checkError(
-        "Variable v is read only",
-        "if 1:",
-        "  v = 'a'",
-        "else:",
-        "  if 1:",
-        "    v = 'b'",
-        "  else:",
-        "    v = 'c'",
-        "    v = 'd'\n");
-  }
-
-  @Test
-  public void testReadOnlyWorksAfterSimpleBranch() {
-    checkError("Variable v is read only", "if 1:", "  v = 'a'", "else:", "  w = 'a'", "v = 'b'");
-  }
-
-  @Test
-  public void testReadOnlyWorksAfterNestedBranch() {
-    checkError("Variable v is read only", "if 1:", "  if 1:", "    v = 'a'", "v = 'b'");
-  }
-
-  @Test
-  public void testReadOnlyWorksAfterNestedBranch2() {
-    checkError(
-        "Variable v is read only",
-        "if 1:",
-        "  v = 'a'",
-        "else:",
-        "  if 0:",
-        "    w = 1",
-        "v = 'b'\n");
-  }
-
-  @Test
   public void testModulesReadOnlyInFuncDefBody() {
     parse("def func():", "  cmd_helper = depset()");
   }
@@ -298,8 +236,7 @@ public class ValidationTest extends EvaluationTestCase {
     assertThat(EvalUtils.getSkylarkType(emptyTupleClass)).isEqualTo(Tuple.class);
     assertThat(EvalUtils.getSkylarkType(tupleClass)).isEqualTo(Tuple.class);
 
-    assertThat(EvalUtils.getSkylarkType(SkylarkClassObject.class))
-        .isEqualTo(SkylarkClassObject.class);
+    assertThat(EvalUtils.getSkylarkType(Info.class)).isEqualTo(Info.class);
     try {
       EvalUtils.getSkylarkType(ClassObject.class);
       throw new Exception("Should have raised IllegalArgumentException exception");
@@ -338,8 +275,7 @@ public class ValidationTest extends EvaluationTestCase {
     // TODO(bazel-team): move to some other place to remove dependency of syntax tests on Artifact?
     assertThat(SkylarkType.of(Artifact.SpecialArtifact.class))
         .isEqualTo(SkylarkType.of(Artifact.class));
-    assertThat(SkylarkType.of(RuleConfiguredTarget.class))
-        .isNotEqualTo(SkylarkType.of(SkylarkClassObject.class));
+    assertThat(SkylarkType.of(RuleConfiguredTarget.class)).isNotEqualTo(SkylarkType.of(Info.class));
   }
 
   @Test

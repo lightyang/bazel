@@ -15,7 +15,6 @@
 package com.google.devtools.build.lib.runtime;
 
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
@@ -29,7 +28,8 @@ import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider;
 import com.google.devtools.build.lib.analysis.ServerDirectories;
 import com.google.devtools.build.lib.analysis.config.BinTools;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
-import com.google.devtools.build.lib.analysis.config.ConfigurationFactory;
+import com.google.devtools.build.lib.analysis.config.ConfigurationFragmentFactory;
+import com.google.devtools.build.lib.analysis.test.CoverageReportActionFactory;
 import com.google.devtools.build.lib.buildeventstream.PathConverter;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.OutputFilter;
@@ -46,7 +46,6 @@ import com.google.devtools.build.lib.query2.AbstractBlazeQueryEnvironment;
 import com.google.devtools.build.lib.query2.QueryEnvironmentFactory;
 import com.google.devtools.build.lib.query2.engine.QueryEnvironment.QueryFunction;
 import com.google.devtools.build.lib.query2.output.OutputFormatter;
-import com.google.devtools.build.lib.rules.test.CoverageReportActionFactory;
 import com.google.devtools.build.lib.runtime.BlazeCommandDispatcher.LockingMode;
 import com.google.devtools.build.lib.runtime.commands.InfoItem;
 import com.google.devtools.build.lib.runtime.proto.InvocationPolicyOuterClass.InvocationPolicy;
@@ -63,6 +62,7 @@ import com.google.devtools.build.lib.util.CustomExitCodePublisher;
 import com.google.devtools.build.lib.util.ExitCode;
 import com.google.devtools.build.lib.util.LoggingUtil;
 import com.google.devtools.build.lib.util.OS;
+import com.google.devtools.build.lib.util.Pair;
 import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.util.ProcessUtils;
 import com.google.devtools.build.lib.util.ThreadUtils;
@@ -75,11 +75,12 @@ import com.google.devtools.build.lib.windows.WindowsFileSystem;
 import com.google.devtools.build.lib.windows.WindowsSubprocessFactory;
 import com.google.devtools.common.options.CommandNameCache;
 import com.google.devtools.common.options.InvocationPolicyParser;
-import com.google.devtools.common.options.Option;
+import com.google.devtools.common.options.OptionDefinition;
 import com.google.devtools.common.options.OptionPriority;
 import com.google.devtools.common.options.OptionsBase;
 import com.google.devtools.common.options.OptionsClassProvider;
 import com.google.devtools.common.options.OptionsParser;
+import com.google.devtools.common.options.OptionsParser.ConstructionException;
 import com.google.devtools.common.options.OptionsParsingException;
 import com.google.devtools.common.options.OptionsProvider;
 import com.google.devtools.common.options.TriState;
@@ -95,10 +96,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
@@ -126,7 +129,7 @@ public final class BlazeRuntime {
   private final Runnable abruptShutdownHandler;
 
   private final PackageFactory packageFactory;
-  private final ConfigurationFactory configurationFactory;
+  private final ImmutableList<ConfigurationFragmentFactory> configurationFragmentFactories;
   private final ConfiguredRuleClassProvider ruleClassProvider;
   // For bazel info.
   private final ImmutableMap<String, InfoItem> infoItems;
@@ -156,7 +159,7 @@ public final class BlazeRuntime {
       ImmutableList<OutputFormatter> queryOutputFormatters,
       PackageFactory pkgFactory,
       ConfiguredRuleClassProvider ruleClassProvider,
-      ConfigurationFactory configurationFactory,
+      ImmutableList<ConfigurationFragmentFactory> configurationFragmentFactories,
       ImmutableMap<String, InfoItem> infoItems,
       Clock clock,
       Runnable abruptShutdownHandler,
@@ -177,7 +180,7 @@ public final class BlazeRuntime {
     this.moduleInvocationPolicy = moduleInvocationPolicy;
 
     this.ruleClassProvider = ruleClassProvider;
-    this.configurationFactory = configurationFactory;
+    this.configurationFragmentFactories = configurationFragmentFactories;
     this.infoItems = infoItems;
     this.clock = clock;
     this.abruptShutdownHandler = abruptShutdownHandler;
@@ -342,8 +345,8 @@ public final class BlazeRuntime {
     return null;
   }
 
-  public ConfigurationFactory getConfigurationFactory() {
-    return configurationFactory;
+  public ImmutableList<ConfigurationFragmentFactory> getConfigurationFragmentFactories() {
+    return configurationFragmentFactories;
   }
 
   /**
@@ -650,11 +653,16 @@ public final class BlazeRuntime {
     }
 
     for (Field field : startupFields) {
-      if (field.isAnnotationPresent(Option.class)) {
-        prefixes.add("--" + field.getAnnotation(Option.class).name());
+      try {
+        OptionDefinition optionDefinition = OptionDefinition.extractOptionDefinition(field);
+        prefixes.add("--" + optionDefinition.getOptionName());
         if (field.getType() == boolean.class || field.getType() == TriState.class) {
-          prefixes.add("--no" + field.getAnnotation(Option.class).name());
+          prefixes.add("--no" + optionDefinition.getOptionName());
         }
+      } catch (ConstructionException e) {
+        // Do nothing, just ignore fields that are not actually options. OptionsBases technically
+        // shouldn't have fields that are not @Options, but this is a requirement that isn't yet
+        // being enforced, so this should not cause a failure here.
       }
     }
 
@@ -741,12 +749,24 @@ public final class BlazeRuntime {
       return e.getExitCode().getNumericExitCode();
     }
 
+    ImmutableList.Builder<Pair<String, String>> startupOptionsFromCommandLine =
+        ImmutableList.builder();
+    for (String option : commandLineOptions.getStartupArgs()) {
+      startupOptionsFromCommandLine.add(new Pair<>("", option));
+    }
+
     BlazeCommandDispatcher dispatcher = new BlazeCommandDispatcher(runtime);
 
     try {
       LOG.info(getRequestLogString(commandLineOptions.getOtherArgs()));
-      return dispatcher.exec(policy, commandLineOptions.getOtherArgs(), OutErr.SYSTEM_OUT_ERR,
-          LockingMode.ERROR_OUT, "batch client", runtime.getClock().currentTimeMillis());
+      return dispatcher.exec(
+          policy,
+          commandLineOptions.getOtherArgs(),
+          OutErr.SYSTEM_OUT_ERR,
+          LockingMode.ERROR_OUT,
+          "batch client",
+          runtime.getClock().currentTimeMillis(),
+          Optional.of(startupOptionsFromCommandLine.build()));
     } catch (BlazeCommandDispatcher.ShutdownBlazeServerException e) {
       return e.getExitStatus();
     } catch (InterruptedException e) {
@@ -899,9 +919,6 @@ public final class BlazeRuntime {
     BlazeServerStartupOptions startupOptions = options.getOptions(BlazeServerStartupOptions.class);
     String productName = startupOptions.productName.toLowerCase(Locale.US);
 
-    if (startupOptions.oomMoreEagerlyThreshold != 100) {
-      new RetainedHeapLimiter(startupOptions.oomMoreEagerlyThreshold).install();
-    }
     PathFragment workspaceDirectory = startupOptions.workspaceDirectory;
     PathFragment installBase = startupOptions.installBase;
     PathFragment outputBase = startupOptions.outputBase;
@@ -964,6 +981,8 @@ public final class BlazeRuntime {
     }
 
     runtimeBuilder.addBlazeModule(new BuiltinCommandModule());
+    // This module needs to be registered before any module providing a SpawnCache implementation.
+    runtimeBuilder.addBlazeModule(new NoSpawnCacheModule());
     runtimeBuilder.addBlazeModule(new CommandLogModule());
     for (BlazeModule blazeModule : blazeModules) {
       runtimeBuilder.addBlazeModule(blazeModule);
@@ -1084,7 +1103,6 @@ public final class BlazeRuntime {
    * BlazeDirectories}, and the {@link RuleClassProvider} (except for testing). All other fields
    * have safe default values.
    *
-   * <p>If a {@link ConfigurationFactory} is set, then the builder ignores the host system flag.
    * <p>The default behavior of the BlazeRuntime's EventBus is to exit when a subscriber throws
    * an exception. Please plan appropriately.
    */
@@ -1148,11 +1166,6 @@ public final class BlazeRuntime {
               BlazeVersionInfo.instance().getVersion(),
               packageBuilderHelper);
 
-      ConfigurationFactory configurationFactory =
-          new ConfigurationFactory(
-              ruleClassProvider.getConfigurationCollectionFactory(),
-              ruleClassProvider.getConfigurationFragments());
-
       ProjectFile.Provider projectFileProvider = null;
       for (BlazeModule module : blazeModules) {
         ProjectFile.Provider candidate = module.createProjectFileProvider();
@@ -1169,7 +1182,7 @@ public final class BlazeRuntime {
           serverBuilder.getQueryOutputFormatters(),
           packageFactory,
           ruleClassProvider,
-          configurationFactory,
+          ruleClassProvider.getConfigurationFragments(),
           serverBuilder.getInfoItems(),
           clock,
           abruptShutdownHandler,

@@ -21,13 +21,13 @@ import com.google.devtools.build.lib.analysis.ConfiguredAspectFactory;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.SkylarkProviderValidationUtil;
+import com.google.devtools.build.lib.analysis.skylark.SkylarkRuleConfiguredTargetUtil;
+import com.google.devtools.build.lib.analysis.skylark.SkylarkRuleContext;
 import com.google.devtools.build.lib.events.Location;
 import com.google.devtools.build.lib.packages.AspectDescriptor;
 import com.google.devtools.build.lib.packages.AspectParameters;
+import com.google.devtools.build.lib.packages.Info;
 import com.google.devtools.build.lib.packages.SkylarkAspect;
-import com.google.devtools.build.lib.packages.SkylarkClassObject;
-import com.google.devtools.build.lib.rules.SkylarkRuleConfiguredTargetBuilder;
-import com.google.devtools.build.lib.rules.SkylarkRuleContext;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkValue;
 import com.google.devtools.build.lib.syntax.Environment;
 import com.google.devtools.build.lib.syntax.EvalException;
@@ -56,13 +56,14 @@ public class SkylarkAspectFactory implements ConfiguredAspectFactory {
     try (Mutability mutability = Mutability.create("aspect")) {
       AspectDescriptor aspectDescriptor = new AspectDescriptor(
           skylarkAspect.getAspectClass(), parameters);
+      AnalysisEnvironment analysisEnv = ruleContext.getAnalysisEnvironment();
       try {
-        skylarkRuleContext = new SkylarkRuleContext(ruleContext, aspectDescriptor);
+        skylarkRuleContext = new SkylarkRuleContext(
+            ruleContext, aspectDescriptor, analysisEnv.getSkylarkSemantics());
       } catch (EvalException e) {
         ruleContext.ruleError(e.getMessage());
         return null;
       }
-      AnalysisEnvironment analysisEnv = ruleContext.getAnalysisEnvironment();
       Environment env =
           Environment.builder(mutability)
               .setGlobals(skylarkAspect.getFuncallEnv().getGlobals())
@@ -83,7 +84,7 @@ public class SkylarkAspectFactory implements ConfiguredAspectFactory {
 
         if (ruleContext.hasErrors()) {
           return null;
-        } else if (!(aspectSkylarkObject instanceof SkylarkClassObject)
+        } else if (!(aspectSkylarkObject instanceof Info)
             && !(aspectSkylarkObject instanceof Iterable)) {
           ruleContext.ruleError(
               String.format(
@@ -113,7 +114,7 @@ public class SkylarkAspectFactory implements ConfiguredAspectFactory {
     if (aspectSkylarkObject instanceof Iterable) {
       addDeclaredProviders(builder, (Iterable) aspectSkylarkObject);
     } else {
-      SkylarkClassObject struct = (SkylarkClassObject) aspectSkylarkObject;
+      Info struct = (Info) aspectSkylarkObject;
       Location loc = struct.getCreationLoc();
       for (String key : struct.getKeys()) {
         if (key.equals("output_groups")) {
@@ -142,17 +143,21 @@ public class SkylarkAspectFactory implements ConfiguredAspectFactory {
 
   private void addDeclaredProviders(ConfiguredAspect.Builder builder, Iterable aspectSkylarkObject)
       throws EvalException {
+    int i = 0;
     for (Object o : aspectSkylarkObject) {
       Location loc = skylarkAspect.getImplementation().getLocation();
-      SkylarkClassObject declaredProvider =
+      Info declaredProvider =
           SkylarkType.cast(
               o,
-              SkylarkClassObject.class,
+              Info.class,
               loc,
               "A return value of an aspect implementation function should be "
-                  + "a sequence of declared providers");
+                  + "a sequence of declared providers, instead got a %s at index %d",
+              o.getClass(),
+              i);
       Location creationLoc = declaredProvider.getCreationLocOrNull();
       builder.addSkylarkDeclaredProvider(declaredProvider, creationLoc != null ? creationLoc : loc);
+      i++;
     }
   }
 
@@ -165,8 +170,9 @@ public class SkylarkAspectFactory implements ConfiguredAspectFactory {
     for (String outputGroup : outputGroups.keySet()) {
       SkylarkValue objects = outputGroups.get(outputGroup);
 
-      builder.addOutputGroup(outputGroup,
-          SkylarkRuleConfiguredTargetBuilder.convertToOutputGroupValue(loc, outputGroup, objects));
+      builder.addOutputGroup(
+          outputGroup,
+          SkylarkRuleConfiguredTargetUtil.convertToOutputGroupValue(loc, outputGroup, objects));
     }
   }
 

@@ -32,6 +32,7 @@ import com.google.devtools.build.lib.actions.ActionExecutionContext;
 import com.google.devtools.build.lib.actions.ActionExecutionException;
 import com.google.devtools.build.lib.actions.ActionExecutionStatusReporter;
 import com.google.devtools.build.lib.actions.ActionInputFileCache;
+import com.google.devtools.build.lib.actions.ActionInputPrefetcher;
 import com.google.devtools.build.lib.actions.ActionLogBufferPathGenerator;
 import com.google.devtools.build.lib.actions.ActionLookupData;
 import com.google.devtools.build.lib.actions.ActionLookupValue;
@@ -176,7 +177,7 @@ public abstract class TimestampBuilderTestCase extends FoundationTestCase {
 
     ActionInputFileCache cache = new SingleBuildFileCache(
         rootDirectory.getPathString(), scratch.getFileSystem());
-    skyframeActionExecutor.setFileCache(cache);
+    skyframeActionExecutor.configure(cache, ActionInputPrefetcher.NONE);
 
     final InMemoryMemoizingEvaluator evaluator =
         new InMemoryMemoizingEvaluator(
@@ -235,7 +236,8 @@ public abstract class TimestampBuilderTestCase extends FoundationTestCase {
           Set<Artifact> artifacts,
           Set<ConfiguredTarget> parallelTests,
           Set<ConfiguredTarget> exclusiveTests,
-          Collection<ConfiguredTarget> targetsToBuild,
+          Set<ConfiguredTarget> targetsToBuild,
+          Set<ConfiguredTarget> targetsToSkip,
           Collection<AspectValue> aspects,
           Executor executor,
           Set<ConfiguredTarget> builtTargets,
@@ -379,6 +381,7 @@ public abstract class TimestampBuilderTestCase extends FoundationTestCase {
       builder.buildArtifacts(
           reporter,
           artifactsToBuild,
+          null,
           null,
           null,
           null,

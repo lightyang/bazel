@@ -172,22 +172,17 @@ toolchain {
   needsPic: false
 
   # TODO(pcloudy): Review those flags below, they should be defined by cl.exe
-  compiler_flag: "/DOS_WINDOWS=OS_WINDOWS"
   compiler_flag: "/DCOMPILER_MSVC"
 
-  # Don't pollute with GDI macros in windows.h.
-  compiler_flag: "/DNOGDI"
   # Don't define min/max macros in windows.h.
   compiler_flag: "/DNOMINMAX"
-  compiler_flag: "/DPRAGMA_SUPPORTED"
+
   # Platform defines.
   compiler_flag: "/D_WIN32_WINNT=0x0600"
   # Turn off warning messages.
   compiler_flag: "/D_CRT_SECURE_NO_DEPRECATE"
   compiler_flag: "/D_CRT_SECURE_NO_WARNINGS"
   compiler_flag: "/D_SILENCE_STDEXT_HASH_DEPRECATION_WARNINGS"
-  # Use math constants (M_PI, etc.) from the math library
-  compiler_flag: "/D_USE_MATH_DEFINES"
 
   # Useful options to have on for compilation.
   # Increase the capacity of object files to 2^32 sections.
@@ -215,7 +210,9 @@ toolchain {
 
   linker_flag: "/MACHINE:X64"
 
-  linker_flag: "/SUBSYSTEM:CONSOLE"
+  feature {
+    name: "no_legacy_features"
+  }
 
   # Suppress startup banner.
   feature {
@@ -303,21 +300,18 @@ toolchain {
       action: 'c++-header-preprocessing'
       action: 'c++-module-compile'
       flag_group {
+        iterate_over: 'quote_include_paths'
         flag: '/I%{quote_include_paths}'
       }
       flag_group {
+        iterate_over: 'include_paths'
         flag: '/I%{include_paths}'
       }
       flag_group {
+        iterate_over: 'system_include_paths'
         flag: '/I%{system_include_paths}'
       }
     }
-  }
-
-  # Stop adding any flag for dotD file, Bazel knows how to parse the output of /showIncludes option
-  # TODO(bazel-team): Remove this empty feature. https://github.com/bazelbuild/bazel/issues/2868
-  feature {
-    name: 'dependency_file'
   }
 
   # Tell Bazel to parse the output of /showIncludes
@@ -337,14 +331,30 @@ toolchain {
     }
   }
 
-  # Stop passing -frandom-seed option
-  feature {
-    name: 'random_seed'
-  }
-
   # This feature is just for enabling flag_set in action_config for -c and -o options during the transitional period
   feature {
     name: 'compile_action_flags_in_flag_set'
+  }
+
+  feature {
+    name: "preprocessor_defines"
+    flag_set {
+      action: "preprocess-assemble"
+      action: "c-compile"
+      action: "c++-compile"
+      action: "c++-header-parsing"
+      action: "c++-header-preprocessing"
+      action: "c++-module-compile"
+      flag_group {
+        flag: "/D%{preprocessor_defines}"
+        iterate_over: "preprocessor_defines"
+      }
+    }
+  }
+
+  # This feature indicates strip is not supported, building stripped binary will just result a copy of orignial binary
+  feature {
+    name: 'no_stripping'
   }
 
   action_config {
@@ -381,6 +391,7 @@ toolchain {
     implies: 'nologo'
     implies: 'msvc_env'
     implies: 'parse_showincludes'
+    implies: 'copts'
   }
 
   action_config {
@@ -417,6 +428,7 @@ toolchain {
     implies: 'nologo'
     implies: 'msvc_env'
     implies: 'parse_showincludes'
+    implies: 'copts'
   }
 
   action_config {
@@ -430,9 +442,11 @@ toolchain {
     implies: 'output_execpath_flags'
     implies: 'input_param_flags'
     implies: 'legacy_link_flags'
+    implies: 'linker_subsystem_flag'
     implies: 'linker_param_file'
     implies: 'msvc_env'
     implies: 'use_linker'
+    implies: 'no_stripping'
   }
 
   action_config {
@@ -447,9 +461,11 @@ toolchain {
     implies: 'output_execpath_flags'
     implies: 'input_param_flags'
     implies: 'legacy_link_flags'
+    implies: 'linker_subsystem_flag'
     implies: 'linker_param_file'
     implies: 'msvc_env'
     implies: 'use_linker'
+    implies: 'no_stripping'
   }
 
   action_config {
@@ -544,6 +560,7 @@ toolchain {
       action: 'c++-link-dynamic-library'
       expand_if_all_available: 'linkstamp_paths'
       flag_group {
+        iterate_over: 'linkstamp_paths'
         flag: '%{linkstamp_paths}'
       }
     }
@@ -591,6 +608,7 @@ toolchain {
       action: 'c++-link-executable'
       action: 'c++-link-dynamic-library'
       flag_group {
+        iterate_over: 'libopts'
         flag: '%{libopts}'
       }
     }
@@ -683,6 +701,27 @@ toolchain {
     }
   }
 
+  # Since this feature is declared earlier in the CROSSTOOL than
+  # "legacy_link_flags", this feature will be applied prior to it anwyhere they
+  # are both implied. And since "legacy_link_flags" contains the linkopts from
+  # the build rule, this allows the user to override the /SUBSYSTEM in the BUILD
+  # file.
+  feature {
+    name: 'linker_subsystem_flag'
+    flag_set {
+      action: 'c++-link-executable'
+      action: 'c++-link-dynamic-library'
+      flag_group {
+        flag: '/SUBSYSTEM:CONSOLE'
+      }
+    }
+  }
+
+  # The "legacy_link_flags" may contain user-defined linkopts (from build rules)
+  # so it should be defined after features that declare user-overridable flags.
+  # For example the "linker_subsystem_flag" defines a default "/SUBSYSTEM" flag
+  # but we want to let the user override it, therefore "link_flag_subsystem" is
+  # defined earlier in the CROSSTOOL file than "legacy_link_flags".
   feature {
     name: 'legacy_link_flags'
     flag_set {
@@ -690,6 +729,7 @@ toolchain {
       action: 'c++-link-executable'
       action: 'c++-link-dynamic-library'
       flag_group {
+        iterate_over: 'legacy_link_flags'
         flag: '%{legacy_link_flags}'
       }
     }
@@ -763,10 +803,6 @@ toolchain {
       flag_group {
         flag: "/Od"
         flag: "/Z7"
-        # This will signal the wrapper that we are doing a debug build, which sets
-        # some internal state of the toolchain wrapper. It is intentionally a "-"
-        # flag to make this very obvious.
-        flag: "-g"
       }
     }
     flag_set {
@@ -813,6 +849,25 @@ toolchain {
       }
     }
     implies: 'link_crt_library'
+  }
+
+  feature {
+    name: 'copts'
+    flag_set {
+      expand_if_all_available: 'copts'
+      action: 'assemble'
+      action: 'preprocess-assemble'
+      action: 'c-compile'
+      action: 'c++-compile'
+      action: 'c++-header-parsing'
+      action: 'c++-header-preprocessing'
+      action: 'c++-module-compile'
+      action: 'c++-module-codegen'
+      flag_group {
+        iterate_over: 'copts'
+        flag: '%{copts}'
+      }
+    }
   }
 
 %{compilation_mode_content}

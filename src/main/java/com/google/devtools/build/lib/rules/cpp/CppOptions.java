@@ -17,7 +17,6 @@ import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Multimap;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration.LabelConverter;
 import com.google.devtools.build.lib.analysis.config.CompilationMode;
@@ -35,9 +34,9 @@ import com.google.devtools.common.options.Converter;
 import com.google.devtools.common.options.EnumConverter;
 import com.google.devtools.common.options.Option;
 import com.google.devtools.common.options.OptionDocumentationCategory;
-import com.google.devtools.common.options.OptionsParser.OptionUsageRestrictions;
+import com.google.devtools.common.options.OptionEffectTag;
+import com.google.devtools.common.options.OptionMetadataTag;
 import com.google.devtools.common.options.OptionsParsingException;
-import com.google.devtools.common.options.proto.OptionFilters.OptionEffectTag;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -280,17 +279,6 @@ public class CppOptions extends FragmentOptions {
   )
   public boolean skipStaticOutputs;
 
-  // TODO(djasper): Remove once it has been removed from the global blazerc.
-  @Option(
-    name = "send_transitive_header_module_srcs",
-    defaultValue = "true",
-    category = "semantics",
-    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-    effectTags = {OptionEffectTag.UNKNOWN},
-    help = "Obsolete. Don't use."
-  )
-  public boolean sendTransitiveHeaderModuleSrcs;
-
   @Option(
     name = "process_headers_in_dependencies",
     defaultValue = "false",
@@ -497,6 +485,17 @@ public class CppOptions extends FragmentOptions {
   }
 
   @Option(
+    name = "convert_lipo_to_thinlto",
+    defaultValue = "false",
+    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+    effectTags = {OptionEffectTag.UNKNOWN},
+    help =
+        "If set, builds using LIPO will automatically be converted to ThinLTO for the LLVM "
+            + "compiler."
+  )
+  public boolean convertLipoToThinLto;
+
+  @Option(
     name = "lipo",
     defaultValue = "off",
     converter = LipoModeConverter.class,
@@ -540,6 +539,16 @@ public class CppOptions extends FragmentOptions {
    * equivalent getter method, which takes that into account.
    */
   public Label lipoContextForBuild;
+
+  @Option(
+    name = "experimental_toolchain_id_in_output_directory",
+    defaultValue = "true",
+    category = "semantics",
+    documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+    effectTags = OptionEffectTag.AFFECTS_OUTPUTS,
+    help = "Whether to embed the name of the C++ toolchain in the name of the output directory"
+  )
+  public boolean toolchainIdInOutputDirectory;
 
   /**
    * Returns the --lipo_context value if LIPO is specified and active for this configuration,
@@ -586,9 +595,9 @@ public class CppOptions extends FragmentOptions {
   @Option(
     name = "lipo configuration state",
     defaultValue = "apply_lipo",
-    optionUsageRestrictions = OptionUsageRestrictions.INTERNAL,
-    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+    documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
     effectTags = {OptionEffectTag.UNKNOWN},
+    metadataTags = {OptionMetadataTag.INTERNAL},
     converter = LipoConfigurationStateConverter.class
   )
   public LipoConfigurationState lipoConfigurationState;
@@ -749,26 +758,6 @@ public class CppOptions extends FragmentOptions {
   public boolean inmemoryDotdFiles;
 
   @Option(
-    name = "experimental_skip_unused_modules",
-    defaultValue = "false",
-    category = "experimental",
-    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-    effectTags = {OptionEffectTag.UNKNOWN},
-    help = "Deprecated. No effect."
-  )
-  public boolean skipUnusedModules;
-
-  @Option(
-    name = "experimental_prune_more_modules",
-    defaultValue = "false",
-    category = "experimental",
-    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-    effectTags = {OptionEffectTag.UNKNOWN},
-    help = "Deprecated. No effect."
-  )
-  public boolean pruneMoreModules;
-
-  @Option(
     name = "prune_cpp_modules",
     defaultValue = "true",
     category = "strategy",
@@ -841,6 +830,11 @@ public class CppOptions extends FragmentOptions {
       }
     }
 
+    // the name of the output directory for the host configuration is forced to be "host" in
+    // BuildConfiguration.Options#getHost(), but let's be prudent here in case someone ends up
+    // removing that
+    host.toolchainIdInOutputDirectory = toolchainIdInOutputDirectory;
+
     // hostLibcTop doesn't default to the target's libcTop.
     // Only an explicit command-line option will change it.
     // The default is whatever the host's crosstool (which might have been specified
@@ -867,40 +861,6 @@ public class CppOptions extends FragmentOptions {
     host.inmemoryDotdFiles = inmemoryDotdFiles;
 
     return host;
-  }
-
-  @Override
-  public void addAllLabels(Multimap<String, Label> labelMap) {
-    labelMap.put("crosstool", crosstoolTop);
-    if (hostCrosstoolTop != null) {
-      labelMap.put("crosstool", hostCrosstoolTop);
-    }
-
-    if (libcTopLabel != null) {
-      Label libcLabel = libcTopLabel;
-      if (libcLabel != null) {
-        labelMap.put("crosstool", libcLabel);
-      }
-    }
-    if (hostLibcTopLabel != null) {
-      Label libcLabel = hostLibcTopLabel;
-      if (libcLabel != null) {
-        labelMap.put("crosstool", libcLabel);
-      }
-    }
-    addOptionalLabel(labelMap, "fdo", getFdoOptimize());
-
-    if (stl != null) {
-      labelMap.put("STL", stl);
-    }
-
-    if (customMalloc != null) {
-      labelMap.put("custom_malloc", customMalloc);
-    }
-
-    if (getLipoContext() != null) {
-      labelMap.put("lipo", getLipoContext());
-    }
   }
 
   @Override
@@ -968,15 +928,6 @@ public class CppOptions extends FragmentOptions {
    */
   public boolean isLipoContextCollector() {
     return lipoConfigurationState == LipoConfigurationState.LIPO_CONTEXT_COLLECTOR;
-  }
-
-  /**
-   * FDO/LIPO is not yet compatible with dynamic configurations.
-   **/
-  @Override
-  public boolean useStaticConfigurationsOverride() {
-    // --lipo=binary is technically possible without FDO, even though it doesn't do anything.
-    return isFdo() || lipoModeForBuild == LipoMode.BINARY;
   }
 
   @Override

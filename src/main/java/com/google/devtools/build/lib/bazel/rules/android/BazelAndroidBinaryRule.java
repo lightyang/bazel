@@ -42,7 +42,9 @@ public class BazelAndroidBinaryRule implements RuleDefinition {
   public RuleClass build(Builder builder, RuleDefinitionEnvironment environment) {
     return builder
         .requiresConfigurationFragments(
-            AndroidConfiguration.class, JavaConfiguration.class, CppConfiguration.class)
+            AndroidConfiguration.class,
+            JavaConfiguration.class,
+            CppConfiguration.class)
         .override(
             attr("manifest", BuildType.LABEL).mandatory().allowedFileTypes(FileType.of(".xml")))
         .add(
@@ -53,7 +55,7 @@ public class BazelAndroidBinaryRule implements RuleDefinition {
         .add(
             attr(":cc_toolchain_split", BuildType.LABEL)
                 .cfg(AndroidRuleClasses.ANDROID_SPLIT_TRANSITION)
-                .value(CppRuleClasses.CC_TOOLCHAIN))
+                .value(CppRuleClasses.ccToolchainAttribute(environment)))
         /* <!-- #BLAZE_RULE(android_binary).IMPLICIT_OUTPUTS -->
          <ul>
          <li><code><var>name</var>.apk</code>: An Android application

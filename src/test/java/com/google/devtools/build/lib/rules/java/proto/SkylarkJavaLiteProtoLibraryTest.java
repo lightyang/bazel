@@ -36,7 +36,7 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArgs;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArgsProvider;
 import com.google.devtools.build.lib.rules.java.JavaCompileAction;
-import com.google.devtools.build.lib.rules.java.JavaProvider;
+import com.google.devtools.build.lib.rules.java.JavaInfo;
 import com.google.devtools.build.lib.rules.java.JavaSourceJarsProvider;
 import com.google.devtools.build.lib.rules.java.ProguardSpecProvider;
 import com.google.devtools.build.lib.testutil.MoreAsserts;
@@ -186,7 +186,7 @@ public class SkylarkJavaLiteProtoLibraryTest extends BuildViewTestCase {
   }
 
   @Test
-  public void testCommandLineContainsTargetLabelAndRuleKind() throws Exception {
+  public void testCommandLineContainsTargetLabel() throws Exception {
     scratch.file(
         "java/lib/BUILD",
         "load('//tools/build_rules/java_lite_proto_library:java_lite_proto_library.bzl',",
@@ -200,7 +200,6 @@ public class SkylarkJavaLiteProtoLibraryTest extends BuildViewTestCase {
                 getConfiguredTarget("//java/lib:lite_pb2"), "java/lib/libproto-lite.jar");
 
     List<String> commandLine = ImmutableList.copyOf(javacAction.buildCommandLine());
-    MoreAsserts.assertContainsSublist(commandLine, "--rule_kind", "proto_library");
     MoreAsserts.assertContainsSublist(commandLine, "--target_label", "//java/lib:proto");
   }
 
@@ -587,8 +586,7 @@ public class SkylarkJavaLiteProtoLibraryTest extends BuildViewTestCase {
 
   private static <P extends TransitiveInfoProvider> P getProvider(
       Class<P> providerClass, ConfiguredTarget target) {
-    JavaProvider javaProvider =
-        (JavaProvider) target.get(JavaProvider.JAVA_PROVIDER.getKey());
-    return javaProvider.getProvider(providerClass);
+    JavaInfo javaInfo = target.get(JavaInfo.PROVIDER);
+    return javaInfo.getProvider(providerClass);
   }
 }

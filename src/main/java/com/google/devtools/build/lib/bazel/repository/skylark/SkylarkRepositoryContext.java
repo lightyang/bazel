@@ -25,10 +25,11 @@ import com.google.devtools.build.lib.bazel.repository.downloader.HttpDownloader;
 import com.google.devtools.build.lib.bazel.repository.downloader.HttpUtils;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.events.Location;
+import com.google.devtools.build.lib.events.Reporter;
 import com.google.devtools.build.lib.packages.Attribute;
-import com.google.devtools.build.lib.packages.NativeClassObjectConstructor;
+import com.google.devtools.build.lib.packages.Info;
+import com.google.devtools.build.lib.packages.NativeProvider;
 import com.google.devtools.build.lib.packages.Rule;
-import com.google.devtools.build.lib.packages.SkylarkClassObject;
 import com.google.devtools.build.lib.rules.repository.RepositoryFunction;
 import com.google.devtools.build.lib.rules.repository.RepositoryFunction.RepositoryFunctionException;
 import com.google.devtools.build.lib.rules.repository.WorkspaceAttributeMapper;
@@ -45,6 +46,7 @@ import com.google.devtools.build.lib.syntax.Runtime;
 import com.google.devtools.build.lib.syntax.SkylarkDict;
 import com.google.devtools.build.lib.syntax.SkylarkList;
 import com.google.devtools.build.lib.syntax.SkylarkType;
+import com.google.devtools.build.lib.util.OsUtils;
 import com.google.devtools.build.lib.util.StringUtilities;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
@@ -77,7 +79,7 @@ public class SkylarkRepositoryContext {
 
   private final Rule rule;
   private final Path outputDirectory;
-  private final SkylarkClassObject attrObject;
+  private final Info attrObject;
   private final SkylarkOS osObject;
   private final Environment env;
   private final HttpDownloader httpDownloader;
@@ -109,8 +111,7 @@ public class SkylarkRepositoryContext {
                 : SkylarkType.convertToSkylark(val, null));
       }
     }
-    attrObject = NativeClassObjectConstructor.STRUCT.create(
-        attrBuilder.build(), "No such attribute '%s'");
+    attrObject = NativeProvider.STRUCT.create(attrBuilder.build(), "No such attribute '%s'");
   }
 
   @SkylarkCallable(
@@ -129,7 +130,7 @@ public class SkylarkRepositoryContext {
         "A struct to access the values of the attributes. The values are provided by "
             + "the user (if not, a default value is used)."
   )
-  public SkylarkClassObject getAttr() {
+  public Info getAttr() {
     return attrObject;
   }
 
@@ -406,7 +407,7 @@ public class SkylarkRepositoryContext {
         .setDirectory(outputDirectory.getPathFile())
         .addEnvironmentVariables(environment)
         .setTimeout(timeout.longValue() * 1000)
-        .setQuiet(quiet)
+        .setOutErr(quiet ? null : Reporter.outErrForReporter(env.getListener()))
         .execute();
   }
 
@@ -423,19 +424,32 @@ public class SkylarkRepositoryContext {
           Location.BUILTIN,
           "Program argument of which() may not contains a / or a \\ ('" + program + "' given)");
     }
+    try {
+      SkylarkPath commandPath = findCommandOnPath(program);
+      if (commandPath != null) {
+        return commandPath;
+      }
+
+      if (!program.endsWith(OsUtils.executableExtension())) {
+        program += OsUtils.executableExtension();
+        return findCommandOnPath(program);
+      }
+    } catch (IOException e) {
+      // IOException when checking executable file means we cannot read the file data so
+      // we cannot execute it, swallow the exception.
+    }
+    return null;
+  }
+
+  private SkylarkPath findCommandOnPath(String program) throws IOException {
     for (String p : getPathEnvironment()) {
       PathFragment fragment = PathFragment.create(p);
       if (fragment.isAbsolute()) {
         // We ignore relative path as they don't mean much here (relative to where? the workspace
         // root?).
         Path path = outputDirectory.getFileSystem().getPath(fragment).getChild(program);
-        try {
-          if (path.exists() && path.isExecutable()) {
-            return new SkylarkPath(path);
-          }
-        } catch (IOException e) {
-          // IOException when checking executable file means we cannot read the file data so
-          // we cannot executes it, swallow the exception.
+        if (path.exists() && path.isExecutable()) {
+          return new SkylarkPath(path);
         }
       }
     }

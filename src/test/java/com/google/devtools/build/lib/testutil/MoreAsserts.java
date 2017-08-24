@@ -24,7 +24,6 @@ import com.google.common.base.Predicate;
 import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
-import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.devtools.build.lib.events.Event;
@@ -53,21 +52,6 @@ public class MoreAsserts {
     assertThat(comp.compare(expected, actual)).isEqualTo(0);
   }
 
-  public static <T> void assertContentsAnyOrder(
-      Iterable<? extends T> expected, Iterable<? extends T> actual,
-      Comparator<? super T> comp) {
-    assertThat(actual).hasSize(Iterables.size(expected));
-    int i = 0;
-    for (T e : expected) {
-      for (T a : actual) {
-        if (comp.compare(e, a) == 0) {
-          i++;
-        }
-      }
-    }
-    assertThat(actual).hasSize(i);
-  }
-
   /**
    * Scans if an instance of given class is strongly reachable from a given
    * object.
@@ -82,12 +66,7 @@ public class MoreAsserts {
    */
   public static void assertInstanceOfNotReachable(
       Object start, final Class<?> clazz) {
-    Predicate<Object> p = new Predicate<Object>() {
-      @Override
-      public boolean apply(Object obj) {
-        return clazz.isAssignableFrom(obj.getClass());
-      }
-    };
+    Predicate<Object> p = obj -> clazz.isAssignableFrom(obj.getClass());
     if (isRetained(p, start)) {
       assert_().fail(
           "Found an instance of " + clazz.getCanonicalName() + " reachable from " + start);
@@ -411,14 +390,11 @@ public class MoreAsserts {
    */
   protected static void assertContainsEventsInOrder(Iterable<Event> eventCollector,
       String... expectedMessages) {
-    String failure = containsSublistWithGapsAndEqualityChecker(
-        ImmutableList.copyOf(eventCollector),
-        new Function<Pair<Event, String>, Boolean> () {
-      @Override
-      public Boolean apply(Pair<Event, String> pair) {
-        return pair.first.getMessage().contains(pair.second);
-      }
-    }, expectedMessages);
+    String failure =
+        containsSublistWithGapsAndEqualityChecker(
+            ImmutableList.copyOf(eventCollector),
+            pair -> pair.first.getMessage().contains(pair.second),
+            expectedMessages);
 
     String eventsString = eventsToString(eventCollector);
     assertWithMessage("Event '" + failure + "' not found in proper order"

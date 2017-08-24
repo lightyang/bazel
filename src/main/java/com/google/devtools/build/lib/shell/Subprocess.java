@@ -28,7 +28,6 @@ public interface Subprocess extends Closeable {
    * Something that can create subprocesses.
    */
   interface Factory {
-
     /**
      * Create a subprocess according to the specified parameters.
      */

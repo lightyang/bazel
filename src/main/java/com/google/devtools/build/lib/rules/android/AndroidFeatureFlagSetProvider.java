@@ -16,6 +16,7 @@ package com.google.devtools.build.lib.rules.android;
 
 import com.google.auto.value.AutoValue;
 import com.google.common.collect.ImmutableMap;
+import com.google.devtools.build.lib.analysis.AliasProvider;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
@@ -25,7 +26,7 @@ import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.packages.BuildType;
 import com.google.devtools.build.lib.packages.NonconfigurableAttributeMapper;
 import com.google.devtools.build.lib.packages.RuleClass.ConfiguredTargetFactory.RuleErrorException;
-import com.google.devtools.build.lib.rules.AliasProvider;
+import com.google.devtools.build.lib.rules.config.ConfigFeatureFlag;
 import com.google.devtools.build.lib.rules.config.ConfigFeatureFlagProvider;
 import java.util.Map;
 
@@ -61,6 +62,21 @@ public abstract class AndroidFeatureFlagSetProvider implements TransitiveInfoPro
     Map<Label, String> expectedValues =
         NonconfigurableAttributeMapper.of(ruleContext.getRule())
             .get(FEATURE_FLAG_ATTR, BuildType.LABEL_KEYED_STRING_DICT);
+
+    if (expectedValues.isEmpty()) {
+      return ImmutableMap.of();
+    }
+
+    if (!ConfigFeatureFlag.isAvailable(ruleContext)) {
+      ruleContext.attributeError(
+          FEATURE_FLAG_ATTR,
+          String.format(
+              "the %s attribute is not available in package '%s'",
+              FEATURE_FLAG_ATTR,
+              ruleContext.getLabel().getPackageIdentifier()));
+      throw new RuleErrorException();
+    }
+
     Iterable<? extends TransitiveInfoCollection> actualTargets =
         ruleContext.getPrerequisites(FEATURE_FLAG_ATTR, Mode.TARGET);
     boolean aliasFound = false;

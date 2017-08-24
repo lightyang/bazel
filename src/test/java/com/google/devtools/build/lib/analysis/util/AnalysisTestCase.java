@@ -34,7 +34,6 @@ import com.google.devtools.build.lib.analysis.config.BinTools;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.BuildConfigurationCollection;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
-import com.google.devtools.build.lib.analysis.config.ConfigurationFactory;
 import com.google.devtools.build.lib.analysis.config.ConfigurationFragmentFactory;
 import com.google.devtools.build.lib.buildtool.BuildRequest.BuildRequestOptions;
 import com.google.devtools.build.lib.cmdline.Label;
@@ -52,6 +51,7 @@ import com.google.devtools.build.lib.pkgcache.PackageCacheOptions;
 import com.google.devtools.build.lib.pkgcache.PackageManager;
 import com.google.devtools.build.lib.pkgcache.PathPackageLocator;
 import com.google.devtools.build.lib.rules.repository.RepositoryDelegatorFunction;
+import com.google.devtools.build.lib.skyframe.BazelSkyframeExecutorConstants;
 import com.google.devtools.build.lib.skyframe.ConfiguredTargetKey;
 import com.google.devtools.build.lib.skyframe.DiffAwareness;
 import com.google.devtools.build.lib.skyframe.PrecomputedValue;
@@ -61,6 +61,7 @@ import com.google.devtools.build.lib.skyframe.SkyframeExecutor;
 import com.google.devtools.build.lib.skyframe.util.SkyframeExecutorTestUtils;
 import com.google.devtools.build.lib.syntax.SkylarkSemanticsOptions;
 import com.google.devtools.build.lib.testutil.FoundationTestCase;
+import com.google.devtools.build.lib.testutil.TestConstants;
 import com.google.devtools.build.lib.testutil.TestRuleClassProvider;
 import com.google.devtools.build.lib.util.BlazeClock;
 import com.google.devtools.build.lib.util.Preconditions;
@@ -128,7 +129,6 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
   private OptionsParser optionsParser;
   protected PackageManager packageManager;
   private LoadingPhaseRunner loadingPhaseRunner;
-  private ConfigurationFactory configurationFactory;
   private BuildView buildView;
 
   // Note that these configurations are virtual (they use only VFS)
@@ -153,7 +153,6 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
     mockToolsConfig = new MockToolsConfig(rootDirectory);
     analysisMock.setupMockClient(mockToolsConfig);
     analysisMock.setupMockWorkspaceFiles(directories.getEmbeddedBinariesRoot());
-    configurationFactory = analysisMock.createConfigurationFactory();
 
     useRuleClassProvider(analysisMock.createRuleClassProvider());
   }
@@ -164,17 +163,13 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
   protected void useRuleClassProvider(ConfiguredRuleClassProvider ruleClassProvider)
       throws Exception {
     this.ruleClassProvider = ruleClassProvider;
-    useConfigurationFactory(
-        new ConfigurationFactory(
-            ruleClassProvider.getConfigurationCollectionFactory(),
-            ruleClassProvider.getConfigurationFragments()));
     PackageFactory pkgFactory =
         analysisMock
             .getPackageFactoryBuilderForTesting()
             .build(ruleClassProvider, scratch.getFileSystem());
     BinTools binTools = BinTools.forUnitTesting(directories, analysisMock.getEmbeddedTools());
     skyframeExecutor =
-        SequencedSkyframeExecutor.createForTesting(
+        SequencedSkyframeExecutor.create(
             pkgFactory,
             directories,
             binTools,
@@ -185,7 +180,12 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
             analysisMock.getSkyFunctions(),
             getPrecomputedValues(),
             ImmutableList.<SkyValueDirtinessChecker>of(),
-            analysisMock.getProductName());
+            PathFragment.EMPTY_FRAGMENT,
+            analysisMock.getProductName(),
+            BazelSkyframeExecutorConstants.CROSS_REPOSITORY_LABEL_VIOLATION_STRATEGY,
+            BazelSkyframeExecutorConstants.BUILD_FILES_BY_PRIORITY,
+            BazelSkyframeExecutorConstants.ACTION_ON_IO_EXCEPTION_READING_BUILD_FILE);
+    TestConstants.processSkyframeExecutorForTesting(skyframeExecutor);
     PackageCacheOptions packageCacheOptions = Options.getDefaults(PackageCacheOptions.class);
     packageCacheOptions.showLoadingProgress = true;
     packageCacheOptions.globbingThreads = 3;
@@ -215,10 +215,6 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
 
   protected ImmutableList<PrecomputedValue.Injected> getPrecomputedValues() {
     return ImmutableList.of();
-  }
-
-  protected final void useConfigurationFactory(ConfigurationFactory configurationFactory) {
-    this.configurationFactory = configurationFactory;
   }
 
   /**
@@ -290,7 +286,7 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
     throws InterruptedException {
     BuildConfiguration targetConfig =
         Iterables.getOnlyElement(masterConfig.getTargetConfigurations());
-    if (useDynamicVersionIfEnabled && targetConfig.useDynamicConfigurations()) {
+    if (useDynamicVersionIfEnabled) {
       return skyframeExecutor.getConfigurationForTesting(
           reporter, targetConfig.fragmentClasses(), targetConfig.getOptions());
     } else {
@@ -355,7 +351,8 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
     BuildRequestOptions requestOptions = optionsParser.getOptions(BuildRequestOptions.class);
     ImmutableSortedSet<String> multiCpu = ImmutableSortedSet.copyOf(requestOptions.multiCpus);
     masterConfig = skyframeExecutor.createConfigurations(
-        reporter, configurationFactory, buildOptions, multiCpu, false);
+        reporter, ruleClassProvider.getConfigurationFragments(), buildOptions,
+        multiCpu, false);
     analysisResult =
         buildView.update(
             loadingResult,

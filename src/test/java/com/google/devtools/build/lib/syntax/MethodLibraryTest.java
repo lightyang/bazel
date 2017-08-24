@@ -397,8 +397,8 @@ public class MethodLibraryTest extends EvaluationTestCase {
     // only one built-in function.
     new BothModesTest()
         .testIfExactError(
-            "method string.index(sub: string, start: int, end: int or NoneType) is not applicable "
-                + "for arguments (int, int, NoneType): 'sub' is 'int', but should be 'string'",
+            "argument 'sub' has type 'int', but should be 'string'\n"
+                + "in call to builtin method string.index(sub, start, end)",
             "'test'.index(1)");
   }
 
@@ -422,9 +422,8 @@ public class MethodLibraryTest extends EvaluationTestCase {
                 + LINE_SEPARATOR
                 + "\t\t\"test\".index(x)"
                 + LINE_SEPARATOR
-                + "method string.index(sub: string, start: int, end: int or NoneType) "
-                + "is not applicable "
-                + "for arguments (int, int, NoneType): 'sub' is 'int', but should be 'string'",
+                + "argument 'sub' has type 'int', but should be 'string'\n"
+                + "in call to builtin method string.index(sub, start, end)",
             "def foo():",
             "  bar(1)",
             "def bar(x):",
@@ -436,13 +435,10 @@ public class MethodLibraryTest extends EvaluationTestCase {
   @Test
   public void testBuiltinFunctionErrorMessage() throws Exception {
     new BothModesTest()
+        .testIfErrorContains("substring \"z\" not found in \"abc\"", "'abc'.index('z')")
         .testIfErrorContains(
-            "substring \"z\" not found in \"abc\"",
-            "'abc'.index('z')")
-        .testIfErrorContains(
-            "method string.startswith(sub: string, start: int, end: int or NoneType) is not "
-                + "applicable for arguments (int, int, NoneType): 'sub' is 'int', "
-                + "but should be 'string'",
+            "argument 'sub' has type 'int', but should be 'string'\n"
+                + "in call to builtin method string.startswith(sub, start, end)",
             "'test'.startswith(1)")
         .testIfErrorContains(
             "expected value of type 'list(object)' for parameter args in dict(), "
@@ -1333,8 +1329,8 @@ public class MethodLibraryTest extends EvaluationTestCase {
     new SkylarkTest()
         .testEval(
             "d = {1: 'foo', 2: 'bar', 3: 'baz'}\n"
-                + "if len(d) != 3: fail('clear 1')\n"
-                + "if d.clear() != None: fail('clear 2')\n"
+                + "len(d) == 3 or fail('clear 1')\n"
+                + "d.clear() == None or fail('clear 2')\n"
                 + "d",
             "{}");
   }
@@ -1345,12 +1341,12 @@ public class MethodLibraryTest extends EvaluationTestCase {
         .testIfErrorContains(
             "KeyError: 1",
             "d = {1: 'foo', 2: 'bar', 3: 'baz'}\n"
-                + "if len(d) != 3: fail('pop 1')\n"
-                + "if d.pop(2) != 'bar': fail('pop 2')\n"
-                + "if d.pop(3, 'quux') != 'baz': fail('pop 3a')\n"
-                + "if d.pop(3, 'quux') != 'quux': fail('pop 3b')\n"
-                + "if d.pop(1) != 'foo': fail('pop 1')\n"
-                + "if d != {}: fail('pop 0')\n"
+                + "len(d) == 3 or fail('pop 1')\n"
+                + "d.pop(2) == 'bar' or fail('pop 2')\n"
+                + "d.pop(3, 'quux') == 'baz' or fail('pop 3a')\n"
+                + "d.pop(3, 'quux') == 'quux' or fail('pop 3b')\n"
+                + "d.pop(1) == 'foo' or fail('pop 1')\n"
+                + "d == {} or fail('pop 0')\n"
                 + "d.pop(1)");
   }
 
@@ -1360,11 +1356,11 @@ public class MethodLibraryTest extends EvaluationTestCase {
         .testIfErrorContains(
             "popitem(): dictionary is empty",
             "d = {2: 'bar', 3: 'baz', 1: 'foo'}\n"
-                + "if len(d) != 3: fail('popitem 0')\n"
-                + "if d.popitem() != (2, 'bar'): fail('popitem 2')\n"
-                + "if d.popitem() != (3, 'baz'): fail('popitem 3')\n"
-                + "if d.popitem() != (1, 'foo'): fail('popitem 1')\n"
-                + "if d != {}: fail('popitem 4')\n"
+                + "len(d) == 3 or fail('popitem 0')\n"
+                + "d.popitem() == (2, 'bar') or fail('popitem 2')\n"
+                + "d.popitem() == (3, 'baz') or fail('popitem 3')\n"
+                + "d.popitem() == (1, 'foo') or fail('popitem 1')\n"
+                + "d == {} or fail('popitem 4')\n"
                 + "d.popitem()");
   }
 
@@ -1383,11 +1379,11 @@ public class MethodLibraryTest extends EvaluationTestCase {
     new SkylarkTest()
         .testEval(
             "d = {2: 'bar', 1: 'foo'}\n"
-                + "if len(d) != 2: fail('setdefault 0')\n"
-                + "if d.setdefault(1, 'a') != 'foo': fail('setdefault 1')\n"
-                + "if d.setdefault(2) != 'bar': fail('setdefault 2')\n"
-                + "if d.setdefault(3) != None: fail('setdefault 3')\n"
-                + "if d.setdefault(4, 'b') != 'b': fail('setdefault 4')\n"
+                + "len(d) == 2 or fail('setdefault 0')\n"
+                + "d.setdefault(1, 'a') == 'foo' or fail('setdefault 1')\n"
+                + "d.setdefault(2) == 'bar' or fail('setdefault 2')\n"
+                + "d.setdefault(3) == None or fail('setdefault 3')\n"
+                + "d.setdefault(4, 'b') == 'b' or fail('setdefault 4')\n"
                 + "d",
             "{1: 'foo', 2: 'bar', 3: None, 4: 'b'}");
   }
@@ -1440,8 +1436,8 @@ public class MethodLibraryTest extends EvaluationTestCase {
         .testStatement("hash('skylark')", "skylark".hashCode())
         .testStatement("hash('google')", "google".hashCode())
         .testIfErrorContains(
-            "method hash(value: string) is not applicable for arguments (NoneType): "
-                + "'value' is 'NoneType', but should be 'string'",
+            "argument 'value' has type 'NoneType', but should be 'string'\n"
+                + "in call to builtin function hash(value)",
             "hash(None)");
   }
 
@@ -1479,8 +1475,8 @@ public class MethodLibraryTest extends EvaluationTestCase {
   public void testEnumerateBadArg() throws Exception {
     new BothModesTest()
         .testIfErrorContains(
-            "method enumerate(list: sequence) is not applicable for arguments (string): "
-                + "'list' is 'string', but should be 'sequence'",
+            "argument 'list' has type 'string', but should be 'sequence'\n"
+                + "in call to builtin function enumerate(list)",
             "enumerate('a')");
   }
 
@@ -1515,8 +1511,8 @@ public class MethodLibraryTest extends EvaluationTestCase {
         .testLookup("FOO", MutableList.of(env, "a", "b", "c", "d", "e", "f"))
         .testIfErrorContains("type 'tuple' has no method extend(list)", "(1, 2).extend([3, 4])")
         .testIfErrorContains(
-            "method list.extend(items: sequence) is not applicable for arguments "
-                + "(int): 'items' is 'int', but should be 'sequence'",
+            "argument 'items' has type 'int', but should be 'sequence'\n"
+                + "in call to builtin method list.extend(items)",
             "[1, 2].extend(3)");
   }
 

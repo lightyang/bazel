@@ -25,8 +25,8 @@ import com.google.devtools.build.lib.analysis.RuleConfiguredTarget;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
-import com.google.devtools.build.lib.packages.NativeClassObjectConstructor;
-import com.google.devtools.build.lib.packages.SkylarkClassObject;
+import com.google.devtools.build.lib.packages.NativeInfo;
+import com.google.devtools.build.lib.packages.NativeProvider;
 import com.google.devtools.build.lib.skylarkinterface.Param;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkCallable;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
@@ -55,8 +55,8 @@ public class SkylarkEvaluationTest extends EvaluationTest {
    * Skylark context
    */
   @Override
-  protected ModalTestCase newTest() {
-    return new SkylarkTest();
+  protected ModalTestCase newTest(String... skylarkOptions) {
+    return new SkylarkTest(skylarkOptions);
   }
 
   @Immutable
@@ -635,7 +635,7 @@ public class SkylarkEvaluationTest extends EvaluationTest {
   private void flowStatementInsideFunction(String statement) throws Exception {
     checkEvalErrorContains(statement + " statement must be inside a for loop",
         "def foo():",
-        "  " + statement + "",
+        "  " + statement,
         "x = foo()");
   }
 
@@ -644,7 +644,7 @@ public class SkylarkEvaluationTest extends EvaluationTest {
         "def foo2():",
         "   for i in range(0, 3):",
         "      pass",
-        "   " + statement + "",
+        "   " + statement,
         "y = foo2()");
   }
 
@@ -771,7 +771,7 @@ public class SkylarkEvaluationTest extends EvaluationTest {
         .update("mock", new Mock())
         .setUp("")
         .testIfExactError(
-            "too many arguments, in method with_params(int, bool, bool named, "
+            "unexpected keyword 'n', in method with_params(int, bool, bool named, "
                 + "bool posOrNamed, int n) of 'Mock'",
             "mock.with_params(1, True, named=True, posOrNamed=True, n=2)");
     new SkylarkTest()
@@ -937,6 +937,7 @@ public class SkylarkEvaluationTest extends EvaluationTest {
 
   @Test
   public void testAugmentedAssignmentHasNoSideEffects() throws Exception {
+    // Check object position.
     new SkylarkTest().setUp(
         "counter = [0]",
         "value = [1, 2]",
@@ -947,14 +948,33 @@ public class SkylarkEvaluationTest extends EvaluationTest {
         "",
         "f()[1] += 1")  // `f()` should be called only once here
         .testLookup("counter", MutableList.of(env, 1));
+
+    // Check key position.
+    new SkylarkTest().setUp(
+        "counter = [0]",
+        "value = [1, 2]",
+        "",
+        "def f():",
+        "  counter[0] = counter[0] + 1",
+        "  return 1",
+        "",
+        "value[f()] += 1")  // `f()` should be called only once here
+        .testLookup("counter", MutableList.of(env, 1));
   }
 
   @Test
-  public void testAugmentedAssignmentNotAllowedForListLiterals() throws Exception {
-    new SkylarkTest().testIfErrorContains("Cannot perform augment assignment on a list literal",
+  public void testInvalidAugmentedAssignment_ListLiteral() throws Exception {
+    new SkylarkTest().testIfErrorContains(
+        "cannot perform augmented assignment on a list or tuple expression",
         "def f(a, b):",
         "  [a, b] += []",
         "f(1, 2)");
+  }
+
+  @Test
+  public void testInvalidAugmentedAssignment_NotAnLValue() throws Exception {
+    newTest().testIfErrorContains(
+        "cannot assign to 'x + 1'", "x + 1 += 2");
   }
 
   @Test
@@ -1174,14 +1194,6 @@ public class SkylarkEvaluationTest extends EvaluationTest {
   }
 
   @Test
-  public void testTopLevelDict() throws Exception {
-    new SkylarkTest().setUp("if 1:",
-      "  v = 'a'",
-      "else:",
-      "  v = 'b'").testLookup("v", "a");
-  }
-
-  @Test
   public void testUserFunctionKeywordArgs() throws Exception {
     new SkylarkTest().setUp("def foo(a, b, c):",
         "  return a + b + c", "s = foo(1, c=2, b=3)")
@@ -1299,11 +1311,11 @@ public class SkylarkEvaluationTest extends EvaluationTest {
     // TODO(fwe): cannot be handled by current testing suite
     setFailFast(false);
     eval("print('hello')");
-    assertContainsWarning("hello");
+    assertContainsDebug("hello");
     eval("print('a', 'b')");
-    assertContainsWarning("a b");
+    assertContainsDebug("a b");
     eval("print('a', 'b', sep='x')");
-    assertContainsWarning("axb");
+    assertContainsDebug("axb");
   }
 
   @Test
@@ -1355,7 +1367,8 @@ public class SkylarkEvaluationTest extends EvaluationTest {
   public void testListComprehensionsMultipleVariablesFail() throws Exception {
     new SkylarkTest()
         .testIfErrorContains(
-            "lvalue has length 3, but rvalue has has length 2",
+            "assignment length mismatch: left-hand side has length 3, but right-hand side "
+                + "evaluates to value of length 2",
             "def foo (): return [x + y for x, y, z in [(1, 2), (3, 4)]]",
             "foo()");
 
@@ -1367,7 +1380,8 @@ public class SkylarkEvaluationTest extends EvaluationTest {
 
     new SkylarkTest()
         .testIfErrorContains(
-            "lvalue has length 3, but rvalue has has length 2",
+            "assignment length mismatch: left-hand side has length 3, but right-hand side "
+                + "evaluates to value of length 2",
             "[x + y for x, y, z in [(1, 2), (3, 4)]]");
 
     // can't reuse the same local variable twice(!)
@@ -1377,6 +1391,10 @@ public class SkylarkEvaluationTest extends EvaluationTest {
 
     new SkylarkTest()
         .testIfErrorContains("type 'int' is not a collection", "[x2 + y2 for x2, y2 in (1, 2)]");
+
+    new SkylarkTest()
+        // returns [2] in Python, it's an error in Skylark
+        .testIfErrorContains("must have at least one item", "[2 for [] in [()]]");
   }
 
   @Override
@@ -1399,9 +1417,10 @@ public class SkylarkEvaluationTest extends EvaluationTest {
   }
 
   @SkylarkModule(name = "SkylarkClassObjectWithSkylarkCallables", doc = "")
-  static final class SkylarkClassObjectWithSkylarkCallables extends SkylarkClassObject {
-    private static final NativeClassObjectConstructor CONSTRUCTOR =
-        new NativeClassObjectConstructor("struct_with_skylark_callables") {};
+  static final class SkylarkClassObjectWithSkylarkCallables extends NativeInfo {
+    private static final NativeProvider<SkylarkClassObjectWithSkylarkCallables> CONSTRUCTOR =
+        new NativeProvider<SkylarkClassObjectWithSkylarkCallables>(
+            SkylarkClassObjectWithSkylarkCallables.class, "struct_with_skylark_callables") {};
 
     SkylarkClassObjectWithSkylarkCallables() {
       super(

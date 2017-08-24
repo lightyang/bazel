@@ -21,7 +21,7 @@ import com.google.common.collect.Iterables;
 import com.google.common.testing.EqualsTester;
 import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
-import com.google.devtools.build.lib.rules.SkylarkRuleContext;
+import com.google.devtools.build.lib.analysis.skylark.SkylarkRuleContext;
 import com.google.devtools.build.lib.skylark.util.SkylarkTestCase;
 import com.google.devtools.build.lib.testutil.TestRuleClassProvider;
 import org.junit.Before;
@@ -111,7 +111,8 @@ public final class ConfigFeatureFlagTest extends SkylarkTestCase {
     ConfiguredTarget top = getConfiguredTarget("//test:top");
     ConfiguredTarget wrapper =
         (ConfiguredTarget) Iterables.getOnlyElement(getPrerequisites(top, "deps"));
-    SkylarkRuleContext ctx = new SkylarkRuleContext(getRuleContextForSkylark(wrapper), null);
+    SkylarkRuleContext ctx = new SkylarkRuleContext(getRuleContextForSkylark(wrapper), null,
+        getSkylarkSemantics());
     update("ruleContext", ctx);
     update("config_common", new ConfigSkylarkCommon());
     String value = (String) eval("ruleContext.attr.flag[config_common.FeatureFlagInfo].value");
@@ -237,7 +238,7 @@ public final class ConfigFeatureFlagTest extends SkylarkTestCase {
     assertThat(getConfiguredTarget("//test:flag")).isNull();
     assertContainsEvent(
         "in allowed_values attribute of config_feature_flag rule //test:flag: "
-            + "cannot contain duplicates, but contained multiple of ['double']");
+            + "cannot contain duplicates, but contained multiple of [\"double\"]");
   }
 
   @Test
@@ -260,7 +261,7 @@ public final class ConfigFeatureFlagTest extends SkylarkTestCase {
     assertThat(getConfiguredTarget("//test:top")).isNull();
     assertContainsEvent(
         "in default_value attribute of config_feature_flag rule //test:flag: "
-            + "must be one of ['eagle', 'legal'], but was 'beagle'");
+            + "must be one of [\"eagle\", \"legal\"], but was \"beagle\"");
   }
 
   @Test
@@ -284,7 +285,42 @@ public final class ConfigFeatureFlagTest extends SkylarkTestCase {
     // TODO(mstaib): when configurationError is implemented, switch to testing for that
     assertContainsEvent(
         "in config_feature_flag rule //test:flag: "
-            + "value must be one of ['configured', 'default', 'other'], but was 'invalid'");
+            + "value must be one of [\"configured\", \"default\", \"other\"], but was \"invalid\"");
+  }
+
+  @Test
+  public void policy_mustContainRulesPackage() throws Exception {
+    reporter.removeHandler(failFastHandler); // expecting an error
+    scratch.overwriteFile(
+        "tools/whitelists/config_feature_flag/BUILD",
+        "package_group(name = 'config_feature_flag', packages = ['//some/other'])");
+    scratch.file(
+        "test/BUILD",
+        "config_feature_flag(",
+        "    name = 'flag',",
+        "    allowed_values = ['default', 'configured', 'other'],",
+        "    default_value = 'default',",
+        ")");
+    assertThat(getConfiguredTarget("//test:flag")).isNull();
+    assertContainsEvent(
+        "in config_feature_flag rule //test:flag: the config_feature_flag rule is not available in "
+        + "package 'test'");
+  }
+
+  @Test
+  public void policy_doesNotBlockRuleIfInPackageGroup() throws Exception {
+    scratch.overwriteFile(
+        "tools/whitelists/config_feature_flag/BUILD",
+        "package_group(name = 'config_feature_flag', packages = ['//test'])");
+    scratch.file(
+        "test/BUILD",
+        "config_feature_flag(",
+        "    name = 'flag',",
+        "    allowed_values = ['default', 'configured', 'other'],",
+        "    default_value = 'default',",
+        ")");
+    assertThat(getConfiguredTarget("//test:flag")).isNotNull();
+    assertNoEvents();
   }
 
   @Test

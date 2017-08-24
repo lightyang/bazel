@@ -31,9 +31,11 @@ import com.google.devtools.build.lib.server.CommandProtos.PingRequest;
 import com.google.devtools.build.lib.server.CommandProtos.PingResponse;
 import com.google.devtools.build.lib.server.CommandProtos.RunRequest;
 import com.google.devtools.build.lib.server.CommandProtos.RunResponse;
+import com.google.devtools.build.lib.server.CommandProtos.StartupOption;
 import com.google.devtools.build.lib.util.BlazeClock;
 import com.google.devtools.build.lib.util.Clock;
 import com.google.devtools.build.lib.util.ExitCode;
+import com.google.devtools.build.lib.util.Pair;
 import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.util.ThreadUtils;
 import com.google.devtools.build.lib.util.io.OutErr;
@@ -59,6 +61,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.Exchanger;
 import java.util.concurrent.ExecutionException;
@@ -809,6 +812,16 @@ public class GrpcServerImpl implements RPCServer {
     String commandId;
     int exitCode;
 
+    // TODO(b/63925394): This information needs to be passed to the GotOptionsEvent, which does not
+    // currently have the explicit startup options. See Improved Command Line Reporting design doc
+    // for details.
+    // Convert the startup options record to Java strings, source first.
+    ImmutableList.Builder<Pair<String, String>> startupOptions = ImmutableList.builder();
+    for (StartupOption option : request.getStartupOptionsList()) {
+      startupOptions.add(
+          new Pair<>(option.getSource().toString(CHARSET), option.getOption().toString(CHARSET)));
+    }
+
     try (RunningCommand command = new RunningCommand()) {
       commandId = command.id;
 
@@ -837,7 +850,8 @@ public class GrpcServerImpl implements RPCServer {
                 rpcOutErr,
                 request.getBlockForLock() ? LockingMode.WAIT : LockingMode.ERROR_OUT,
                 request.getClientDescription(),
-                clock.currentTimeMillis());
+                clock.currentTimeMillis(),
+                Optional.of(startupOptions.build()));
       } catch (OptionsParsingException e) {
         rpcOutErr.printErrLn(e.getMessage());
         exitCode = ExitCode.COMMAND_LINE_ERROR.getNumericExitCode();
@@ -860,12 +874,17 @@ public class GrpcServerImpl implements RPCServer {
     // the cancel request won't find the thread to interrupt)
     Thread.interrupted();
 
+    boolean shutdown = commandExecutor.shutdown();
+    if (shutdown) {
+      server.shutdown();
+    }
     RunResponse response =
         RunResponse.newBuilder()
             .setCookie(responseCookie)
             .setCommandId(commandId)
             .setFinished(true)
             .setExitCode(exitCode)
+            .setTerminationExpected(shutdown)
             .build();
 
     try {
@@ -875,11 +894,6 @@ public class GrpcServerImpl implements RPCServer {
       // The client cancelled the call. Log an error and go on.
       log.info(String.format("Client cancelled command %s just right before its end: %s",
           commandId, e.getMessage()));
-    }
-
-    if (commandExecutor.shutdown()) {
-      pidFileWatcherThread.signalShutdown();
-      server.shutdown();
     }
   }
 

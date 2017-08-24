@@ -62,7 +62,7 @@ public final class SingleJarActionBuilder {
       builder
           .addTransitiveInputs(JavaHelper.getHostJavabaseInputs(ruleContext))
           .setJarExecutable(
-              ruleContext.getHostConfiguration().getFragment(Jvm.class).getJavaExecutable(),
+              JavaCommon.getHostJavaExecutable(ruleContext),
               singleJar,
               JavaToolchainProvider.fromRuleContext(ruleContext).getJvmOptions())
           .setExecutionInfo(ExecutionRequirements.WORKER_MODE_ENABLED);
@@ -76,7 +76,7 @@ public final class SingleJarActionBuilder {
         .useDefaultShellEnvironment()
         .setCommandLine(sourceJarCommandLine(outputJar, resources, resourceJars))
         .alwaysUseParameterFile(ParameterFileType.SHELL_QUOTED)
-        .setProgressMessage("Building source jar " + outputJar.prettyPrint())
+        .setProgressMessage("Building source jar %s", outputJar.prettyPrint())
         .setMnemonic("JavaSourceJar");
     ruleContext.registerAction(builder.build(ruleContext));
   }
@@ -94,12 +94,12 @@ public final class SingleJarActionBuilder {
       Map<PathFragment, Artifact> resources, Iterable<Artifact> resourceJars) {
     CustomCommandLine.Builder args = CustomCommandLine.builder();
     args.addExecPath("--output", outputJar);
-    args.add(SOURCE_JAR_COMMAND_LINE_ARGS);
-    args.addExecPaths("--sources", resourceJars);
+    args.addAll(SOURCE_JAR_COMMAND_LINE_ARGS);
+    args.addExecPaths("--sources", ImmutableList.copyOf(resourceJars));
     if (!resources.isEmpty()) {
       args.add("--resources");
       for (Map.Entry<PathFragment, Artifact> resource : resources.entrySet()) {
-        args.addPaths("%s:%s", resource.getValue().getExecPath(), resource.getKey());
+        args.addFormatted("%s:%s", resource.getValue().getExecPath(), resource.getKey());
       }
     }
     return args.build();

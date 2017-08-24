@@ -21,11 +21,11 @@ import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.analysis.skylark.SkylarkModules;
+import com.google.devtools.build.lib.analysis.skylark.SkylarkRuleContext;
 import com.google.devtools.build.lib.analysis.util.BuildViewTestCase;
 import com.google.devtools.build.lib.packages.PackageFactory;
 import com.google.devtools.build.lib.packages.PackageFactory.PackageContext;
-import com.google.devtools.build.lib.rules.SkylarkModules;
-import com.google.devtools.build.lib.rules.SkylarkRuleContext;
 import com.google.devtools.build.lib.rules.platform.PlatformCommon;
 import com.google.devtools.build.lib.syntax.Environment;
 import com.google.devtools.build.lib.syntax.Environment.Phase;
@@ -101,7 +101,8 @@ public abstract class SkylarkTestCase extends BuildViewTestCase {
   }
 
   protected SkylarkRuleContext createRuleContext(String label) throws Exception {
-    return new SkylarkRuleContext(getRuleContextForSkylark(getConfiguredTarget(label)), null);
+    return new SkylarkRuleContext(getRuleContextForSkylark(getConfiguredTarget(label)), null,
+        getSkylarkSemantics());
   }
 
   protected Object evalRuleContextCode(String... lines) throws Exception {

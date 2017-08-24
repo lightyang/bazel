@@ -20,9 +20,9 @@ import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModuleCategory;
+import com.google.devtools.build.lib.skylarkinterface.SkylarkPrinter;
 import com.google.devtools.build.lib.syntax.BaseFunction;
 import com.google.devtools.build.lib.syntax.Environment;
-import com.google.devtools.build.lib.syntax.Printer;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.Preconditions;
 import java.util.Arrays;
@@ -46,7 +46,7 @@ public class SkylarkAspect implements SkylarkExportable {
   private final ImmutableSet<String> paramAttributes;
   private final ImmutableSet<String> fragments;
   private final ImmutableSet<String> hostFragments;
-  private final ImmutableList<ClassObjectConstructor.Key> requiredToolchains;
+  private final ImmutableList<Label> requiredToolchains;
 
   private final Environment funcallEnv;
   private SkylarkAspectClass aspectClass;
@@ -60,7 +60,7 @@ public class SkylarkAspect implements SkylarkExportable {
       ImmutableSet<String> paramAttributes,
       ImmutableSet<String> fragments,
       ImmutableSet<String> hostFragments,
-      ImmutableList<ClassObjectConstructor.Key> requiredToolchains,
+      ImmutableList<Label> requiredToolchains,
       Environment funcallEnv) {
     this.implementation = implementation;
     this.attributeAspects = attributeAspects;
@@ -96,9 +96,14 @@ public class SkylarkAspect implements SkylarkExportable {
   }
 
   @Override
-  public void write(Appendable buffer, char quotationMark) {
-    Printer.append(buffer, "Aspect:");
-    implementation.write(buffer, quotationMark);
+  public void repr(SkylarkPrinter printer) {
+    printer.append("<aspect>");
+  }
+
+  @Override
+  public void reprLegacy(SkylarkPrinter printer) {
+    printer.append("Aspect:");
+    printer.repr(implementation);
   }
 
   public String getName() {
@@ -196,7 +201,7 @@ public class SkylarkAspect implements SkylarkExportable {
     };
   }
 
-  public ImmutableList<ClassObjectConstructor.Key> getRequiredToolchains() {
+  public ImmutableList<Label> getRequiredToolchains() {
     return requiredToolchains;
   }
 }

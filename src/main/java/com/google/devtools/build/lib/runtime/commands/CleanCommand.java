@@ -32,10 +32,10 @@ import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.common.options.Option;
 import com.google.devtools.common.options.OptionDocumentationCategory;
+import com.google.devtools.common.options.OptionEffectTag;
 import com.google.devtools.common.options.OptionsBase;
 import com.google.devtools.common.options.OptionsParser;
 import com.google.devtools.common.options.OptionsProvider;
-import com.google.devtools.common.options.proto.OptionFilters.OptionEffectTag;
 import java.io.FileDescriptor;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -152,6 +152,9 @@ public final class CleanCommand implements BlazeCommand {
 
     // TODO(dmarting): Deactivate expunge_async on non-Linux platform until we completely fix it
     // for non-Linux platforms (https://github.com/bazelbuild/bazel/issues/1906).
+    // MacOS and FreeBSD support setsid(2) but don't have /usr/bin/setsid, so if we wanted to
+    // support --expunge_async on these platforms, we'd have to write a wrapper that calls setsid(2)
+    // and exec(2).
     if ((expungeAsync || async) && OS.getCurrent() != OS.LINUX) {
       String fallbackName = expungeAsync ? "--expunge" : "synchronous clean";
       env.getReporter()

@@ -25,14 +25,14 @@ public final class ReturnStatement extends Statement {
    * Exception sent by the return statement, to be caught by the function body.
    */
   public static class ReturnException extends EvalException {
-    Object value;
+    private final Object value;
 
     public ReturnException(Location location, Object value) {
       super(
           location,
           "return statements must be inside a function",
-          /*dueToIncompleteAST=*/ false, /*fillInJavaStackTrace=*/
-          false);
+          /*dueToIncompleteAST=*/false,
+          /*fillInJavaStackTrace=*/false);
       this.value = value;
     }
 
@@ -77,13 +77,5 @@ public final class ReturnStatement extends Statement {
   @Override
   public void accept(SyntaxTreeVisitor visitor) {
     visitor.visit(this);
-  }
-
-  @Override
-  void validate(ValidationEnvironment env) throws EvalException {
-    if (env.isTopLevel()) {
-      throw new EvalException(getLocation(), "Return statements must be inside a function");
-    }
-    returnExpression.validate(env);
   }
 }

@@ -29,12 +29,12 @@ import com.google.devtools.build.lib.util.Pair;
 import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.util.SpellChecker;
 import com.google.devtools.common.options.Options;
-import java.io.Serializable;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import javax.annotation.Nullable;
@@ -238,7 +238,7 @@ public final class Environment implements Freezable {
      */
     public void put(Environment env, String varname, Object value)
         throws MutabilityException {
-      Mutability.checkMutable(this, env);
+      Mutability.checkMutable(this, env.mutability());
       bindings.put(varname, value);
     }
 
@@ -247,7 +247,7 @@ public final class Environment implements Freezable {
      * be part of the public interface.
      */
     void remove(Environment env, String varname) throws MutabilityException {
-      Mutability.checkMutable(this, env);
+      Mutability.checkMutable(this, env.mutability());
       bindings.remove(varname);
     }
 
@@ -262,22 +262,22 @@ public final class Environment implements Freezable {
    */
   private static final class Continuation {
     /** The {@link BaseFunction} being evaluated that will return into this Continuation. */
-    BaseFunction function;
+    final BaseFunction function;
 
     /** The {@link FuncallExpression} to which this Continuation will return. */
-    FuncallExpression caller;
+    final FuncallExpression caller;
 
     /** The next Continuation after this Continuation. */
-    @Nullable Continuation continuation;
+    @Nullable final Continuation continuation;
 
     /** The lexical Frame of the caller. */
-    Frame lexicalFrame;
+    final Frame lexicalFrame;
 
     /** The global Frame of the caller. */
-    Frame globalFrame;
+    final Frame globalFrame;
 
     /** The set of known global variables of the caller. */
-    @Nullable Set<String> knownGlobalVariables;
+    @Nullable final Set<String> knownGlobalVariables;
 
     Continuation(
         Continuation continuation,
@@ -295,38 +295,20 @@ public final class Environment implements Freezable {
     }
   }
 
-  // TODO(bazel-team): Eliminate this hack around Java serialization. The bindings are currently
-  // factored out into BaseExtension, which is non-Serializable, and which has a default constructor
-  // that does not initialize any bindings. This means that when Extension is Java-serialized, all
-  // the bindings are simply lost.
-  private static class BaseExtension {
-
-    protected final ImmutableMap<String, Object> bindings;
-
-    BaseExtension(Map<String, Object> bindings) {
-      this.bindings = ImmutableMap.copyOf(bindings);
-    }
-
-    // Hack to "allow" java serialization.
-    BaseExtension() {
-      this.bindings = ImmutableMap.of();
-    }
-  }
-
   /** An Extension to be imported with load() into a BUILD or .bzl file. */
   @Immutable
-  public static final class Extension extends BaseExtension implements Serializable {
+  public static final class Extension {
+
+    private final ImmutableMap<String, Object> bindings;
 
     /**
      * Cached hash code for the transitive content of this {@code Extension} and its dependencies.
      */
     private final String transitiveContentHashCode;
 
-    /**
-     * Constructs with the given hash code and bindings.
-     */
-    public Extension(Map<String, Object> bindings, String transitiveContentHashCode) {
-      super(bindings);
+    /** Constructs with the given hash code and bindings. */
+    public Extension(ImmutableMap<String, Object> bindings, String transitiveContentHashCode) {
+      this.bindings = bindings;
       this.transitiveContentHashCode = transitiveContentHashCode;
     }
 
@@ -335,8 +317,7 @@ public final class Environment implements Freezable {
      * and that {@code Environment}'s transitive hash code.
      */
     public Extension(Environment env) {
-      super(env.globalFrame.bindings);
-      this.transitiveContentHashCode = env.getTransitiveContentHashCode();
+      this(ImmutableMap.copyOf(env.globalFrame.bindings), env.getTransitiveContentHashCode());
     }
 
     public String getTransitiveContentHashCode() {
@@ -345,6 +326,24 @@ public final class Environment implements Freezable {
 
     public ImmutableMap<String, Object> getBindings() {
       return bindings;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+      if (this == obj) {
+        return true;
+      }
+      if (!(obj instanceof Extension)) {
+        return false;
+      }
+      Extension other = (Extension) obj;
+      return transitiveContentHashCode.equals(other.getTransitiveContentHashCode())
+          && bindings.equals(other.getBindings());
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(bindings, transitiveContentHashCode);
     }
   }
 
@@ -698,8 +697,8 @@ public final class Environment implements Freezable {
       // End users don't have access to setupDynamic, and it is an implementation error
       // if we encounter a mutability exception.
       throw new AssertionError(
-          Printer.format(
-              "Trying to bind dynamic variable '%s' in frozen environment %r", varname, this),
+          String.format(
+              "Trying to bind dynamic variable '%s' in frozen environment %s", varname, this),
           e);
     }
     return this;
@@ -940,16 +939,28 @@ public final class Environment implements Freezable {
     }
   }
 
+  /** An exception thrown by {@link #FAIL_FAST_HANDLER}. */
+  // TODO(bazel-team): Possibly extend RuntimeException instead of IllegalArgumentException.
+  public static class FailFastException extends IllegalArgumentException {
+    public FailFastException(String s) {
+      super(s);
+    }
+  }
 
   /**
-   * The fail fast handler, which throws an {@link IllegalArgumentException} whenever an error or
-   * warning occurs.
+   * A handler that immediately throws {@link FailFastException} whenever an error or warning
+   * occurs.
+   *
+   * We do not reuse an existing unchecked exception type, because callers (e.g., test assertions)
+   * need to be able to distinguish between organically occurring exceptions and exceptions thrown
+   * by this handler.
    */
   public static final EventHandler FAIL_FAST_HANDLER = new EventHandler() {
-      @Override
-      public void handle(Event event) {
-        Preconditions.checkArgument(
-            !EventKind.ERRORS_AND_WARNINGS.contains(event.getKind()), event);
+    @Override
+    public void handle(Event event) {
+      if (EventKind.ERRORS_AND_WARNINGS.contains(event.getKind())) {
+        throw new FailFastException(event.toString());
       }
-    };
+    }
+  };
 }

@@ -212,8 +212,7 @@ final class CompilationAttributes {
         NestedSetBuilder<PathFragment> includes = NestedSetBuilder.stableOrder();
         includes.addAll(
             Iterables.transform(
-                ruleContext.attributes().get("includes", Type.STRING_LIST),
-                PathFragment.TO_PATH_FRAGMENT));
+                ruleContext.attributes().get("includes", Type.STRING_LIST), PathFragment::create));
         builder.addIncludes(includes.build());
       }
 
@@ -222,7 +221,7 @@ final class CompilationAttributes {
         sdkIncludes.addAll(
             Iterables.transform(
                 ruleContext.attributes().get("sdk_includes", Type.STRING_LIST),
-                PathFragment.TO_PATH_FRAGMENT));
+                PathFragment::create));
         builder.addSdkIncludes(sdkIncludes.build());
       }
     }
@@ -270,14 +269,15 @@ final class CompilationAttributes {
         // missing, its private headers will be treated as public!
         if (ruleContext.attributes().has("deps", BuildType.LABEL_LIST)) {
           Iterable<ObjcProvider> providers =
-              ruleContext.getPrerequisites("deps", Mode.TARGET, ObjcProvider.class);
+              ruleContext.getPrerequisites("deps", Mode.TARGET, ObjcProvider.SKYLARK_CONSTRUCTOR);
           for (ObjcProvider provider : providers) {
             moduleMaps.addTransitive(provider.get(TOP_LEVEL_MODULE_MAP));
           }
         }
         if (ruleContext.attributes().has("non_propagated_deps", BuildType.LABEL_LIST)) {
           Iterable<ObjcProvider> providers =
-              ruleContext.getPrerequisites("non_propagated_deps", Mode.TARGET, ObjcProvider.class);
+              ruleContext.getPrerequisites(
+                  "non_propagated_deps", Mode.TARGET, ObjcProvider.SKYLARK_CONSTRUCTOR);
           for (ObjcProvider provider : providers) {
             moduleMaps.addTransitive(provider.get(TOP_LEVEL_MODULE_MAP));
           }

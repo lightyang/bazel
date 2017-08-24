@@ -37,6 +37,15 @@ import java.util.TreeSet;
  */
 public final class ActionEnvironment {
   /**
+   * An empty environment, mainly for testing. Production code should never use this, but instead
+   * get the proper environment from the current configuration.
+   */
+  // TODO(ulfjack): Migrate all production code to use the proper action environment, and then make
+  // this @VisibleForTesting or rename it to clarify.
+  public static final ActionEnvironment EMPTY =
+      new ActionEnvironment(ImmutableMap.of(), ImmutableSet.of());
+
+  /**
    * Splits the given map into a map of variables with a fixed value, and a set of variables that
    * should be inherited, the latter of which are identified by having a {@code null} value in the
    * given map. Returns these two parts as a new {@link ActionEnvironment} instance.
@@ -54,20 +63,31 @@ public final class ActionEnvironment {
         inheritedEnv.add(key);
       }
     }
-    return new ActionEnvironment(fixedEnv, inheritedEnv);
+    return create(fixedEnv, inheritedEnv);
   }
 
   private final ImmutableMap<String, String> fixedEnv;
   private final ImmutableSet<String> inheritedEnv;
+
+  private ActionEnvironment(Map<String, String> fixedEnv, Set<String> inheritedEnv) {
+    this.fixedEnv = ImmutableMap.copyOf(fixedEnv);
+    this.inheritedEnv = ImmutableSet.copyOf(inheritedEnv);
+  }
 
   /**
    * Creates a new action environment. The order in which the environments are combined is
    * undefined, so callers need to take care that the key set of the {@code fixedEnv} map and the
    * set of {@code inheritedEnv} elements are disjoint.
    */
-  public ActionEnvironment(Map<String, String> fixedEnv, Set<String> inheritedEnv) {
-    this.fixedEnv = ImmutableMap.copyOf(fixedEnv);
-    this.inheritedEnv = ImmutableSet.copyOf(inheritedEnv);
+  public static ActionEnvironment create(Map<String, String> fixedEnv, Set<String> inheritedEnv) {
+    if (fixedEnv.isEmpty() && inheritedEnv.isEmpty()) {
+      return EMPTY;
+    }
+    return new ActionEnvironment(fixedEnv, inheritedEnv);
+  }
+
+  public static ActionEnvironment create(Map<String, String> fixedEnv) {
+    return new ActionEnvironment(fixedEnv, ImmutableSet.of());
   }
 
   public ImmutableMap<String, String> getFixedEnv() {

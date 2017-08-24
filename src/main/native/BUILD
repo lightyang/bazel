@@ -4,10 +4,13 @@ genrule(
         "//src:darwin": ["//tools/jdk:jni_md_header-darwin"],
         "//src:darwin_x86_64": ["//tools/jdk:jni_md_header-darwin"],
         "//src:freebsd": ["//tools/jdk:jni_md_header-freebsd"],
+        "//src:windows": ["//tools/jdk:jni_md_header-windows"],
+        "//src:windows_msvc": ["//tools/jdk:jni_md_header-windows"],
         "//conditions:default": ["//tools/jdk:jni_md_header-linux"],
     }),
     outs = ["jni_md.h"],
     cmd = "cp -f $< $@",
+    visibility = ["//src/main/native:__subpackages__"],
 )
 
 genrule(
@@ -15,6 +18,7 @@ genrule(
     srcs = ["//tools/jdk:jni_header"],
     outs = ["jni.h"],
     cmd = "cp -f $< $@",
+    visibility = ["//src/main/native:__subpackages__"],
 )
 
 filegroup(
@@ -60,16 +64,6 @@ cc_binary(
         "//src/main/cpp/util",
         "//src/main/cpp/util:md5",
     ],
-)
-
-genrule(
-    name = "windows_jni",
-    srcs = ["//src/main/native/windows:raw-sources"],
-    outs = ["windows_jni.dll"],
-    cmd = "$(location build_windows_jni.sh) $@ $(SRCS)",
-    output_to_bindir = 1,
-    tools = ["build_windows_jni.sh"],
-    visibility = ["//src:__subpackages__"],
 )
 
 # TODO(bazel-team): Come up with a way to support platform-specific dynamic

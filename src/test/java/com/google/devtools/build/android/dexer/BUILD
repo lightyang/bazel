@@ -31,6 +31,7 @@ java_library(
 
 java_test(
     name = "AllTests",
+    size = "small",
     data = [
         "test_main_dex_list.txt",
         ":tests",
@@ -42,4 +43,10 @@ java_test(
     runtime_deps = [
         ":tests",
     ],
+)
+
+filegroup(
+    name = "srcs",
+    srcs = glob(["**"]),
+    visibility = ["//src/test/java/com/google/devtools/build/android:__pkg__"],
 )

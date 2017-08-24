@@ -17,6 +17,7 @@ package com.google.devtools.build.lib.actions;
 import com.google.devtools.build.lib.util.CommandDescriptionForm;
 import com.google.devtools.build.lib.util.CommandFailureUtils;
 import com.google.devtools.build.lib.vfs.Path;
+import java.time.Duration;
 import java.util.Collection;
 import java.util.Map;
 
@@ -25,24 +26,22 @@ public final class Spawns {
   private Spawns() {}
 
   /**
-   * Parse the timeout key in the spawn execution info, if it exists. Return -1 if the key does not
-   * exist.
+   * Returns {@code true} if the result of {@code spawn} may be cached.
    */
-  public static int getTimeoutSeconds(Spawn spawn) throws ExecException {
-    return getTimeoutSeconds(spawn, -1);
+  public static boolean mayBeCached(Spawn spawn) {
+    return !spawn.getExecutionInfo().containsKey(ExecutionRequirements.NO_CACHE);
   }
 
   /**
-   * Parse the timeout key in the spawn execution info, if it exists. Otherwise, return the given
-   * default timeout.
+   * Parse the timeout key in the spawn execution info, if it exists. Otherwise, return -1.
    */
-  public static int getTimeoutSeconds(Spawn spawn, int defaultTimeout) throws ExecException {
+  public static Duration getTimeout(Spawn spawn) throws ExecException {
     String timeoutStr = spawn.getExecutionInfo().get("timeout");
     if (timeoutStr == null) {
-      return defaultTimeout;
+      return Duration.ZERO;
     }
     try {
-      return Integer.parseInt(timeoutStr);
+      return Duration.ofSeconds(Integer.parseInt(timeoutStr));
     } catch (NumberFormatException e) {
       throw new UserExecException("could not parse timeout: ", e);
     }

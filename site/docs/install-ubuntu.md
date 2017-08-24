@@ -8,7 +8,6 @@ title: Installing Bazel on Ubuntu
 Supported Ubuntu Linux platforms:
 
 *   16.04 (LTS)
-*   15.10
 *   14.04 (LTS)
 
 Install Bazel on Ubuntu using one of the following methods:
@@ -24,9 +23,24 @@ Bazel comes with two completion scripts. After installing Bazel, you can:
 
 ## <a name="install-on-ubuntu"></a> Using Bazel custom APT repository (recommended)
 
-### 1. Add Bazel distribution URI as a package source (one time setup)
+### 1. Install JDK 8
 
+Install JDK 8 by using:
+
+```bash
+sudo apt-get install openjdk-8-jdk
 ```
+
+On Ubuntu 14.04 LTS you'll have to use a PPA:
+
+```bash
+sudo add-apt-repository ppa:webupd8team/java
+sudo apt-get update && sudo apt-get install oracle-java8-installer
+```
+
+### 2. Add Bazel distribution URI as a package source (one time setup)
+
+```bash
 echo "deb [arch=amd64] http://storage.googleapis.com/bazel-apt stable jdk1.8" | sudo tee /etc/apt/sources.list.d/bazel.list
 curl https://bazel.build/bazel-release.pub.gpg | sudo apt-key add -
 ```
@@ -34,7 +48,7 @@ curl https://bazel.build/bazel-release.pub.gpg | sudo apt-key add -
 If you want to install the testing version of Bazel, replace `stable` with
 `testing`.
 
-### 2. Install and update Bazel
+### 3. Install and update Bazel
 
 ```bash
 sudo apt-get update && sudo apt-get install bazel
@@ -55,31 +69,29 @@ libraries must also be installed for Bazel to work.
 
 ### 1. Install required packages
 
-```
-sudo apt-get install pkg-config zip g++ zlib1g-dev unzip
+```bash
+sudo apt-get install pkg-config zip g++ zlib1g-dev unzip python
 ```
 
 ### 2. Download Bazel
 
 Go to Bazel's [GitHub releases page](https://github.com/bazelbuild/bazel/releases).
 
-Download the binary installer `bazel-0.5.1-installer-linux-x86_64.sh`. This
+Download the binary installer `bazel-0.5.2-installer-linux-x86_64.sh`. This
 installer contains the Bazel binary and the required JDK, and can be used even
 if JDK is already installed.
 
-Note that two other versions of the installer exist:
-*   `bazel-0.5.1-without-jdk-installer-linux-x86_64.sh`: version without
-    embedded JDK 8. Only use this installer if you already have JDK 8 installed.
-*   `bazel-0.5.1-jdk7-installer-linux-x86_64.sh`: last release compatible
-    with JDK 7.
+Note that `bazel-0.5.2-without-jdk-installer-linux-x86_64.sh` also exist. It is
+a version without embedded JDK 8. Only use this installer if you already have
+JDK 8 installed.
 
 ### 3. Run the installer
 
 Run the installer:
 
 ```bash
-chmod +x bazel-0.5.1-installer-linux-x86_64.sh
-./bazel-0.5.1-installer-linux-x86_64.sh --user
+chmod +x bazel-0.5.2-installer-linux-x86_64.sh
+./bazel-0.5.2-installer-linux-x86_64.sh --user
 ```
 
 The `--user` flag installs Bazel to the `$HOME/bin` directory on your system and
