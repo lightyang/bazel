@@ -23,12 +23,12 @@ import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
-import com.google.devtools.build.lib.analysis.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetBuilder;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetFactory;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
+import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.rules.apple.AppleConfiguration;
@@ -36,7 +36,6 @@ import com.google.devtools.build.lib.rules.apple.ApplePlatform.PlatformType;
 import com.google.devtools.build.lib.rules.cpp.CcLinkParamsInfo;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainProvider;
 import com.google.devtools.build.lib.rules.cpp.CppHelper;
-import com.google.devtools.build.lib.rules.objc.ObjcCommon.ResourceAttributes;
 import com.google.devtools.build.lib.rules.objc.ObjcProvider.Key;
 import com.google.devtools.build.lib.rules.proto.ProtoSourcesProvider;
 import java.util.List;
@@ -115,7 +114,8 @@ public class AppleStaticLibrary implements RuleConfiguredTargetFactory {
                   protosToAvoid,
                   ImmutableList.<ProtoSourcesProvider>of(),
                   objcProtoProviders,
-                  ProtobufSupport.getTransitivePortableProtoFilters(objcProtoProviders))
+                  ProtobufSupport.getTransitivePortableProtoFilters(objcProtoProviders),
+                  childConfigurationsAndToolchains.get(childConfig))
               .registerGenerationActions()
               .registerCompilationActions();
 
@@ -176,9 +176,11 @@ public class AppleStaticLibrary implements RuleConfiguredTargetFactory {
 
     ObjcProvider objcProvider = objcProviderBuilder.build();
 
+    if (appleConfiguration.shouldLinkingRulesPropagateObjc()) {
+      targetBuilder.addNativeDeclaredProvider(objcProvider);
+    }
+
     targetBuilder
-        // TODO(cparsons): Remove ObjcProvider as a direct provider.
-        .addNativeDeclaredProvider(objcProvider)
         .addNativeDeclaredProvider(
             new AppleStaticLibraryProvider(
                 ruleIntermediateArtifacts.combinedArchitectureArchive(),
@@ -201,18 +203,13 @@ public class AppleStaticLibrary implements RuleConfiguredTargetFactory {
       List<TransitiveInfoCollection> propagatedDeps,
       Optional<ObjcProvider> protosObjcProvider) {
 
-    CompilationArtifacts compilationArtifacts =
-        CompilationSupport.compilationArtifacts(ruleContext, intermediateArtifacts);
+    CompilationArtifacts compilationArtifacts = new CompilationArtifacts.Builder().build();
 
     return new ObjcCommon.Builder(ruleContext, buildConfiguration)
         .setCompilationAttributes(
             CompilationAttributes.Builder.fromRuleContext(ruleContext).build())
         .setCompilationArtifacts(compilationArtifacts)
-        .setResourceAttributes(new ResourceAttributes(ruleContext))
-        .addDefines(ruleContext.getTokenizedStringListAttr("defines"))
         .addDeps(propagatedDeps)
-        .addDepObjcProviders(
-            ruleContext.getPrerequisites("bundles", Mode.TARGET, ObjcProvider.SKYLARK_CONSTRUCTOR))
         .addDepObjcProviders(protosObjcProvider.asSet())
         .setIntermediateArtifacts(intermediateArtifacts)
         .setAlwayslink(false)

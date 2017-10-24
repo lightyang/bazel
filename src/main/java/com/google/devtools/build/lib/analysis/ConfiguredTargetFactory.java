@@ -30,6 +30,11 @@ import com.google.devtools.build.lib.analysis.config.BuildConfiguration.Fragment
 import com.google.devtools.build.lib.analysis.config.ConfigMatchingProvider;
 import com.google.devtools.build.lib.analysis.config.InvalidConfigurationException;
 import com.google.devtools.build.lib.analysis.config.PatchTransition;
+import com.google.devtools.build.lib.analysis.configuredtargets.EnvironmentGroupConfiguredTarget;
+import com.google.devtools.build.lib.analysis.configuredtargets.FilesetOutputConfiguredTarget;
+import com.google.devtools.build.lib.analysis.configuredtargets.InputFileConfiguredTarget;
+import com.google.devtools.build.lib.analysis.configuredtargets.OutputFileConfiguredTarget;
+import com.google.devtools.build.lib.analysis.configuredtargets.PackageGroupConfiguredTarget;
 import com.google.devtools.build.lib.analysis.fileset.FilesetProvider;
 import com.google.devtools.build.lib.analysis.skylark.SkylarkRuleConfiguredTargetUtil;
 import com.google.devtools.build.lib.cmdline.Label;
@@ -58,6 +63,7 @@ import com.google.devtools.build.lib.packages.RuleClass.ConfiguredTargetFactory.
 import com.google.devtools.build.lib.packages.RuleVisibility;
 import com.google.devtools.build.lib.packages.SkylarkProviderIdentifier;
 import com.google.devtools.build.lib.packages.Target;
+import com.google.devtools.build.lib.profiler.memory.CurrentRuleTracker;
 import com.google.devtools.build.lib.skyframe.BuildConfigurationValue;
 import com.google.devtools.build.lib.skyframe.ConfiguredTargetKey;
 import com.google.devtools.build.lib.util.OrderedSetMultimap;
@@ -222,14 +228,19 @@ public final class ConfiguredTargetFactory {
       Preconditions.checkArgument(
           toolchainContext != null,
           "ToolchainContext should never be null when creating a ConfiguredTarget for a Rule");
-      return createRule(
-          analysisEnvironment,
-          (Rule) target,
-          config,
-          hostConfig,
-          prerequisiteMap,
-          configConditions,
-          toolchainContext);
+      try {
+        CurrentRuleTracker.beginConfiguredTarget(((Rule) target).getRuleClassObject());
+        return createRule(
+            analysisEnvironment,
+            (Rule) target,
+            config,
+            hostConfig,
+            prerequisiteMap,
+            configConditions,
+            toolchainContext);
+      } finally {
+        CurrentRuleTracker.endConfiguredTarget();
+      }
     }
 
     // Visibility, like all package groups, doesn't have a configuration

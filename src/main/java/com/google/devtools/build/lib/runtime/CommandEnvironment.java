@@ -27,6 +27,7 @@ import com.google.devtools.build.lib.analysis.config.DefaultsPackage;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.events.Reporter;
 import com.google.devtools.build.lib.packages.NoSuchThingException;
+import com.google.devtools.build.lib.packages.SkylarkSemanticsOptions;
 import com.google.devtools.build.lib.packages.Target;
 import com.google.devtools.build.lib.pkgcache.PackageCacheOptions;
 import com.google.devtools.build.lib.pkgcache.PackageManager;
@@ -37,7 +38,6 @@ import com.google.devtools.build.lib.runtime.proto.InvocationPolicyOuterClass.In
 import com.google.devtools.build.lib.skyframe.OutputService;
 import com.google.devtools.build.lib.skyframe.SkyframeBuildView;
 import com.google.devtools.build.lib.skyframe.SkyframeExecutor;
-import com.google.devtools.build.lib.syntax.SkylarkSemanticsOptions;
 import com.google.devtools.build.lib.util.AbruptExitException;
 import com.google.devtools.build.lib.util.ExitCode;
 import com.google.devtools.build.lib.util.Preconditions;
@@ -69,6 +69,7 @@ public final class CommandEnvironment {
   private final BlazeDirectories directories;
 
   private UUID commandId;  // Unique identifier for the command being run
+  private String buildRequestId;  // Unique identifier for the build being run
   private final Reporter reporter;
   private final EventBus eventBus;
   private final BlazeModule.ModuleEnvironment blazeModuleEnvironment;
@@ -124,6 +125,7 @@ public final class CommandEnvironment {
     this.workspace = workspace;
     this.directories = workspace.getDirectories();
     this.commandId = null; // Will be set once we get the client environment
+    this.buildRequestId = null;  // Will be set once we get the client environment
     this.reporter = new Reporter(eventBus);
     this.eventBus = eventBus;
     this.commandThread = commandThread;
@@ -244,6 +246,29 @@ public final class CommandEnvironment {
     return Collections.unmodifiableMap(result);
   }
 
+  private UUID getUuidFromEnvOrGenerate(String varName) {
+    // Try to set the clientId from the client environment.
+    String uuidString = clientEnv.getOrDefault(varName, "");
+    if (!uuidString.isEmpty()) {
+      try {
+        return UUID.fromString(uuidString);
+      } catch (IllegalArgumentException e) {
+        // String was malformed, so we will resort to generating a random UUID
+      }
+    }
+    // We have been provided with the client environment, but it didn't contain
+    // the variable; hence generate our own id.
+    return UUID.randomUUID();
+  }
+
+  private String getFromEnvOrGenerate(String varName) {
+    String id = clientEnv.getOrDefault(varName, "");
+    if (id.isEmpty()) {
+      id = UUID.randomUUID().toString();
+    }
+    return id;
+  }
+
   private void updateClientEnv(List<Map.Entry<String, String>> clientEnvList) {
     Preconditions.checkState(clientEnv.isEmpty());
 
@@ -251,21 +276,11 @@ public final class CommandEnvironment {
     for (Map.Entry<String, String> entry : env) {
       clientEnv.put(entry.getKey(), entry.getValue());
     }
-    // Try to set the clientId from the client environment.
     if (commandId == null) {
-      String uuidString = clientEnv.get("BAZEL_INTERNAL_INVOCATION_ID");
-      if (uuidString != null) {
-        try {
-          commandId = UUID.fromString(uuidString);
-        } catch (IllegalArgumentException e) {
-          // String was malformed, so we will resort to generating a random UUID
-        }
-      }
+      commandId = getUuidFromEnvOrGenerate("BAZEL_INTERNAL_INVOCATION_ID");
     }
-    if (commandId == null) {
-      // We have been provided with the client environment, but it didn't contain
-      // the invocation id; hence generate our own.
-      commandId = UUID.randomUUID();
+    if (buildRequestId == null) {
+      buildRequestId = getFromEnvOrGenerate("BAZEL_INTERNAL_BUILD_REQUEST_ID");
     }
     setCommandIdInCrashData();
   }
@@ -301,14 +316,15 @@ public final class CommandEnvironment {
    * the build info.
    */
   public UUID getCommandId() {
-    if (commandId == null) {
-      // The commandId should not be requested before the beforeCommand is executed, as the
-      // commandId might be set through the client environment. However, to simplify testing,
-      // we set the id value before we throw the exception.
-      commandId = UUID.randomUUID();
-      throw new IllegalArgumentException("Build Id requested before client environment provided");
-    }
-    return commandId;
+    return Preconditions.checkNotNull(commandId);
+  }
+
+  /**
+   * Returns the ID that Blaze uses to identify everything logged from the current build request.
+   * TODO(olaola): this should be a UUID, but some existing clients still use arbitrary strings.
+   */
+  public String getBuildRequestId() {
+    return Preconditions.checkNotNull(buildRequestId);
   }
 
   public SkyframeExecutor getSkyframeExecutor() {
@@ -501,22 +517,18 @@ public final class CommandEnvironment {
    */
   public void setupPackageCache(OptionsClassProvider options,
       String defaultsPackageContents) throws InterruptedException, AbruptExitException {
-    SkyframeExecutor skyframeExecutor = getSkyframeExecutor();
-
-    for (BlazeModule module : runtime.getBlazeModules()) {
-      skyframeExecutor.injectExtraPrecomputedValues(module.getPrecomputedValues());
-    }
-    skyframeExecutor.sync(
-        reporter,
-        options.getOptions(PackageCacheOptions.class),
-        options.getOptions(SkylarkSemanticsOptions.class),
-        getOutputBase(),
-        getWorkingDirectory(),
-        defaultsPackageContents,
-        getCommandId(),
-        clientEnv,
-        timestampGranularityMonitor,
-        options);
+    getSkyframeExecutor()
+        .sync(
+            reporter,
+            options.getOptions(PackageCacheOptions.class),
+            options.getOptions(SkylarkSemanticsOptions.class),
+            getOutputBase(),
+            getWorkingDirectory(),
+            defaultsPackageContents,
+            getCommandId(),
+            clientEnv,
+            timestampGranularityMonitor,
+            options);
   }
 
   public void recordLastExecutionTime() {
@@ -574,6 +586,7 @@ public final class CommandEnvironment {
 
     SkyframeExecutor skyframeExecutor = getSkyframeExecutor();
     skyframeExecutor.setOutputService(outputService);
+    skyframeExecutor.noteCommandStart();
 
     // Ensure that the working directory will be under the workspace directory.
     Path workspace = getWorkspace();

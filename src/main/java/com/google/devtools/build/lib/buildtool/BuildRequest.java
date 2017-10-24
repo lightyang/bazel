@@ -26,10 +26,10 @@ import com.google.devtools.build.lib.analysis.OutputGroupProvider;
 import com.google.devtools.build.lib.analysis.TopLevelArtifactContext;
 import com.google.devtools.build.lib.analysis.config.InvalidConfigurationException;
 import com.google.devtools.build.lib.exec.ExecutionOptions;
+import com.google.devtools.build.lib.packages.SkylarkSemanticsOptions;
 import com.google.devtools.build.lib.pkgcache.LoadingOptions;
 import com.google.devtools.build.lib.pkgcache.PackageCacheOptions;
 import com.google.devtools.build.lib.runtime.BlazeCommandEventHandler;
-import com.google.devtools.build.lib.syntax.SkylarkSemanticsOptions;
 import com.google.devtools.build.lib.util.OptionsUtils;
 import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.util.io.OutErr;
@@ -58,7 +58,7 @@ import java.util.regex.Pattern;
  * as --keep_going, --jobs, etc.
  */
 public class BuildRequest implements OptionsClassProvider {
-  private static final Logger log = Logger.getLogger(BuildRequest.class.getName());
+  private static final Logger logger = Logger.getLogger(BuildRequest.class.getName());
 
   /**
    * Options interface--can be used to parse command-line arguments.
@@ -241,7 +241,6 @@ public class BuildRequest implements OptionsClassProvider {
       documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
       effectTags = {
         OptionEffectTag.LOADING_AND_ANALYSIS,
-        OptionEffectTag.EAGERNESS_TO_EXIT,
         OptionEffectTag.AFFECTS_OUTPUTS
       },
       help =
@@ -258,7 +257,6 @@ public class BuildRequest implements OptionsClassProvider {
       documentationCategory = OptionDocumentationCategory.OUTPUT_SELECTION,
       effectTags = {
         OptionEffectTag.EXECUTION,
-        OptionEffectTag.EAGERNESS_TO_EXIT,
         OptionEffectTag.AFFECTS_OUTPUTS
       },
       help =
@@ -387,6 +385,37 @@ public class BuildRequest implements OptionsClassProvider {
       return symlinkPrefix == null ? productName + "-" : symlinkPrefix;
     }
 
+    // Transitional flag for safely rolling out new convenience symlink behavior.
+    // To be made a no-op and deleted once new symlink behavior is battle-tested.
+    @Option(
+      name = "use_top_level_targets_for_symlinks",
+      defaultValue = "false",
+      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+      effectTags = {OptionEffectTag.AFFECTS_OUTPUTS},
+      help =
+          "If enabled, the symlinks are based on the configurations of the top-level targets "
+              + " rather than the top-level target configuration. If this would be ambiguous, "
+              + " the symlinks will be deleted to avoid confusion."
+    )
+    public boolean useTopLevelTargetsForSymlinks;
+
+    /**
+     * Returns whether to use the output directories used by the top-level targets for convenience
+     * symlinks.
+     *
+     * <p>If true, then symlinks use the actual output directories of the top-level targets.
+     * The symlinks will be created iff all top-level targets share the same output directory.
+     * Otherwise, any stale symlinks from previous invocations will be deleted to avoid ambiguity.
+     *
+     * <p>If false, then symlinks use the output directory implied by command-line flags, regardless
+     * of whether top-level targets have transitions which change them (or even have any output
+     * directories at all, as in the case of a build with no targets or one which only builds source
+     * files).
+     */
+    public boolean useTopLevelTargetsForSymlinks() {
+      return useTopLevelTargetsForSymlinks;
+    }
+
     @Option(
       name = "use_action_cache",
       defaultValue = "true",
@@ -417,7 +446,7 @@ public class BuildRequest implements OptionsClassProvider {
         if (fixedAutoJobs == null) {
           jobs = (int) Math.ceil(LocalHostCapacity.getLocalHostCapacity().getCpuUsage());
           if (jobs > MAX_JOBS) {
-            log.warning(
+            logger.warning(
                 "Detected "
                     + jobs
                     + " processors, which exceed the maximum allowed number of jobs of "
@@ -428,7 +457,7 @@ public class BuildRequest implements OptionsClassProvider {
         } else {
           jobs = fixedAutoJobs;
         }
-        log.info("Flag \"jobs\" was set to \"auto\"; using " + jobs + " jobs");
+        logger.info("Flag \"jobs\" was set to \"auto\"; using " + jobs + " jobs");
         return jobs;
       } else {
         return super.convert(input);

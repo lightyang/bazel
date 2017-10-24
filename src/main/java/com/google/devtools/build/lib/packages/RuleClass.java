@@ -28,6 +28,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Ordering;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
@@ -59,6 +60,7 @@ import java.util.BitSet;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -333,7 +335,7 @@ public class RuleClass {
             Preconditions.checkState(presentAttribute != null,
                 "Missing mandatory '%s' attribute in test rule class.", attribute.getName());
             Preconditions.checkState(presentAttribute.getType().equals(attribute.getType()),
-                "Mandatory attribute '%s' in test rule class has incorrect type (expcected %s).",
+                "Mandatory attribute '%s' in test rule class has incorrect type (expected %s).",
                 attribute.getName(), attribute.getType());
           }
         }
@@ -483,7 +485,7 @@ public class RuleClass {
     private boolean supportsConstraintChecking = true;
 
     private final Map<String, Attribute> attributes = new LinkedHashMap<>();
-    private final List<Label> requiredToolchains = new ArrayList<>();
+    private final Set<Label> requiredToolchains = new HashSet<>();
 
     /**
      * Constructs a new {@code RuleClassBuilder} using all attributes from all
@@ -548,13 +550,12 @@ public class RuleClass {
      * @throws IllegalStateException if any of the required attributes is missing
      */
     public RuleClass build() {
-      return build(name);
+      // For built-ins, name == key
+      return build(name, name);
     }
 
-    /**
-     * Same as {@link #build} except with setting the name parameter.
-     */
-    public RuleClass build(String name) {
+    /** Same as {@link #build} except with setting the name and key parameters. */
+    public RuleClass build(String name, String key) {
       Preconditions.checkArgument(this.name.isEmpty() || this.name.equals(name));
       type.checkName(name);
       type.checkAttributes(attributes);
@@ -573,6 +574,7 @@ public class RuleClass {
       }
       return new RuleClass(
           name,
+          key,
           skylark,
           skylarkExecutable,
           skylarkTestable,
@@ -806,6 +808,13 @@ public class RuleClass {
       return this;
     }
 
+    public Builder advertiseSkylarkProvider(SkylarkProviderIdentifier... skylarkProviders) {
+      for (SkylarkProviderIdentifier skylarkProviderIdentifier : skylarkProviders) {
+        advertisedProviders.addSkylark(skylarkProviderIdentifier);
+      }
+      return this;
+    }
+
     /**
      * Set if the rule can have any provider. This is true for "alias" rules like
      * <code>bind</code> .
@@ -996,6 +1005,11 @@ public class RuleClass {
       return this;
     }
 
+    public Builder addRequiredToolchains(Label... toolchainLabels) {
+      Iterables.addAll(this.requiredToolchains, Lists.newArrayList(toolchainLabels));
+      return this;
+    }
+
     /**
      * Returns an Attribute.Builder object which contains a replica of the
      * same attribute in the parent rule if exists.
@@ -1010,6 +1024,8 @@ public class RuleClass {
   }
 
   private final String name; // e.g. "cc_library"
+
+  private final String key; // Just the name for native, label + name for skylark
 
   /**
    * The kind of target represented by this RuleClass (e.g. "cc_library rule").
@@ -1115,7 +1131,7 @@ public class RuleClass {
    */
   private final boolean supportsConstraintChecking;
 
-  private final ImmutableList<Label> requiredToolchains;
+  private final ImmutableSet<Label> requiredToolchains;
 
   /**
    * Constructs an instance of RuleClass whose name is 'name', attributes are 'attributes'. The
@@ -1140,6 +1156,7 @@ public class RuleClass {
   @VisibleForTesting
   RuleClass(
       String name,
+      String key,
       boolean isSkylark,
       boolean skylarkExecutable,
       boolean skylarkTestable,
@@ -1163,9 +1180,10 @@ public class RuleClass {
       String ruleDefinitionEnvironmentHashCode,
       ConfigurationFragmentPolicy configurationFragmentPolicy,
       boolean supportsConstraintChecking,
-      List<Label> requiredToolchains,
+      Set<Label> requiredToolchains,
       Attribute... attributes) {
     this.name = name;
+    this.key = key;
     this.isSkylark = isSkylark;
     this.targetKind = name + Rule.targetKindSuffix();
     this.skylarkExecutable = skylarkExecutable;
@@ -1192,7 +1210,7 @@ public class RuleClass {
     this.outputsDefaultExecutable = outputsDefaultExecutable;
     this.configurationFragmentPolicy = configurationFragmentPolicy;
     this.supportsConstraintChecking = supportsConstraintChecking;
-    this.requiredToolchains = ImmutableList.copyOf(requiredToolchains);
+    this.requiredToolchains = ImmutableSet.copyOf(requiredToolchains);
 
     // Create the index and collect non-configurable attributes.
     int index = 0;
@@ -1261,6 +1279,11 @@ public class RuleClass {
    */
   public String getName() {
     return name;
+  }
+
+  /** Returns a unique key. Used for profiling purposes. */
+  public String getKey() {
+    return key;
   }
 
   /**
@@ -1688,7 +1711,7 @@ public class RuleClass {
       if (license == null) {
         license = pkgBuilder.getDefaultLicense();
       }
-      if (license == License.NO_LICENSE) {
+      if (!license.isSpecified()) {
         rule.reportError("third-party rule '" + rule.getLabel() + "' lacks a license declaration "
                          + "with one of the following types: notice, reciprocal, permissive, "
                          + "restricted, unencumbered, by_exception_only",
@@ -2002,7 +2025,7 @@ public class RuleClass {
     return outputsDefaultExecutable;
   }
 
-  public ImmutableList<Label> getRequiredToolchains() {
+  public ImmutableSet<Label> getRequiredToolchains() {
     return requiredToolchains;
   }
 

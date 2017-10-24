@@ -17,7 +17,6 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.android.dex.Dex;
-import com.android.dex.DexFormat;
 import com.android.dex.FieldId;
 import com.android.dex.MethodId;
 import com.android.dex.ProtoId;
@@ -26,7 +25,6 @@ import com.android.dx.command.dexer.DxContext;
 import com.android.dx.merge.CollisionPolicy;
 import com.android.dx.merge.DexMerger;
 import com.google.auto.value.AutoValue;
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.Futures;
@@ -53,21 +51,17 @@ class DexFileAggregator implements Closeable {
    */
   private static final String DEX_EXTENSION = ".dex";
 
-  /**
-   * File name prefix of a {@code .dex} file automatically loaded in an
-   * archive.
-   */
-  private static final String DEX_PREFIX = "classes";
-
   private final ArrayList<Dex> currentShard = new ArrayList<>();
   private final HashSet<FieldDescriptor> fieldsInCurrentShard = new HashSet<>();
   private final HashSet<MethodDescriptor> methodsInCurrentShard = new HashSet<>();
+  private final boolean forceJumbo;
   private final int maxNumberOfIdxPerDex;
   private final int wasteThresholdPerDex;
   private final MultidexStrategy multidex;
   private final DxContext context;
   private final ListeningExecutorService executor;
   private final DexFileArchive dest;
+  private final String dexPrefix;
 
   private int nextDexFileIndex = 0;
   private ListenableFuture<Void> lastWriter = Futures.<Void>immediateFuture(null);
@@ -77,14 +71,18 @@ class DexFileAggregator implements Closeable {
       DexFileArchive dest,
       ListeningExecutorService executor,
       MultidexStrategy multidex,
+      boolean forceJumbo,
       int maxNumberOfIdxPerDex,
-      int wasteThresholdPerDex) {
+      int wasteThresholdPerDex,
+      String dexPrefix) {
     this.context = context;
     this.dest = dest;
     this.executor = executor;
     this.multidex = multidex;
+    this.forceJumbo = forceJumbo;
     this.maxNumberOfIdxPerDex = maxNumberOfIdxPerDex;
     this.wasteThresholdPerDex = wasteThresholdPerDex;
+    this.dexPrefix = dexPrefix;
   }
 
   public DexFileAggregator add(Dex dexFile) {
@@ -162,7 +160,7 @@ class DexFileAggregator implements Closeable {
     checkState(multidex.isMultidexAllowed() || nextDexFileIndex == 0);
     String filename = getDexFileName(nextDexFileIndex++);
     ListenableFuture<Dex> merged =
-        dexes.length == 1
+        dexes.length == 1 && !forceJumbo
             ? Futures.immediateFuture(dexes[0])
             : executor.submit(new RunDexMerger(dexes));
     lastWriter =
@@ -175,34 +173,42 @@ class DexFileAggregator implements Closeable {
       case 0:
         return new Dex(0);
       case 1:
-        return dexes[0];
-      default:
-        try {
-          DexMerger dexMerger = new DexMerger(dexes, CollisionPolicy.FAIL, context);
-          dexMerger.setCompactWasteThreshold(wasteThresholdPerDex);
-          return dexMerger.merge();
-        } catch (BufferOverflowException e) {
-          if (dexes.length <= 2) {
-            throw e;
-          }
-          // Bug in dx can cause this for ~1500 or more classes
-          Dex[] left = Arrays.copyOf(dexes, dexes.length / 2);
-          Dex[] right = Arrays.copyOfRange(dexes, left.length, dexes.length);
-          System.err.printf("Couldn't merge %d classes, trying %d%n", dexes.length, left.length);
-          try {
-            return merge(merge(left), merge(right));
-          } catch (RuntimeException e2) {
-            e2.addSuppressed(e);
-            throw e2;
-          }
-        }
+        // Need to actually process the single given file for forceJumbo :(
+        return forceJumbo ? merge(dexes[0], new Dex(0)) : dexes[0];
+      default: // fall out
+    }
+    DexMerger dexMerger = new DexMerger(dexes, CollisionPolicy.FAIL, context);
+    dexMerger.setCompactWasteThreshold(wasteThresholdPerDex);
+    if (forceJumbo) {
+      try {
+        DexMerger.class.getMethod("setForceJumbo", Boolean.TYPE).invoke(dexMerger, true);
+      } catch (ReflectiveOperationException e) {
+        throw new IllegalStateException("--forceJumbo flag not supported", e);
+      }
+    }
+
+    try {
+      return dexMerger.merge();
+    } catch (BufferOverflowException e) {
+      if (dexes.length <= 2) {
+        throw e;
+      }
+      // Bug in dx can cause this for ~1500 or more classes
+      Dex[] left = Arrays.copyOf(dexes, dexes.length / 2);
+      Dex[] right = Arrays.copyOfRange(dexes, left.length, dexes.length);
+      System.err.printf("Couldn't merge %d classes, trying %d%n", dexes.length, left.length);
+      try {
+        return merge(merge(left), merge(right));
+      } catch (RuntimeException e2) {
+        e2.addSuppressed(e);
+        throw e2;
+      }
     }
   }
 
   // More or less copied from from com.android.dx.command.dexer.Main
-  @VisibleForTesting
-  static String getDexFileName(int i) {
-    return i == 0 ? DexFormat.DEX_IN_JAR_NAME : DEX_PREFIX + (i + 1) + DEX_EXTENSION;
+  private String getDexFileName(int i) {
+    return dexPrefix + (i == 0 ? "" : i + 1) + DEX_EXTENSION;
   }
 
   private static String typeName(Dex dex, int typeIndex) {
@@ -252,7 +258,6 @@ class DexFileAggregator implements Closeable {
     private final Dex[] dexes;
 
     public RunDexMerger(Dex... dexes) {
-      checkArgument(dexes.length >= 2, "Only got %s dex files to merge", dexes.length);
       this.dexes = dexes;
     }
 

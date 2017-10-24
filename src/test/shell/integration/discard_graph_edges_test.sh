@@ -145,16 +145,20 @@ EOF
 load(":foo.bzl", "foo")
 load(":bar.bzl", "bar")
 load(":baz.bzl", "baz")
+cc_library(name = 'cclib', srcs = ['cclib.cc'])
 genrule(name = 'histodump',
         srcs = glob(["*.in"]),
         outs = ['histo.txt'],
         local = 1,
+        tools = [':cclib'],
         cmd = 'server_pid=\$\$(cat $server_pid_fifo) ; ' +
               '${bazel_javabase}/bin/jmap -histo:live \$\$server_pid > ' +
               '\$(location histo.txt) ' +
               '|| echo "server_pid in genrule: \$\$server_pid"'
        )
 EOF
+
+  touch histodump/cclib.cc
   rm -f "$server_pid_fifo"
   mkfifo "$server_pid_fifo"
   histo_file="$(bazel info "${PRODUCT_NAME}-genfiles" \
@@ -187,6 +191,10 @@ function test_packages_cleared() {
       'Environment\$Extension$')"
   [[ "$env_count" -ge 3 ]] \
       || fail "env extension count $env_count too low: did you move/rename the class?"
+  local ct_count="$(extract_histogram_count "$histo_file" \
+       'RuleConfiguredTarget$')"
+  [[ "ct_count" -ge 18 ]] \
+      || fail "RuleConfiguredTarget count $ct_count too low: did you move/rename the class?"
   local histo_file="$(prepare_histogram "$BUILD_FLAGS")"
   package_count="$(extract_histogram_count "$histo_file" \
       'devtools\.build\.lib\..*\.Package$')"
@@ -202,6 +210,10 @@ function test_packages_cleared() {
   # a regression in. Fix.
   [[ "$env_count" -le 7 ]] \
       || fail "env extension count $env_count too high"
+  ct_count="$(extract_histogram_count "$histo_file" \
+       'RuleConfiguredTarget$')"
+  [[ "$ct_count" -le 1 ]] \
+      || fail "too many RuleConfiguredTarget: expected at most 1, got $ct_count"
 }
 
 function test_actions_deleted_after_execution() {
@@ -223,8 +235,10 @@ genrule(name = 'action${i}',
         srcs = [':action${iminus}'],
         outs = ['histo.${i}'],
         local = 1,
-        cmd = '${bazel_javabase}/bin/jmap -histo:live '
-              + '\$\$(cat ${server_pid_file}) > \$(location histo.${i})'
+        cmd = 'server_pid=\$\$(cat $server_pid_file) ; ' +
+              '${bazel_javabase}/bin/jmap -histo:live \$\$server_pid > ' +
+              '\$(location histo.${i}) ' +
+              '|| echo "server_pid in genrule: \$\$server_pid"'
        )
 EOF
   done
@@ -232,9 +246,13 @@ EOF
   local readonly histo_root="$(bazel info "${PRODUCT_NAME}-genfiles" \
       2> /dev/null)/histodump/histo."
   bazel clean >& "$TEST_log" || fail "Couldn't clean"
-  bazel $STARTUP_FLAGS build $BUILD_FLAGS //histodump:action3 >& "$TEST_log" &
+  bazel $STARTUP_FLAGS build --show_timestamps $BUILD_FLAGS \
+      //histodump:action3 >> "$TEST_log" 2>&1 &
   server_pid=$!
+  echo "server_pid in main thread is ${server_pid}" >> "$TEST_log"
   echo "$server_pid" > "$server_pid_file"
+  echo "Finished writing pid to fifo at " >> "$TEST_log"
+  date >> "$TEST_log"
   echo "" > "$wait_fifo"
   # Wait for previous command to finish.
   wait "$server_pid" || fail "Bazel command failed"
@@ -261,7 +279,7 @@ function test_action_conflict() {
 
   cat > conflict/conflict_rule.bzl <<EOF || fail "Couldn't write bzl file"
 def _create(ctx):
-  files_to_build = set(ctx.outputs.outs)
+  files_to_build = depset(ctx.outputs.outs)
   intemediate_outputs = [ctx.actions.declare_file("bar")]
   intermediate_cmd = "cat %s > %s" % (ctx.attr.name, intemediate_outputs[0].path)
   action_cmd = "touch " + list(files_to_build)[0].path

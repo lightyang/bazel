@@ -352,6 +352,8 @@ bool OutputJar::AddJar(int jar_path_index) {
       auto &entry_info = got.first->second;
       // Handle special entries (the ones that have a combiner).
       if (entry_info.combiner_ != nullptr) {
+        // TODO(kmb,asmundak): Should be checking Merge() return value but fails
+        // for build-data.properties when merging deploy jars into deploy jars.
         entry_info.combiner_->Merge(jar_entry, lh);
         continue;
       }

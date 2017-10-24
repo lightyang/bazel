@@ -27,6 +27,7 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.rules.java.JavaConfiguration.JavaClasspathMode;
+import com.google.devtools.build.lib.rules.java.JavaRuleOutputJarsProvider.OutputJar;
 import com.google.devtools.build.lib.util.Preconditions;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -154,12 +155,16 @@ public final class JavaLibraryHelper {
     return this;
   }
 
-  /** Creates the compile actions. */
+  /**
+   * Creates the compile actions. Also fills in the {@link JavaRuleOutputJarsProvider.Builder} with
+   * the corresponding compilation outputs.
+   */
   public JavaCompilationArtifacts build(
       JavaSemantics semantics,
       JavaToolchainProvider javaToolchainProvider,
       NestedSet<Artifact> hostJavabase,
-      Iterable<Artifact> jacocoInstrumental) {
+      Iterable<Artifact> jacocoInstrumental,
+      JavaRuleOutputJarsProvider.Builder outputJarsBuilder) {
     Preconditions.checkState(output != null, "must have an output file; use setOutput()");
     JavaTargetAttributes.Builder attributes = new JavaTargetAttributes.Builder(semantics);
     attributes.addSourceJars(sourceJars);
@@ -193,8 +198,13 @@ public final class JavaLibraryHelper {
         null /* gensrcOutputJar */,
         outputDepsProto,
         null /* outputMetadata */);
-    helper.createCompileTimeJarAction(output, artifactsBuilder);
+    Artifact iJar = helper.createCompileTimeJarAction(output, artifactsBuilder);
+
     artifactsBuilder.addRuntimeJar(output);
+
+    outputJarsBuilder
+        .addOutputJar(new OutputJar(output, iJar, sourceJars))
+        .setJdeps(outputDepsProto);
 
     return artifactsBuilder.build();
   }
@@ -221,11 +231,14 @@ public final class JavaLibraryHelper {
             .addTransitiveArgs(directArgs, BOTH)
             .addTransitiveDependencies(deps, true /* recursive */)
             .build();
-
+    Artifact compileTimeDepArtifact = artifacts.getCompileTimeDependencyArtifact();
+    NestedSet<Artifact> compileTimeJavaDepArtifacts = compileTimeDepArtifact != null 
+        ? NestedSetBuilder.create(Order.STABLE_ORDER, compileTimeDepArtifact)
+        : NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER);
     return JavaCompilationArgsProvider.create(
         isReportedAsStrict ? directArgs : transitiveArgs,
         transitiveArgs,
-        NestedSetBuilder.create(Order.STABLE_ORDER, artifacts.getCompileTimeDependencyArtifact()),
+        compileTimeJavaDepArtifacts,
         NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER));
   }
 

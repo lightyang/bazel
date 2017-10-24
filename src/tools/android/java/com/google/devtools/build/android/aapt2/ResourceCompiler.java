@@ -16,6 +16,7 @@ package com.google.devtools.build.android.aapt2;
 
 import com.android.builder.core.VariantType;
 import com.android.repository.Revision;
+import com.google.common.base.Preconditions;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
@@ -45,7 +46,7 @@ public class ResourceCompiler {
     private final Path aapt2;
     private final Revision buildToolsVersion;
 
-    public CompileTask(
+    private CompileTask(
         Path file, Path compiledResourcesOut, Path aapt2, Revision buildToolsVersion) {
       this.file = file;
       this.compiledResourcesOut = compiledResourcesOut;
@@ -65,12 +66,27 @@ public class ResourceCompiler {
               .add("-o", compiledResourcesOut.toString())
               .add(file.toString())
               .execute("Compiling " + file));
+
       String type = file.getParent().getFileName().toString();
       String filename = file.getFileName().toString();
       if (type.startsWith("values")) {
-        filename = filename.substring(0, filename.indexOf('.')) + ".arsc";
+        filename =
+            (filename.indexOf('.') != -1 ? filename.substring(0, filename.indexOf('.')) : filename)
+                + ".arsc";
       }
-      return compiledResourcesOut.resolve(type + "_" + filename + ".flat");
+
+      final Path compiledResourcePath =
+          compiledResourcesOut.resolve(type + "_" + filename + ".flat");
+      Preconditions.checkArgument(
+          Files.exists(compiledResourcePath),
+          "%s does not exists after aapt2 ran.",
+          compiledResourcePath);
+      return compiledResourcePath;
+    }
+
+    @Override
+    public String toString() {
+      return "ResourceCompiler.CompileTask(" + file + ")";
     }
   }
 
@@ -95,7 +111,8 @@ public class ResourceCompiler {
 
     @Override
     public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-      if (!Files.isDirectory(file)) {
+      // Ignore directories and "hidden" files that start with .
+      if (!Files.isDirectory(file) && !file.getFileName().toString().startsWith(".")) {
         tasks.add(
             executorService.submit(
                 new CompileTask(

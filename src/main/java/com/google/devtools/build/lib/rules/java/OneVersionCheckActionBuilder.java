@@ -20,6 +20,8 @@ import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.ParameterFile.ParameterFileType;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
+import com.google.devtools.build.lib.analysis.actions.CustomCommandLine.VectorArg;
+import com.google.devtools.build.lib.analysis.actions.ParamFileInfo;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
@@ -92,7 +94,8 @@ public final class OneVersionCheckActionBuilder {
       oneVersionArgsBuilder.add("--succeed_on_found_violations");
     }
     oneVersionArgsBuilder.addAll(
-        "--inputs", jarsToCheck, OneVersionCheckActionBuilder::jarAndTargetArg);
+        "--inputs",
+        VectorArg.of(jarsToCheck).mapped(OneVersionCheckActionBuilder::jarAndTargetArg));
     CustomCommandLine oneVersionArgs = oneVersionArgsBuilder.build();
     ruleContext.registerAction(
         new SpawnAction.Builder()
@@ -100,8 +103,9 @@ public final class OneVersionCheckActionBuilder {
             .addInput(oneVersionWhitelist)
             .addTransitiveInputs(jarsToCheck)
             .setExecutable(oneVersionTool)
-            .setCommandLine(oneVersionArgs)
-            .alwaysUseParameterFile(ParameterFileType.SHELL_QUOTED)
+            .addCommandLine(
+                oneVersionArgs,
+                ParamFileInfo.builder(ParameterFileType.SHELL_QUOTED).setUseAlways(true).build())
             .setMnemonic("JavaOneVersion")
             .setProgressMessage("Checking for one-version violations in %s", ruleContext.getLabel())
             .build(ruleContext));

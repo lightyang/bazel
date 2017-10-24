@@ -15,17 +15,21 @@
 package com.google.devtools.build.lib.rules.genrule;
 
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.actions.ActionEnvironment;
 import com.google.devtools.build.lib.actions.ActionExecutionContext;
 import com.google.devtools.build.lib.actions.ActionOwner;
 import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.actions.CommandLineExpansionException;
 import com.google.devtools.build.lib.actions.ExecException;
 import com.google.devtools.build.lib.actions.ResourceSet;
 import com.google.devtools.build.lib.actions.RunfilesSupplier;
+import com.google.devtools.build.lib.actions.SpawnResult;
 import com.google.devtools.build.lib.analysis.actions.CommandLine;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.events.EventHandler;
 import java.util.List;
+import java.util.Set;
 
 /**
  * A spawn action for genrules. Genrules are handled specially in that inputs and outputs are
@@ -65,11 +69,17 @@ public class GenRuleAction extends SpawnAction {
   }
 
   @Override
-  protected void internalExecute(
-      ActionExecutionContext actionExecutionContext) throws ExecException, InterruptedException {
+  protected Set<SpawnResult> internalExecute(ActionExecutionContext actionExecutionContext)
+      throws ExecException, InterruptedException {
     EventHandler reporter = actionExecutionContext.getEventHandler();
-    checkInputsForDirectories(reporter, actionExecutionContext.getMetadataHandler());
-    super.internalExecute(actionExecutionContext);
+    checkInputsForDirectories(reporter, actionExecutionContext.getActionInputFileCache());
+    Set<SpawnResult> spawnResults = ImmutableSet.of();
+    try {
+      spawnResults = super.internalExecute(actionExecutionContext);
+    } catch (CommandLineExpansionException e) {
+      throw new AssertionError("GenRuleAction command line expansion cannot fail");
+    }
     checkOutputsForDirectories(reporter);
+    return spawnResults;
   }
 }

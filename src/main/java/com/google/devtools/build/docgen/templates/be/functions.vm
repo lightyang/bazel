@@ -474,7 +474,7 @@ There are several important limitations and caveats:
     existence of BUILD files &mdash; that is, the same glob expression would
     include <code>x/y/z.cc</code> if there was no package called
     <code>x/y</code> or it was marked as deleted using the
-    <a href="../bazel-user-manual.html#flag--deleted_packages">--deleted_packages</a>
+    <a href="../user-manual.html#flag--deleted_packages">--deleted_packages</a>
     flag.
 
   </li>
@@ -555,7 +555,8 @@ sh_test(
 <p>Create a library built from all java files in this directory and all
 subdirectories except those whose path includes a directory named testing.
 Subdirectories containing a BUILD file are ignored.
-<b>This should be a very common pattern.</b>
+<b>This pattern should be avoided if possible, as it can reduce build
+incrementality and therefore increase build times.</b>
 </p>
 <pre class="code">
 java_library(

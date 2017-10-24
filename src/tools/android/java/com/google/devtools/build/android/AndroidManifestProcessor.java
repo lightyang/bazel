@@ -129,10 +129,10 @@ public class AndroidManifestProcessor {
       Map<Path, String> mergeeManifests,
       MergeType mergeType,
       Map<String, String> values,
+      String customPackage,
       Path output,
-      Path logFile)
-      throws ManifestProcessingException {
-    if (mergeeManifests.isEmpty() && values.isEmpty()) {
+      Path logFile) throws ManifestProcessingException {
+    if (mergeeManifests.isEmpty() && values.isEmpty() && Strings.isNullOrEmpty(customPackage)) {
       return manifest;
     }
 
@@ -171,6 +171,11 @@ public class AndroidManifestProcessor {
     // it cannot be manually specified.
     placeholders.remove(PlaceholderHandler.PACKAGE_NAME);
     manifestMerger.setPlaceHolderValues(placeholders);
+
+    // Ignore custom package at the binary level.
+    if (!Strings.isNullOrEmpty(customPackage) && mergeType == MergeType.LIBRARY) {
+      manifestMerger.setOverride(SystemProperty.PACKAGE, customPackage);
+    }
 
     try {
       MergingReport mergingReport = manifestMerger.merge();
@@ -246,13 +251,29 @@ public class AndroidManifestProcessor {
       Path manifest,
       Path processedManifest) {
 
-    ManifestMerger2.MergeType mergeType = ManifestMerger2.MergeType.APPLICATION;
-
-    String newManifestPackage = applicationId;
-
-    if (versionCode != -1 || versionName != null || newManifestPackage != null) {
+    if (versionCode != -1 || versionName != null || applicationId != null) {
       processManifest(
-          versionCode, versionName, manifest, processedManifest, mergeType, newManifestPackage);
+          versionCode, versionName, manifest, processedManifest, MergeType.APPLICATION,
+          applicationId);
+      return processedManifest;
+    }
+    return manifest;
+  }
+
+  /** Processes the manifest for a library and return the manifest Path. */
+  public Path processLibraryManifest(
+      String newManifestPackage,
+      Path manifest,
+      Path processedManifest) {
+
+    if (newManifestPackage != null) {
+      processManifest(
+          -1 /* versionCode */,
+          null /* versionName */,
+          manifest,
+          processedManifest,
+          MergeType.LIBRARY,
+          newManifestPackage);
       return processedManifest;
     }
     return manifest;
@@ -373,6 +394,19 @@ public class AndroidManifestProcessor {
     stdLogger.verbose(annotatedDocument);
     try {
       Files.write(manifestOut, manifestContents.getBytes(UTF_8));
+    } catch (IOException e) {
+      throw new ManifestProcessingException(e);
+    }
+  }
+
+  public static Path writeDummyManifestForAapt(Path dummyManifest, String packageForR) {
+    try {
+      Files.createDirectories(dummyManifest.getParent());
+      return Files.write(dummyManifest, String.format(
+          "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+              + "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\""
+              + " package=\"%s\">"
+              + "</manifest>", packageForR).getBytes(UTF_8));
     } catch (IOException e) {
       throw new ManifestProcessingException(e);
     }

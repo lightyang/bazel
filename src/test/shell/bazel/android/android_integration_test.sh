@@ -81,7 +81,7 @@ function test_sdk_library_deps() {
   cat > java/a/BUILD<<EOF
 android_library(
     name = "a",
-    deps = ["@androidsdk//com.android.support:mediarouter-v7-24.0.0"],
+    exports = ["@androidsdk//com.android.support:mediarouter-v7-24.0.0"],
 )
 EOF
 
@@ -160,6 +160,21 @@ EOF
   expect_log "Either the path attribute of android_sdk_repository"
 }
 
+function test_android_sdk_repository_wrong_path() {
+  create_new_workspace
+  mkdir "$TEST_SRCDIR/some_dir"
+  cat > WORKSPACE <<EOF
+android_sdk_repository(
+    name = "androidsdk",
+    api_level = 25,
+    path = "$TEST_SRCDIR/some_dir",
+)
+EOF
+  bazel build @androidsdk//:files >& $TEST_log && fail "Should have failed"
+  expect_log "Unable to read the Android SDK at $TEST_SRCDIR/some_dir, the path may be invalid." \
+    " Is the path in android_sdk_repository() or \$ANDROID_SDK_HOME set correctly?"
+}
+
 # Check that the build succeeds if an android_sdk is specified with --android_sdk
 function test_specifying_android_sdk_flag() {
   create_new_workspace
@@ -186,7 +201,72 @@ function test_android_sdk_repository_returns_null_if_env_vars_missing() {
   ANDROID_HOME=$ANDROID_SDK bazel build @androidsdk//:files || "Build failed"
 }
 
-if [[ ! -r "${TEST_SRCDIR}/androidsdk/tools/android" ]]; then
+function test_allow_custom_manifest_name() {
+  create_new_workspace
+  setup_android_sdk_support
+  create_android_binary
+  mv java/bazel/AndroidManifest.xml java/bazel/SomeOtherName.xml
+
+  # macOS requires an argument for the backup file extension.
+  sed -i'' -e 's/AndroidManifest/SomeOtherName/' java/bazel/BUILD
+
+  bazel build //java/bazel:bin || fail "Build failed" \
+    "Failed to build android_binary with custom Android manifest file name"
+}
+
+function test_proguard() {
+  create_new_workspace
+  setup_android_sdk_support
+  mkdir -p java/com/bin
+  cat > java/com/bin/BUILD <<EOF
+android_binary(
+  name = 'bin',
+  srcs = ['Bin.java', 'NotUsed.java'],
+  manifest = 'AndroidManifest.xml',
+  proguard_specs = ['proguard.config'],
+  deps = [':lib'],
+)
+android_library(
+  name = 'lib',
+  srcs = ['Lib.java'],
+)
+EOF
+  cat > java/com/bin/AndroidManifest.xml <<EOF
+<manifest package='com.bin' />
+EOF
+  cat > java/com/bin/Bin.java <<EOF
+package com.bin;
+public class Bin {
+  public Lib getLib() {
+    return new Lib();
+  }
+}
+EOF
+  cat > java/com/bin/NotUsed.java <<EOF
+package com.bin;
+public class NotUsed {}
+EOF
+  cat > java/com/bin/Lib.java <<EOF
+package com.bin;
+public class Lib {}
+EOF
+  cat > java/com/bin/proguard.config <<EOF
+-keep public class com.bin.Bin {
+  public *;
+}
+EOF
+  assert_build //java/com/bin
+  output_classes=$(zipinfo -1 bazel-bin/java/com/bin/bin_proguard.jar)
+  assert_equals 3 $(wc -w <<< $output_classes)
+  assert_one_of $output_classes "META-INF/MANIFEST.MF"
+  assert_one_of $output_classes "com/bin/Bin.class"
+  # Not kept by proguard
+  assert_not_one_of $output_classes "com/bin/Unused.class"
+  # This is renamed by proguard to something else
+  assert_not_one_of $output_classes "com/bin/Lib.class"
+}
+
+if [[ ! -d "${TEST_SRCDIR}/androidsdk" ]]; then
   echo "Not running Android tests due to lack of an Android SDK."
   exit 0
 fi

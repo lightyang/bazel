@@ -62,8 +62,8 @@ public final class CleanCommand implements BlazeCommand {
       name = "clean_style",
       defaultValue = "",
       category = "clean",
-      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-      effectTags = {OptionEffectTag.UNKNOWN},
+      documentationCategory = OptionDocumentationCategory.OUTPUT_SELECTION,
+      effectTags = {OptionEffectTag.HOST_MACHINE_RESOURCE_OPTIMIZATIONS},
       help = "Can be 'expunge', 'expunge_async', or 'async'."
     )
     public String cleanStyle;
@@ -73,8 +73,8 @@ public final class CleanCommand implements BlazeCommand {
       defaultValue = "null",
       category = "clean",
       expansion = "--clean_style=expunge",
-      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-      effectTags = {OptionEffectTag.UNKNOWN},
+        documentationCategory = OptionDocumentationCategory.OUTPUT_SELECTION,
+      effectTags = {OptionEffectTag.HOST_MACHINE_RESOURCE_OPTIMIZATIONS},
       help =
           "If specified, clean removes the entire working tree for this %{product} "
               + "instance, which includes all %{product}-created temporary and build output "
@@ -87,8 +87,8 @@ public final class CleanCommand implements BlazeCommand {
       defaultValue = "null",
       category = "clean",
       expansion = "--clean_style=expunge_async",
-      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-      effectTags = {OptionEffectTag.UNKNOWN},
+        documentationCategory = OptionDocumentationCategory.OUTPUT_SELECTION,
+      effectTags = {OptionEffectTag.HOST_MACHINE_RESOURCE_OPTIMIZATIONS},
       help =
           "If specified, clean asynchronously removes the entire working tree for "
               + "this %{product} instance, which includes all %{product}-created temporary and "
@@ -103,8 +103,8 @@ public final class CleanCommand implements BlazeCommand {
       defaultValue = "null",
       category = "clean",
       expansion = "--clean_style=async",
-      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-      effectTags = {OptionEffectTag.UNKNOWN},
+        documentationCategory = OptionDocumentationCategory.OUTPUT_SELECTION,
+      effectTags = {OptionEffectTag.HOST_MACHINE_RESOURCE_OPTIMIZATIONS},
       help =
           "If specified, clean asynchronously removes the entire working tree for "
               + "this %{product} instance, which includes all %{product}-created temporary and "
@@ -130,7 +130,7 @@ public final class CleanCommand implements BlazeCommand {
     }
   }
 
-  private static Logger LOG = Logger.getLogger(CleanCommand.class.getName());
+  private static final Logger logger = Logger.getLogger(CleanCommand.class.getName());
 
   @Override
   public ExitCode exec(CommandEnvironment env, OptionsProvider options)
@@ -216,7 +216,7 @@ public final class CleanCommand implements BlazeCommand {
             "exec >&- 2>&- <&- && (/usr/bin/setsid /bin/rm -rf %s &)&",
             ShellEscaper.escapeString(tempPath.getPathString()));
 
-    LOG.info("Executing shell commmand " + ShellEscaper.escapeString(command));
+    logger.info("Executing shell commmand " + ShellEscaper.escapeString(command));
 
     // Doesn't throw iff command exited and was successful.
     new CommandBuilder()
@@ -242,7 +242,7 @@ public final class CleanCommand implements BlazeCommand {
     }
     env.getBlazeWorkspace().clearCaches();
     if (expunge) {
-      LOG.info("Expunging...");
+      logger.info("Expunging...");
       env.getRuntime().prepareForAbruptShutdown();
       // Close java.log.
       LogManager.getLogManager().reset();
@@ -264,23 +264,19 @@ public final class CleanCommand implements BlazeCommand {
       FileSystemUtils.deleteTreesBelow(outputBase);
       FileSystemUtils.deleteTree(outputBase);
     } else if (expungeAsync) {
-      LOG.info("Expunging asynchronously...");
+      logger.info("Expunging asynchronously...");
       env.getRuntime().prepareForAbruptShutdown();
       asyncClean(env, outputBase, "Output base");
     } else {
-      LOG.info("Output cleaning...");
+      logger.info("Output cleaning...");
       env.getBlazeWorkspace().resetEvaluator();
-      // In order to be sure that we delete everything, delete the workspace directory both for
-      // --deep_execroot and for --nodeep_execroot.
-      for (String directory : new String[] {workspaceDirectory, "execroot"}) {
-        Path child = outputBase.getRelative(directory);
-        if (child.exists()) {
-          LOG.finest("Cleaning " + child + (async ? " asynchronously..." : ""));
-          if (async) {
-            asyncClean(env, child, "Output tree");
-          } else {
-            FileSystemUtils.deleteTreesBelow(child);
-          }
+      Path execroot = outputBase.getRelative("execroot");
+      if (execroot.exists()) {
+        logger.finest("Cleaning " + execroot + (async ? " asynchronously..." : ""));
+        if (async) {
+          asyncClean(env, execroot, "Output tree");
+        } else {
+          FileSystemUtils.deleteTreesBelow(execroot);
         }
       }
     }

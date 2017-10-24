@@ -194,13 +194,13 @@ genrule(
     testonly = 1,
     srcs = [
         "//src/java_tools/singlejar:srcs",
-        "//src/main/protobuf:srcs",
-        "//src/main/java/com/google/devtools/build/lib:srcs",
         "//src/main/java/com/google/devtools/build/lib/actions:srcs",
-        "//src/main/java/com/google/devtools/build/lib/sandbox:srcs",
         "//src/main/java/com/google/devtools/build/lib/rules/genquery:srcs",
-        "//src/main/java/com/google/devtools/build/lib/worker:srcs",
+        "//src/main/java/com/google/devtools/build/lib/sandbox:srcs",
         "//src/main/java/com/google/devtools/build/lib/standalone:srcs",
+        "//src/main/java/com/google/devtools/build/lib/worker:srcs",
+        "//src/main/java/com/google/devtools/build/lib:srcs",
+        "//src/main/protobuf:srcs",
         "//src/tools/xcode-common:srcs",
         "//third_party:srcs",
     ],
@@ -234,6 +234,16 @@ sh_test(
     name = "git_repository_test",
     size = "large",
     srcs = ["git_repository_test.sh"],
+    data = [
+        ":test-deps",
+        "//src/test/shell/bazel/testdata:git-repos",
+    ],
+)
+
+sh_test(
+    name = "skylark_git_repository_test",
+    size = "large",
+    srcs = ["skylark_git_repository_test.sh"],
     data = [
         ":test-deps",
         "//src/test/shell/bazel/testdata:git-repos",
@@ -277,6 +287,13 @@ sh_test(
     srcs = ["skylark_repository_test.sh"],
     data = [":test-deps"],
     shard_count = 6,
+)
+
+sh_test(
+    name = "local_action_cache_test",
+    size = "small",
+    srcs = ["local_action_cache_test.sh"],
+    data = [":test-deps"],
 )
 
 sh_test(
@@ -420,6 +437,7 @@ sh_test(
     size = "large",
     srcs = ["bazel_repository_cache_test.sh"],
     data = [":test-deps"],
+    shard_count = 4,
 )
 
 sh_test(
@@ -460,7 +478,10 @@ sh_test(
         ":test-deps",
         "//:bazel-distfile",
     ],
-    tags = ["jdk8"],
+    tags = [
+        "jdk8",
+        "slow",
+    ],
 )
 
 sh_test(
@@ -480,9 +501,10 @@ sh_test(
 
 sh_test(
     name = "toolchain_test",
-    size = "medium",
+    size = "large",
     srcs = ["toolchain_test.sh"],
     data = [":test-deps"],
+    shard_count = 5,
 )
 
 sh_test(

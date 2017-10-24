@@ -18,9 +18,9 @@ import com.google.common.collect.ImmutableList;
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
 import com.google.devtools.build.lib.analysis.config.InvalidConfigurationException;
 import com.google.devtools.build.lib.cmdline.Label;
-import com.google.devtools.build.lib.skyframe.serialization.AbstractObjectCodecTest;
 import com.google.devtools.build.lib.skyframe.serialization.ObjectCodec;
 import com.google.devtools.build.lib.skyframe.serialization.SerializationException;
+import com.google.devtools.build.lib.skyframe.serialization.testutils.AbstractObjectCodecTest;
 import com.google.devtools.common.options.OptionsParsingException;
 import com.google.protobuf.CodedInputStream;
 import com.google.protobuf.CodedOutputStream;
@@ -83,7 +83,7 @@ public class AppleConfigurationSerializationTest
     firstOptions.appleBitcodeMode = AppleCommandLineOptions.AppleBitcodeMode.EMBEDDED_MARKERS;
     firstOptions.enableAppleCrosstoolTransition = false;
     firstOptions.targetUsesAppleCrosstool = true;
-    firstOptions.xcodeVersion = DottedVersion.fromString("1.0");
+    firstOptions.xcodeVersion = "1.0";
     try {
       return new AppleConfiguration[] {
         new AppleConfiguration(

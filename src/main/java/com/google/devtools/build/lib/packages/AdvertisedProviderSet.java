@@ -33,7 +33,6 @@ import java.util.Objects;
  * our current dependency structure does not allow a reference to that class here.
  * </p>
  */
-// todo(dslomov,vladmos): support declared providers
 @Immutable
 public final class AdvertisedProviderSet {
   private final boolean canHaveAnyProvider;
@@ -85,6 +84,15 @@ public final class AdvertisedProviderSet {
     return Objects.equals(this.canHaveAnyProvider, that.canHaveAnyProvider)
         && Objects.equals(this.nativeProviders, that.nativeProviders)
         && Objects.equals(this.skylarkProviders, that.skylarkProviders);
+  }
+
+  @Override
+  public String toString() {
+    if (canHaveAnyProvider()) {
+      return "Any Provider";
+    }
+    return String.format("allowed native providers=%s, allowed skylark providers=%s",
+        getNativeProviders(), getSkylarkProviders());
   }
 
   /** Checks whether the rule can have any provider.

@@ -13,6 +13,7 @@
 // limitations under the License.
 package com.google.devtools.build.lib.skyframe;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Throwables;
 import com.google.common.cache.Cache;
 import com.google.common.collect.ImmutableCollection;
@@ -52,7 +53,7 @@ import com.google.devtools.build.lib.syntax.Environment.Extension;
 import com.google.devtools.build.lib.syntax.EvalException;
 import com.google.devtools.build.lib.syntax.ParserInputSource;
 import com.google.devtools.build.lib.syntax.SkylarkImport;
-import com.google.devtools.build.lib.syntax.SkylarkSemanticsOptions;
+import com.google.devtools.build.lib.syntax.SkylarkSemantics;
 import com.google.devtools.build.lib.syntax.Statement;
 import com.google.devtools.build.lib.util.Pair;
 import com.google.devtools.build.lib.util.Preconditions;
@@ -132,6 +133,7 @@ public class PackageFunction implements SkyFunction {
     this.actionOnIOExceptionReadingBuildFile = actionOnIOExceptionReadingBuildFile;
   }
 
+  @VisibleForTesting
   public PackageFunction(
       PackageFactory packageFactory,
       CachingPackageLocator pkgLocator,
@@ -148,7 +150,7 @@ public class PackageFunction implements SkyFunction {
         astCache,
         numPackagesLoaded,
         skylarkImportLookupFunctionForInlining,
-        null,
+        /*packageProgress=*/ null,
         ActionOnIOExceptionReadingBuildFile.UseOriginalIOException.INSTANCE);
   }
 
@@ -530,7 +532,7 @@ public class PackageFunction implements SkyFunction {
       return null;
     }
 
-    SkylarkSemanticsOptions skylarkSemantics = PrecomputedValue.SKYLARK_SEMANTICS.get(env);
+    SkylarkSemantics skylarkSemantics = PrecomputedValue.SKYLARK_SEMANTICS.get(env);
     if (skylarkSemantics == null) {
       return null;
     }
@@ -1184,7 +1186,7 @@ public class PackageFunction implements SkyFunction {
       Path buildFilePath,
       @Nullable FileValue buildFileValue,
       RuleVisibility defaultVisibility,
-      SkylarkSemanticsOptions skylarkSemantics,
+      SkylarkSemantics skylarkSemantics,
       List<Statement> preludeStatements,
       Path packageRoot,
       Environment env)

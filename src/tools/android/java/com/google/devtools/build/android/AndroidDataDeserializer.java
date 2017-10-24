@@ -112,7 +112,7 @@ public class AndroidDataDeserializer {
       }
       readEntriesSegment(consumers, in, currentFileSystem, header);
     } catch (IOException e) {
-      throw new DeserializationException(e);
+      throw new DeserializationException("Error deserializing " + inPath, e);
     } finally {
       logger.fine(
           String.format("Deserialized in merged in %sms", timer.elapsed(TimeUnit.MILLISECONDS)));
@@ -162,19 +162,19 @@ public class AndroidDataDeserializer {
       if (protoValue.hasXmlValue()) {
         // TODO(corysmith): Figure out why the generics are wrong.
         // If I use Map<DataKey, KeyValueConsumer<DataKey, ? extends DataValue>>, I can put
-        // consumers into the map, but I can't call consume.
+        // consumers into the map, but I can't call accept.
         // If I use Map<DataKey, KeyValueConsumer<DataKey, ? super DataValue>>, I can consume
         // but I can't put.
         // Same for below.
         @SuppressWarnings("unchecked")
         KeyValueConsumer<DataKey, DataValue> value =
             (KeyValueConsumer<DataKey, DataValue>) entry.getValue();
-        value.consume(entry.getKey(), DataResourceXml.from(protoValue, source));
+        value.accept(entry.getKey(), DataResourceXml.from(protoValue, source));
       } else {
         @SuppressWarnings("unchecked")
         KeyValueConsumer<DataKey, DataValue> value =
             (KeyValueConsumer<DataKey, DataValue>) entry.getValue();
-        value.consume(entry.getKey(), DataValueFile.of(source));
+        value.accept(entry.getKey(), DataValueFile.of(source));
       }
     }
   }

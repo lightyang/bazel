@@ -21,7 +21,6 @@ import com.google.common.collect.Streams;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
-import com.google.devtools.build.lib.analysis.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetBuilder;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetFactory;
 import com.google.devtools.build.lib.analysis.RuleContext;
@@ -32,6 +31,7 @@ import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.analysis.actions.TemplateExpansionAction;
 import com.google.devtools.build.lib.analysis.actions.TemplateExpansionAction.Substitution;
 import com.google.devtools.build.lib.analysis.actions.TemplateExpansionAction.Template;
+import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.test.ExecutionInfo;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
@@ -182,10 +182,8 @@ public class AndroidInstrumentationTest implements RuleConfiguredTargetFactory {
   private static Iterable<Artifact> getTargetApks(RuleContext ruleContext) {
     return Iterables.transform(
         ruleContext.getPrerequisites(
-            "instrumentations",
-            Mode.TARGET,
-            AndroidInstrumentationInfoProvider.ANDROID_INSTRUMENTATION_INFO),
-        AndroidInstrumentationInfoProvider::getTargetApk);
+            "instrumentations", Mode.TARGET, AndroidInstrumentationInfo.PROVIDER),
+        AndroidInstrumentationInfo::getTargetApk);
   }
 
   /**
@@ -195,10 +193,8 @@ public class AndroidInstrumentationTest implements RuleConfiguredTargetFactory {
   private static Iterable<Artifact> getInstrumentationApks(RuleContext ruleContext) {
     return Iterables.transform(
         ruleContext.getPrerequisites(
-            "instrumentations",
-            Mode.TARGET,
-            AndroidInstrumentationInfoProvider.ANDROID_INSTRUMENTATION_INFO),
-        AndroidInstrumentationInfoProvider::getInstrumentationApk);
+            "instrumentations", Mode.TARGET, AndroidInstrumentationInfo.PROVIDER),
+        AndroidInstrumentationInfo::getInstrumentationApk);
   }
 
   /** The support APKs from the {@code support_apks} and {@code fixtures} attributes. */
@@ -300,8 +296,9 @@ public class AndroidInstrumentationTest implements RuleConfiguredTargetFactory {
   private static String getTestSuitePropertyName(RuleContext ruleContext)
       throws RuleErrorException {
     try {
-      return ResourceFileLoader.loadResource(
-          AndroidInstrumentationTest.class, TEST_SUITE_PROPERTY_NAME_FILE);
+      return ResourceFileLoader
+          .loadResource(AndroidInstrumentationTest.class, TEST_SUITE_PROPERTY_NAME_FILE)
+          .trim();
     } catch (IOException e) {
       ruleContext.throwWithRuleError("Cannot load test suite property name: " + e.getMessage());
       return null;

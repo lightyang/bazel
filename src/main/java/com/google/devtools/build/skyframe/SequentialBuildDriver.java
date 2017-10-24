@@ -59,8 +59,8 @@ public class SequentialBuildDriver implements BuildDriver {
 
   @Nullable
   @Override
-  public SkyValue getExistingValueForTesting(SkyKey key) {
-    return memoizingEvaluator.getExistingValueForTesting(key);
+  public SkyValue getExistingValueForTesting(SkyKey key) throws InterruptedException {
+    return memoizingEvaluator.getExistingValue(key);
   }
 
   @Nullable
@@ -71,7 +71,7 @@ public class SequentialBuildDriver implements BuildDriver {
 
   @Nullable
   @Override
-  public NodeEntry getEntryForTesting(SkyKey key) {
+  public NodeEntry getEntryForTesting(SkyKey key) throws InterruptedException {
     return memoizingEvaluator.getExistingEntryForTesting(key);
   }
 }

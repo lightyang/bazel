@@ -31,6 +31,8 @@ import com.google.devtools.build.lib.analysis.config.BuildOptions;
 import com.google.devtools.build.lib.analysis.config.ConfigurationFragmentFactory;
 import com.google.devtools.build.lib.analysis.test.CoverageReportActionFactory;
 import com.google.devtools.build.lib.buildeventstream.PathConverter;
+import com.google.devtools.build.lib.clock.BlazeClock;
+import com.google.devtools.build.lib.clock.Clock;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.OutputFilter;
 import com.google.devtools.build.lib.packages.Package;
@@ -52,12 +54,10 @@ import com.google.devtools.build.lib.runtime.proto.InvocationPolicyOuterClass.In
 import com.google.devtools.build.lib.server.RPCServer;
 import com.google.devtools.build.lib.server.signal.InterruptSignalHandler;
 import com.google.devtools.build.lib.shell.JavaSubprocessFactory;
-import com.google.devtools.build.lib.shell.Subprocess;
 import com.google.devtools.build.lib.shell.SubprocessBuilder;
+import com.google.devtools.build.lib.shell.SubprocessFactory;
 import com.google.devtools.build.lib.unix.UnixFileSystem;
 import com.google.devtools.build.lib.util.AbruptExitException;
-import com.google.devtools.build.lib.util.BlazeClock;
-import com.google.devtools.build.lib.util.Clock;
 import com.google.devtools.build.lib.util.CustomExitCodePublisher;
 import com.google.devtools.build.lib.util.ExitCode;
 import com.google.devtools.build.lib.util.LoggingUtil;
@@ -76,18 +76,17 @@ import com.google.devtools.build.lib.windows.WindowsSubprocessFactory;
 import com.google.devtools.common.options.CommandNameCache;
 import com.google.devtools.common.options.InvocationPolicyParser;
 import com.google.devtools.common.options.OptionDefinition;
-import com.google.devtools.common.options.OptionPriority;
+import com.google.devtools.common.options.OptionPriority.PriorityCategory;
 import com.google.devtools.common.options.OptionsBase;
 import com.google.devtools.common.options.OptionsClassProvider;
 import com.google.devtools.common.options.OptionsParser;
-import com.google.devtools.common.options.OptionsParser.ConstructionException;
 import com.google.devtools.common.options.OptionsParsingException;
 import com.google.devtools.common.options.OptionsProvider;
 import com.google.devtools.common.options.TriState;
 import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.lang.reflect.Field;
+import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
@@ -121,7 +120,7 @@ public final class BlazeRuntime {
   private static final Pattern suppressFromLog =
       Pattern.compile("--client_env=([^=]*(?:auth|pass|cookie)[^=]*)=", Pattern.CASE_INSENSITIVE);
 
-  private static final Logger LOG = Logger.getLogger(BlazeRuntime.class.getName());
+  private static final Logger logger = Logger.getLogger(BlazeRuntime.class.getName());
 
   private final Iterable<BlazeModule> blazeModules;
   private final Map<String, BlazeCommand> commandMap = new LinkedHashMap<>();
@@ -205,8 +204,8 @@ public final class BlazeRuntime {
     for (BlazeModule module : blazeModules) {
       module.workspaceInit(this, directories, builder);
     }
-    this.workspace = builder.build(
-        this, packageFactory, ruleClassProvider, getProductName(), eventBusExceptionHandler);
+    this.workspace =
+        builder.build(this, packageFactory, ruleClassProvider, eventBusExceptionHandler);
     return workspace;
   }
 
@@ -523,7 +522,7 @@ public final class BlazeRuntime {
   public static final class RemoteExceptionHandler implements SubscriberExceptionHandler {
     @Override
     public void handleException(Throwable exception, SubscriberExceptionContext context) {
-      LOG.log(Level.SEVERE, "Failure in EventBus subscriber", exception);
+      logger.log(Level.SEVERE, "Failure in EventBus subscriber", exception);
       LoggingUtil.logToRemote(Level.SEVERE, "Failure in EventBus subscriber.", exception);
     }
   }
@@ -551,7 +550,7 @@ public final class BlazeRuntime {
       // Run Blaze in batch mode.
       System.exit(batchMain(modules, args));
     }
-    LOG.info(
+    logger.info(
         "Starting Blaze server with pid "
             + maybeGetPidString()
             + " and args "
@@ -646,23 +645,17 @@ public final class BlazeRuntime {
   static CommandLineOptions splitStartupOptions(
       Iterable<BlazeModule> modules, String... args) {
     List<String> prefixes = new ArrayList<>();
-    List<Field> startupFields = Lists.newArrayList();
+    List<OptionDefinition> startupOptions = Lists.newArrayList();
     for (Class<? extends OptionsBase> defaultOptions
       : BlazeCommandUtils.getStartupOptions(modules)) {
-      startupFields.addAll(ImmutableList.copyOf(defaultOptions.getFields()));
+      startupOptions.addAll(OptionsParser.getOptionDefinitions(defaultOptions));
     }
 
-    for (Field field : startupFields) {
-      try {
-        OptionDefinition optionDefinition = OptionDefinition.extractOptionDefinition(field);
-        prefixes.add("--" + optionDefinition.getOptionName());
-        if (field.getType() == boolean.class || field.getType() == TriState.class) {
-          prefixes.add("--no" + optionDefinition.getOptionName());
-        }
-      } catch (ConstructionException e) {
-        // Do nothing, just ignore fields that are not actually options. OptionsBases technically
-        // shouldn't have fields that are not @Options, but this is a requirement that isn't yet
-        // being enforced, so this should not cause a failure here.
+    for (OptionDefinition optionDefinition : startupOptions) {
+      Type optionType = optionDefinition.getField().getType();
+      prefixes.add("--" + optionDefinition.getOptionName());
+      if (optionType == boolean.class || optionType == TriState.class) {
+        prefixes.add("--no" + optionDefinition.getOptionName());
       }
     }
 
@@ -696,7 +689,7 @@ public final class BlazeRuntime {
           while (true) {
             count++;
             Uninterruptibles.sleepUninterruptibly(10, TimeUnit.SECONDS);
-            LOG.warning("Slow interrupt number " + count + " in batch mode");
+            logger.warning("Slow interrupt number " + count + " in batch mode");
             ThreadUtils.warnAboutSlowInterrupt();
           }
         };
@@ -704,7 +697,7 @@ public final class BlazeRuntime {
     new InterruptSignalHandler() {
       @Override
       public void run() {
-        LOG.info("User interrupt");
+        logger.info("User interrupt");
         OutErr.SYSTEM_OUT_ERR.printErrLn("Blaze received an interrupt");
         mainThread.interrupt();
 
@@ -714,7 +707,7 @@ public final class BlazeRuntime {
           interruptWatcherThread.setDaemon(true);
           interruptWatcherThread.start();
         } else if (curNumInterrupts == 2) {
-          LOG.warning("Second --batch interrupt: Reverting to JVM SIGINT handler");
+          logger.warning("Second --batch interrupt: Reverting to JVM SIGINT handler");
           uninstall();
         }
       }
@@ -728,7 +721,7 @@ public final class BlazeRuntime {
   private static int batchMain(Iterable<BlazeModule> modules, String[] args) {
     captureSigint();
     CommandLineOptions commandLineOptions = splitStartupOptions(modules, args);
-    LOG.info(
+    logger.info(
         "Running Blaze in batch mode with "
             + maybeGetPidString()
             + "startup args "
@@ -758,7 +751,7 @@ public final class BlazeRuntime {
     BlazeCommandDispatcher dispatcher = new BlazeCommandDispatcher(runtime);
 
     try {
-      LOG.info(getRequestLogString(commandLineOptions.getOtherArgs()));
+      logger.info(getRequestLogString(commandLineOptions.getOtherArgs()));
       return dispatcher.exec(
           policy,
           commandLineOptions.getOtherArgs(),
@@ -792,7 +785,7 @@ public final class BlazeRuntime {
           new InterruptSignalHandler() {
             @Override
             public void run() {
-              LOG.severe("User interrupt");
+              logger.severe("User interrupt");
               blazeServer.interrupt();
             }
           };
@@ -815,7 +808,7 @@ public final class BlazeRuntime {
     }
   }
 
-  private static FileSystem fileSystemImplementation() {
+  private static FileSystem defaultFileSystemImplementation() {
     if ("0".equals(System.getProperty("io.bazel.EnableJni"))) {
       // Ignore UnixFileSystem, to be used for bootstrapping.
       return OS.getCurrent() == OS.WINDOWS ? new WindowsFileSystem() : new JavaIoFileSystem();
@@ -824,7 +817,7 @@ public final class BlazeRuntime {
     return OS.getCurrent() == OS.WINDOWS ? new WindowsFileSystem() : new UnixFileSystem();
   }
 
-  private static Subprocess.Factory subprocessFactoryImplementation() {
+  private static SubprocessFactory subprocessFactoryImplementation() {
     if (!"0".equals(System.getProperty("io.bazel.EnableJni")) && OS.getCurrent() == OS.WINDOWS) {
       return WindowsSubprocessFactory.INSTANCE;
     } else {
@@ -835,6 +828,7 @@ public final class BlazeRuntime {
   /**
    * Creates and returns a new Blaze RPCServer. Call {@link RPCServer#serve()} to start the server.
    */
+  @SuppressWarnings("LiteralClassName")  // bootstrap binary does not have gRPC
   private static RPCServer createBlazeRPCServer(
       Iterable<BlazeModule> modules, List<String> args)
       throws IOException, OptionsParsingException, AbruptExitException {
@@ -880,18 +874,21 @@ public final class BlazeRuntime {
     // First parse the command line so that we get the option_sources argument
     OptionsParser parser = OptionsParser.newOptionsParser(optionClasses);
     parser.setAllowResidue(false);
-    parser.parse(OptionPriority.COMMAND_LINE, null, args);
+    parser.parse(PriorityCategory.COMMAND_LINE, null, args);
     Map<String, String> optionSources =
         parser.getOptions(BlazeServerStartupOptions.class).optionSources;
-    Function<String, String> sourceFunction = option ->
-        !optionSources.containsKey(option) ? "default"
-            : optionSources.get(option).isEmpty() ? "command line"
-            : optionSources.get(option);
+    Function<OptionDefinition, String> sourceFunction =
+        option ->
+            !optionSources.containsKey(option.getOptionName())
+                ? "default"
+                : optionSources.get(option.getOptionName()).isEmpty()
+                    ? "command line"
+                    : optionSources.get(option.getOptionName());
 
     // Then parse the command line again, this time with the correct option sources
     parser = OptionsParser.newOptionsParser(optionClasses);
     parser.setAllowResidue(false);
-    parser.parseWithSourceFunction(OptionPriority.COMMAND_LINE, sourceFunction, args);
+    parser.parseWithSourceFunction(PriorityCategory.COMMAND_LINE, sourceFunction, args);
     return parser;
   }
 
@@ -946,7 +943,7 @@ public final class BlazeRuntime {
     }
 
     if (fs == null) {
-      fs = fileSystemImplementation();
+      fs = defaultFileSystemImplementation();
     }
 
     Path.setFileSystemForSerialization(fs);
@@ -991,8 +988,7 @@ public final class BlazeRuntime {
     BlazeRuntime runtime = runtimeBuilder.build();
 
     BlazeDirectories directories =
-        new BlazeDirectories(
-            serverDirectories, workspaceDirectoryPath, startupOptions.deepExecRoot, productName);
+        new BlazeDirectories(serverDirectories, workspaceDirectoryPath, productName);
     BinTools binTools;
     try {
       binTools = BinTools.forProduction(directories);

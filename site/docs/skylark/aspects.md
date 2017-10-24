@@ -2,10 +2,13 @@
 layout: documentation
 title: Aspects
 ---
+
 # Aspects
 
+<!--  [TOC] -->
+
 **Status: Experimental**. We may make breaking changes to the API, but we will
-  help you update your code.
+  announce them.
 
 Aspects allow augmenting build dependency graphs with additional information
 and actions. Some typical scenarios when aspects can be useful:
@@ -130,7 +133,7 @@ def _metal_proto_aspect_impl(target, ctx):
         outputs = outputs)
     transitive_outputs = depset(outputs)
     for dep in ctx.rule.attr.deps:
-        transitive_outputs = transitive_outputs | dep.metal_proto.transitive_outputs
+        transitive_outputs = transitive_outputs | dep[MetalProtoInfo].transitive_outputs
     return [MetalProtoInfo(direct_outputs = outputs,
                            transitive_outputs = transitive_outputs)]
 ```

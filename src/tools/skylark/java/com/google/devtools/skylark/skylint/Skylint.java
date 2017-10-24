@@ -14,28 +14,57 @@
 
 package com.google.devtools.skylark.skylint;
 
-import com.google.devtools.build.lib.syntax.BuildFileAST;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 
 /** The main class for the skylint binary. */
 public class Skylint {
-  public static void main(String[] args) throws IOException {
-    String content =
-        new String(
-            Files.readAllBytes(Paths.get(args[0]).toAbsolutePath()), StandardCharsets.ISO_8859_1);
-    BuildFileAST ast =
-        BuildFileAST.parseSkylarkString(
-            event -> {
-              System.err.println(event);
-            },
-            content);
-    List<Issue> issues = NamingConventionsChecker.check(ast);
-    for (Issue issue : issues) {
-      System.out.println(issue);
+  public static void main(String[] args) {
+    List<Path> paths = new ArrayList<>();
+    List<String> disabledChecks = new ArrayList<>();
+    for (String arg : args) {
+      if (arg.startsWith("--disable=")) {
+        String[] checks = arg.substring("--disable=".length()).split(",");
+        for (String check : checks) {
+          if (check.isEmpty()) {
+            continue;
+          }
+          disabledChecks.add(check);
+        }
+      } else {
+        paths.add(Paths.get(arg));
+      }
     }
+    boolean issuesFound = false;
+    Linter linter = new Linter();
+    for (String checkerName : disabledChecks) {
+      linter.disable(checkerName);
+    }
+    for (Path path : paths) {
+      List<Issue> issues;
+      try {
+        issues = linter.lint(path);
+      } catch (IOException e) {
+        issuesFound = true;
+        if (e instanceof NoSuchFileException) {
+          System.err.println("File not found: " + path);
+        } else {
+          System.err.println("Error trying to read " + path);
+          e.printStackTrace();
+        }
+        continue;
+      }
+      if (!issues.isEmpty()) {
+        issuesFound = true;
+        for (Issue issue : issues) {
+          System.out.println(issue.prettyPrint(path.toString()));
+        }
+      }
+    }
+    System.exit(issuesFound ? 1 : 0);
   }
 }

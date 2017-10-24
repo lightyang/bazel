@@ -17,7 +17,6 @@ package com.google.devtools.build.lib.actions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
-import com.google.devtools.build.lib.actions.cache.MetadataHandler;
 import com.google.devtools.build.lib.actions.extra.ExtraActionInfo;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.collect.CollectionUtils;
@@ -294,16 +293,20 @@ public abstract class AbstractAction implements Action, SkylarkValue {
   public abstract String getMnemonic();
 
   /**
-   * See the javadoc for {@link com.google.devtools.build.lib.actions.Action} and
-   * {@link com.google.devtools.build.lib.actions.ActionExecutionMetadata#getKey()} for the contract
-   * for {@link #computeKey()}.
+   * See the javadoc for {@link com.google.devtools.build.lib.actions.Action} and {@link
+   * com.google.devtools.build.lib.actions.ActionExecutionMetadata#getKey()} for the contract for
+   * {@link #computeKey()}.
    */
-  protected abstract String computeKey();
+  protected abstract String computeKey() throws CommandLineExpansionException;
 
   @Override
   public final synchronized String getKey() {
     if (cachedKey == null) {
-      cachedKey = computeKey();
+      try {
+        cachedKey = computeKey();
+      } catch (CommandLineExpansionException e) {
+        cachedKey = KEY_ERROR;
+      }
     }
     return cachedKey;
   }
@@ -416,13 +419,13 @@ public abstract class AbstractAction implements Action, SkylarkValue {
    * checking, this method must be called.
    */
   protected void checkInputsForDirectories(
-      EventHandler eventHandler, MetadataHandler metadataHandler) throws ExecException {
+      EventHandler eventHandler, MetadataProvider metadataProvider) throws ExecException {
     // Report "directory dependency checking" warning only for non-generated directories (generated
     // ones will be reported earlier).
     for (Artifact input : getMandatoryInputs()) {
       // Assume that if the file did not exist, we would not have gotten here.
       try {
-        if (input.isSourceArtifact() && !metadataHandler.getMetadata(input).isFile()) {
+        if (input.isSourceArtifact() && !metadataProvider.getMetadata(input).isFile()) {
           eventHandler.handle(Event.warn(getOwner().getLocation(), "input '"
               + input.prettyPrint() + "' to " + getOwner().getLabel()
               + " is a directory; dependency checking of directories is unsound"));
@@ -483,7 +486,7 @@ public abstract class AbstractAction implements Action, SkylarkValue {
   }
 
   @Override
-  public ExtraActionInfo.Builder getExtraActionInfo() {
+  public ExtraActionInfo.Builder getExtraActionInfo() throws CommandLineExpansionException {
     ActionOwner owner = getOwner();
     ExtraActionInfo.Builder result =
         ExtraActionInfo.newBuilder()
@@ -565,15 +568,17 @@ public abstract class AbstractAction implements Action, SkylarkValue {
   }
 
   @SkylarkCallable(
-      name = "argv",
-      doc = "For actions created by <a href=\"actions.html#run\">ctx.actions.run()</a> "
-          + "or <a href=\"actions.html#run_shell\">ctx.actions.run_shell()</a>  an immutable "
-          + "list of the arguments for the command line to be executed. Note that "
-          + "for shell actions the first two arguments will be the shell path "
-          + "and <code>\"-c\"</code>.",
-      structField = true,
-      allowReturnNones = true)
-  public SkylarkList<String> getSkylarkArgv() {
+    name = "argv",
+    doc =
+        "For actions created by <a href=\"actions.html#run\">ctx.actions.run()</a> "
+            + "or <a href=\"actions.html#run_shell\">ctx.actions.run_shell()</a>  an immutable "
+            + "list of the arguments for the command line to be executed. Note that "
+            + "for shell actions the first two arguments will be the shell path "
+            + "and <code>\"-c\"</code>.",
+    structField = true,
+    allowReturnNones = true
+  )
+  public SkylarkList<String> getSkylarkArgv() throws CommandLineExpansionException {
     return null;
   }
 

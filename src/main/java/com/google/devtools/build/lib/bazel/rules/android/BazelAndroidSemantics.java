@@ -15,13 +15,15 @@ package com.google.devtools.build.lib.bazel.rules.android;
 
 import com.google.common.collect.ImmutableList;
 import com.google.devtools.build.lib.actions.Artifact;
-import com.google.devtools.build.lib.analysis.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.RuleContext;
+import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
+import com.google.devtools.build.lib.analysis.actions.SymlinkAction;
 import com.google.devtools.build.lib.packages.RuleClass.ConfiguredTargetFactory.RuleErrorException;
 import com.google.devtools.build.lib.rules.android.AndroidCommon;
 import com.google.devtools.build.lib.rules.android.AndroidConfiguration;
 import com.google.devtools.build.lib.rules.android.AndroidIdeInfoProvider;
+import com.google.devtools.build.lib.rules.android.AndroidRuleClasses;
 import com.google.devtools.build.lib.rules.android.AndroidSemantics;
 import com.google.devtools.build.lib.rules.android.ApplicationManifest;
 import com.google.devtools.build.lib.rules.android.ResourceApk;
@@ -45,14 +47,25 @@ public class BazelAndroidSemantics implements AndroidSemantics {
       AndroidIdeInfoProvider.Builder ideInfoProviderBuilder) {}
 
   @Override
-  public ApplicationManifest getManifestForRule(RuleContext ruleContext) throws RuleErrorException {
+  public ApplicationManifest getManifestForRule(RuleContext ruleContext)
+      throws RuleErrorException, InterruptedException {
     ApplicationManifest result = ApplicationManifest.fromRule(ruleContext);
-    if (!result.getManifest().getExecPath().getBaseName().equals("AndroidManifest.xml")) {
-      ruleContext.attributeError("manifest", "The manifest must be called 'AndroidManifest.xml'");
-      throw new RuleErrorException();
+    Artifact manifest = result.getManifest();
+    if (manifest.getFilename().equals("AndroidManifest.xml")) {
+      return result;
+    } else {
+      /**
+       * If the manifest file is not named AndroidManifest.xml, we create a symlink named
+       * AndroidManifest.xml to it. aapt requires the manifest to be named as such.
+       */
+      Artifact manifestSymlink =
+          ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_SYMLINKED_MANIFEST);
+      SymlinkAction symlinkAction =
+          new SymlinkAction(
+              ruleContext.getActionOwner(), manifest, manifestSymlink, "Renaming Android manifest");
+      ruleContext.registerAction(symlinkAction);
+      return ApplicationManifest.fromExplicitManifest(ruleContext, manifestSymlink);
     }
-
-    return result;
   }
 
   @Override
@@ -73,12 +86,15 @@ public class BazelAndroidSemantics implements AndroidSemantics {
 
   @Override
   public void addMainDexListActionArguments(
-      RuleContext ruleContext, SpawnAction.Builder builder, Artifact proguardMap) {
-  }
+      RuleContext ruleContext,
+      SpawnAction.Builder builder,
+      CustomCommandLine.Builder commandLine,
+      Artifact proguardMap) {}
 
   @Override
-  public Artifact getApkDebugSigningKey(RuleContext ruleContext) {
-    return ruleContext.getPrerequisiteArtifact("$debug_keystore", Mode.HOST);
+  public ImmutableList<Artifact> getProguardSpecsForManifest(
+      RuleContext ruleContext, Artifact manifest) {
+    return ImmutableList.of();
   }
 
   @Override

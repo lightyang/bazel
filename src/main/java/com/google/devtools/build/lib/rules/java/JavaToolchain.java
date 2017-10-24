@@ -21,15 +21,14 @@ import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.AliasProvider;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
-import com.google.devtools.build.lib.analysis.LocationExpander;
 import com.google.devtools.build.lib.analysis.PrerequisiteArtifacts;
-import com.google.devtools.build.lib.analysis.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetBuilder;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetFactory;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.Runfiles;
 import com.google.devtools.build.lib.analysis.RunfilesProvider;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
+import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
@@ -54,7 +53,7 @@ public final class JavaToolchain implements RuleConfiguredTargetFactory {
         ruleContext, "extclasspath", Mode.HOST);
     String encoding = ruleContext.attributes().get("encoding", Type.STRING);
     List<String> xlint = ruleContext.attributes().get("xlint", Type.STRING_LIST);
-    List<String> misc = ruleContext.getTokenizedStringListAttr("misc");
+    List<String> misc = ruleContext.getExpander().withDataLocations().tokenized("misc");
     boolean javacSupportsWorkers =
         ruleContext.attributes().get("javac_supports_workers", Type.BOOLEAN);
     Artifact javac = ruleContext.getPrerequisiteArtifact("javac", Mode.HOST);
@@ -137,14 +136,6 @@ public final class JavaToolchain implements RuleConfiguredTargetFactory {
 
   private static ImmutableList<String> getJvmOpts(
       RuleContext ruleContext, ImmutableMap<Label, ImmutableCollection<Artifact>> locations) {
-    // LocationExpander is used directly instead of e.g. getExpandedStringListAttr because the
-    // latter hard-codes list of attributes that can provide prerequisites.
-    LocationExpander expander =
-        new LocationExpander(ruleContext, locations, /*allowDataAttributeEntriesInLabel=*/ false);
-    ImmutableList.Builder<String> result = ImmutableList.builder();
-    for (String option : ruleContext.attributes().get("jvm_opts", Type.STRING_LIST)) {
-      result.add(expander.expand(option));
-    }
-    return result.build();
+    return ruleContext.getExpander().withExecLocations(locations).list("jvm_opts");
   }
 }

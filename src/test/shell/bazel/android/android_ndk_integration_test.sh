@@ -168,7 +168,7 @@ EOF
 
 function check_num_sos() {
   num_sos=$(unzip -Z1 bazel-bin/java/bazel/bin.apk '*.so' | wc -l | sed -e 's/[[:space:]]//g')
-  assert_equals "7" "$num_sos"
+  assert_equals "5" "$num_sos"
 }
 
 function check_soname() {
@@ -195,7 +195,7 @@ function test_android_binary() {
   setup_android_ndk_support
   create_android_binary
 
-  cpus="armeabi,armeabi-v7a,arm64-v8a,mips,mips64,x86,x86_64"
+  cpus="armeabi,armeabi-v7a,arm64-v8a,x86,x86_64"
 
   bazel build -s //java/bazel:bin --fat_apk_cpu="$cpus" || fail "build failed"
   check_num_sos
@@ -221,7 +221,7 @@ function test_android_binary_clang() {
   setup_android_ndk_support
   create_android_binary
 
-  cpus="armeabi,armeabi-v7a,arm64-v8a,mips,mips64,x86,x86_64"
+  cpus="armeabi,armeabi-v7a,arm64-v8a,x86,x86_64"
 
   bazel build -s //java/bazel:bin \
       --fat_apk_cpu="$cpus" \
@@ -284,6 +284,21 @@ EOF
   expect_log "Either the path attribute of android_ndk_repository"
 }
 
+function test_android_ndk_repository_wrong_path() {
+  create_new_workspace
+  mkdir "$TEST_SRCDIR/some_dir"
+  cat > WORKSPACE <<EOF
+android_ndk_repository(
+    name = "androidndk",
+    api_level = 25,
+    path = "$TEST_SRCDIR/some_dir",
+)
+EOF
+  bazel build @androidndk//:files >& $TEST_log && fail "Should have failed"
+  expect_log "Unable to read the Android NDK at $TEST_SRCDIR/some_dir, the path may be invalid." \
+    " Is the path in android_ndk_repository() or \$ANDROID_NDK_HOME set correctly?"
+}
+
 # ndk r10 and earlier
 if [[ ! -r "${TEST_SRCDIR}/androidndk/ndk/RELEASE.TXT" ]]; then
   # ndk r11 and later
@@ -293,7 +308,7 @@ if [[ ! -r "${TEST_SRCDIR}/androidndk/ndk/RELEASE.TXT" ]]; then
   fi
 fi
 
-if [[ ! -r "${TEST_SRCDIR}/androidsdk/tools/android" ]]; then
+if [[ ! -d "${TEST_SRCDIR}/androidsdk" ]]; then
   echo "Not running Android NDK tests due to lack of an Android SDK."
   exit 0
 fi

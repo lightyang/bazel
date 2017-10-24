@@ -19,6 +19,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.actions.CommandLineExpansionException;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
 import com.google.devtools.build.lib.analysis.RunfilesSupport;
@@ -95,12 +96,12 @@ public class RunCommand implements BlazeCommand  {
       name = "script_path",
       category = "run",
       defaultValue = "null",
-      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-      effectTags = {OptionEffectTag.UNKNOWN},
+      documentationCategory = OptionDocumentationCategory.OUTPUT_PARAMETERS,
+      effectTags = {OptionEffectTag.AFFECTS_OUTPUTS, OptionEffectTag.EXECUTION},
       converter = OptionsUtils.PathFragmentConverter.class,
       help =
-          "If set, write a shell script to the given file which invokes the "
-              + "target. If this option is set, the target is not run from %{product}. "
+          "If set, write a shell script to the given file which invokes the target. "
+              + "If this option is set, the target is not run from %{product}. "
               + "Use '%{product} run --script_path=foo //foo && ./foo' to invoke target '//foo' "
               + "This differs from '%{product} run //foo' in that the %{product} lock is released "
               + "and the executable is connected to the terminal's stdin."
@@ -237,7 +238,12 @@ public class RunCommand implements BlazeCommand  {
     RunfilesSupport runfilesSupport = provider == null ? null : provider.getRunfilesSupport();
     if (runfilesSupport != null && runfilesSupport.getArgs() != null) {
       CommandLine targetArgs = runfilesSupport.getArgs();
-      Iterables.addAll(args, targetArgs.arguments());
+      try {
+        Iterables.addAll(args, targetArgs.arguments());
+      } catch (CommandLineExpansionException e) {
+        env.getReporter().handle(Event.error("Could not expand target command line: " + e));
+        return ExitCode.ANALYSIS_FAILURE;
+      }
     }
     args.addAll(runTargetArgs);
 

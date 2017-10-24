@@ -21,6 +21,8 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.net.InetAddresses;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import com.google.common.util.concurrent.Uninterruptibles;
+import com.google.devtools.build.lib.clock.BlazeClock;
+import com.google.devtools.build.lib.clock.Clock;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.runtime.BlazeCommandDispatcher.LockingMode;
 import com.google.devtools.build.lib.runtime.CommandExecutor;
@@ -32,8 +34,6 @@ import com.google.devtools.build.lib.server.CommandProtos.PingResponse;
 import com.google.devtools.build.lib.server.CommandProtos.RunRequest;
 import com.google.devtools.build.lib.server.CommandProtos.RunResponse;
 import com.google.devtools.build.lib.server.CommandProtos.StartupOption;
-import com.google.devtools.build.lib.util.BlazeClock;
-import com.google.devtools.build.lib.util.Clock;
 import com.google.devtools.build.lib.util.ExitCode;
 import com.google.devtools.build.lib.util.Pair;
 import com.google.devtools.build.lib.util.Preconditions;
@@ -107,7 +107,7 @@ import javax.annotation.concurrent.GuardedBy;
  * which results in the main thread of the command being interrupted.
  */
 public class GrpcServerImpl implements RPCServer {
-  private static final Logger log = Logger.getLogger(GrpcServerImpl.class.getName());
+  private static final Logger logger = Logger.getLogger(GrpcServerImpl.class.getName());
 
   // UTF-8 won't do because we want to be able to pass arbitrary binary strings.
   // Not that the internals of Bazel handle that correctly, but why not make at least this little
@@ -116,22 +116,30 @@ public class GrpcServerImpl implements RPCServer {
 
   private static final long NANOSECONDS_IN_MS = TimeUnit.MILLISECONDS.toNanos(1);
 
+  private static final long NANOS_PER_IDLE_CHECK =
+      TimeUnit.NANOSECONDS.convert(5, TimeUnit.SECONDS);
+
   private class RunningCommand implements AutoCloseable {
     private final Thread thread;
     private final String id;
 
-    private RunningCommand() {
+    private RunningCommand() throws InterruptedException {
       thread = Thread.currentThread();
       id = UUID.randomUUID().toString();
       synchronized (runningCommands) {
         if (runningCommands.isEmpty()) {
           busy();
         }
+
+        if (shuttingDown) {
+          throw new InterruptedException();
+        }
+
         runningCommands.put(id, this);
         runningCommands.notify();
       }
 
-      log.info(String.format("Starting command %s on thread %s", id, thread.getName()));
+      logger.info(String.format("Starting command %s on thread %s", id, thread.getName()));
     }
 
     @Override
@@ -144,7 +152,7 @@ public class GrpcServerImpl implements RPCServer {
         runningCommands.notify();
       }
 
-      log.info(String.format("Finished command %s on thread %s", id, thread.getName()));
+      logger.info(String.format("Finished command %s on thread %s", id, thread.getName()));
     }
   }
 
@@ -225,20 +233,20 @@ public class GrpcServerImpl implements RPCServer {
       this.actionQueue = new LinkedBlockingQueue<>();
       this.exchanger = new Exchanger<>();
       this.observer = observer;
-      this.observer.setOnCancelHandler(() -> {
-          Thread commandThread = GrpcSink.this.commandThread.get();
-          if (commandThread != null) {
-            log.info(
-                String.format(
-                    "Interrupting thread %s due to the streaming %s call being cancelled "
-                        + "(likely client hang up or explicit gRPC-level cancellation)",
-                    commandThread.getName(),
-                    rpcCommandName));
-            commandThread.interrupt();
-          }
+      this.observer.setOnCancelHandler(
+          () -> {
+            Thread commandThread = GrpcSink.this.commandThread.get();
+            if (commandThread != null) {
+              logger.info(
+                  String.format(
+                      "Interrupting thread %s due to the streaming %s call being cancelled "
+                          + "(likely client hang up or explicit gRPC-level cancellation)",
+                      commandThread.getName(), rpcCommandName));
+              commandThread.interrupt();
+            }
 
-          actionQueue.offer(SinkThreadAction.DISCONNECT);
-        });
+            actionQueue.offer(SinkThreadAction.DISCONNECT);
+          });
       this.observer.setOnReadyHandler(() -> actionQueue.offer(SinkThreadAction.READY));
       this.future = executor.submit(GrpcSink.this::call);
     }
@@ -317,8 +325,10 @@ public class GrpcServerImpl implements RPCServer {
         // notified about this and interrupt the command thread, but in the meantime, we can just
         // ignore the error; the client is dead, so there isn't anyone to talk to so swallowing the
         // output is fine.
-        log.info(String.format("Client cancelled command for streamer thread %s",
-            Thread.currentThread().getName()));
+        logger.info(
+            String.format(
+                "Client cancelled command for streamer thread %s",
+                Thread.currentThread().getName()));
       }
     }
 
@@ -350,7 +360,8 @@ public class GrpcServerImpl implements RPCServer {
             break;
 
           case DISCONNECT:
-            log.info("Client disconnected for stream thread " + Thread.currentThread().getName());
+            logger.info(
+                "Client disconnected for stream thread " + Thread.currentThread().getName());
             disconnected.set(true);
             if (itemPending) {
               exchange(new SinkThreadItem(false, null), true);
@@ -424,7 +435,7 @@ public class GrpcServerImpl implements RPCServer {
           // that when gRPC notifies us about the disconnection (see the call to setOnCancelHandler)
           // we interrupt the command thread, which should be enough to make the server come around
           // as soon as possible.
-          log.info(
+          logger.info(
               String.format(
                   "Client disconnected received for command %s on thread %s",
                   commandIdBytes.toStringUtf8(), Thread.currentThread().getName()));
@@ -440,21 +451,57 @@ public class GrpcServerImpl implements RPCServer {
     }
   }
 
-  /**
-   * A thread that watches if the PID file changes and shuts down the server immediately if so.
-   */
-  private class PidFileWatcherThread extends Thread {
-    private boolean shuttingDown = false;
+  // The synchronized block is here so that if the "PID file deleted" timer or the idle shutdown
+  // mechanism kicks in during a regular shutdown, they don't race.
+  @VisibleForTesting // productionVisibility = Visibility.PRIVATE
+  void signalShutdown() {
+    synchronized (runningCommands) {
+      shuttingDown = true;
+      server.shutdown();
+    }
+  }
 
-    private PidFileWatcherThread() {
-      super("pid-file-watcher");
+  /**
+   * A thread that shuts the server down under the following conditions:
+   *
+   * <ul>
+   *   <li>The PID file changes (in this case, *very* quickly)
+   *   <li>The workspace directory is deleted
+   *   <li>There is too much memory pressure on the host
+   * </ul>
+   */
+  private class ShutdownWatcherThread extends Thread {
+    private long lastIdleCheckNanos;
+
+    private ShutdownWatcherThread() {
+      super("grpc-server-shutdown-watcher");
       setDaemon(true);
     }
 
-    // The synchronized block is here so that if the "PID file deleted" timer kicks in during a
-    // regular shutdown, they don't race.
-    private synchronized void signalShutdown() {
-      shuttingDown = true;
+    private void doIdleChecksMaybe() {
+      synchronized (runningCommands) {
+        if (!runningCommands.isEmpty()) {
+          lastIdleCheckNanos = -1;
+          return;
+        }
+
+        long currentNanos = BlazeClock.nanoTime();
+        if (lastIdleCheckNanos == -1) {
+          lastIdleCheckNanos = currentNanos;
+          return;
+        }
+
+        if (currentNanos - lastIdleCheckNanos < NANOS_PER_IDLE_CHECK) {
+          return;
+        }
+
+        if (!idleServerTasks.continueProcessing()) {
+          signalShutdown();
+          server.shutdown();
+        }
+
+        lastIdleCheckNanos = currentNanos;
+      }
     }
 
     @Override
@@ -466,21 +513,25 @@ public class GrpcServerImpl implements RPCServer {
           String pidFileContents = new String(FileSystemUtils.readContentAsLatin1(pidFile));
           ok = pidFileContents.equals(pidInFile);
         } catch (IOException e) {
-          log.info("Cannot read PID file: " + e.getMessage());
+          logger.info("Cannot read PID file: " + e.getMessage());
           // Handled by virtue of ok not being set to true
         }
 
+        if (ok) {
+          doIdleChecksMaybe();
+        }
+
         if (!ok) {
-          synchronized (PidFileWatcherThread.this) {
+          synchronized (ShutdownWatcherThread.this) {
             if (shuttingDown) {
-              log.warning("PID file deleted or overwritten but shutdown is already in progress");
+              logger.warning("PID file deleted or overwritten but shutdown is already in progress");
               break;
             }
 
             shuttingDown = true;
             // Someone overwrote the PID file. Maybe it's another server, so shut down as quickly
             // as possible without even running the shutdown hooks (that would delete it)
-            log.severe("PID file deleted or overwritten, exiting as quickly as possible");
+            logger.severe("PID file deleted or overwritten, exiting as quickly as possible");
             Runtime.getRuntime().halt(ExitCode.BLAZE_INTERNAL_ERROR.getNumericExitCode());
           }
         }
@@ -507,7 +558,7 @@ public class GrpcServerImpl implements RPCServer {
   private final String responseCookie;
   private final AtomicLong interruptCounter = new AtomicLong(0);
   private final int maxIdleSeconds;
-  private final PidFileWatcherThread pidFileWatcherThread;
+  private final ShutdownWatcherThread shutdownWatcherThread;
   private final Path pidFile;
   private final String pidInFile;
   private final List<Path> filesToDeleteAtExit = new ArrayList<>();
@@ -515,16 +566,13 @@ public class GrpcServerImpl implements RPCServer {
 
   private Server server;
   private IdleServerTasks idleServerTasks;
-  boolean serving;
+  private InetSocketAddress address;
+  private boolean serving;
+  private boolean shuttingDown = false;
 
   public GrpcServerImpl(CommandExecutor commandExecutor, Clock clock, int port,
       Path workspace, Path serverDirectory, int maxIdleSeconds) throws IOException {
-    Runtime.getRuntime().addShutdownHook(new Thread() {
-      @Override
-      public void run() {
-        shutdownHook();
-      }
-    });
+    Runtime.getRuntime().addShutdownHook(new Thread(() -> shutdownHook()));
 
     // server.pid was written in the C++ launcher after fork() but before exec() .
     // The client only accesses the pid file after connecting to the socket
@@ -553,10 +601,20 @@ public class GrpcServerImpl implements RPCServer {
     requestCookie = generateCookie(random, 16);
     responseCookie = generateCookie(random, 16);
 
-    pidFileWatcherThread = new PidFileWatcherThread();
-    pidFileWatcherThread.start();
+    shutdownWatcherThread = new ShutdownWatcherThread();
+    shutdownWatcherThread.start();
     idleServerTasks = new IdleServerTasks(workspace);
     idleServerTasks.idle();
+  }
+
+  @VisibleForTesting // productionVisibility = Visibility.PRIVATE
+  String getRequestCookie() {
+    return requestCookie;
+  }
+
+  @VisibleForTesting // productionVisibility = Visibility.PRIVATE
+  InetSocketAddress getAddress() {
+    return address;
   }
 
   private void idle() {
@@ -643,7 +701,7 @@ public class GrpcServerImpl implements RPCServer {
       }
     }
 
-    server.shutdown();
+    signalShutdown();
   }
 
   /**
@@ -669,7 +727,7 @@ public class GrpcServerImpl implements RPCServer {
   @Override
   public void prepareForAbruptShutdown() {
     disableShutdownHooks();
-    pidFileWatcherThread.signalShutdown();
+    signalShutdown();
   }
 
   @Override
@@ -716,7 +774,7 @@ public class GrpcServerImpl implements RPCServer {
       timeoutThread.start();
     }
     serving = true;
-
+    this.address = new InetSocketAddress(address.getAddress(), server.getPort());
     writeServerFile(
         PORT_FILE, InetAddresses.toUriString(address.getAddress()) + ":" + server.getPort());
     writeServerFile(REQUEST_COOKIE_FILE, requestCookie);
@@ -758,9 +816,7 @@ public class GrpcServerImpl implements RPCServer {
     }
   }
 
-  /**
-   * Schedule the specified file for (attempted) deletion at JVM exit.
-   */
+  /** Schedule the specified file for (attempted) deletion at JVM exit. */
   protected void deleteAtExit(final Path path) {
     synchronized (filesToDeleteAtExit) {
       filesToDeleteAtExit.add(path);
@@ -777,11 +833,11 @@ public class GrpcServerImpl implements RPCServer {
     printErr.println("=======[BLAZE SERVER: ENCOUNTERED IO EXCEPTION]=======");
     e.printStackTrace(printErr);
     printErr.println("=====================================================");
-    log.severe(err.toString());
+    logger.severe(err.toString());
   }
 
-  private void executeCommand(
-      RunRequest request, StreamObserver<RunResponse> observer, GrpcSink sink) {
+  @VisibleForTesting // productionVisibility = Visibility.PRIVATE
+  void executeCommand(RunRequest request, StreamObserver<RunResponse> observer, GrpcSink sink) {
     sink.setCommandThread(Thread.currentThread());
 
     if (!request.getCookie().equals(requestCookie) || request.getClientDescription().isEmpty()) {
@@ -792,7 +848,7 @@ public class GrpcServerImpl implements RPCServer {
                 .build());
         observer.onCompleted();
       } catch (StatusRuntimeException e) {
-        log.info("Client cancelled command while rejecting it: " + e.getMessage());
+        logger.info("Client cancelled command while rejecting it: " + e.getMessage());
       }
       return;
     }
@@ -833,7 +889,7 @@ public class GrpcServerImpl implements RPCServer {
                 .setCommandId(commandId)
                 .build());
       } catch (StatusRuntimeException e) {
-        log.info(
+        logger.info(
             "The client cancelled the command before receiving the command id: " + e.getMessage());
       }
 
@@ -863,8 +919,9 @@ public class GrpcServerImpl implements RPCServer {
 
     if (sink.finish()) {
       // Client disconnected. Then we are not allowed to call any methods on the observer.
-      log.info(String.format("Client disconnected before we could send exit code for command %s",
-          commandId));
+      logger.info(
+          String.format(
+              "Client disconnected before we could send exit code for command %s", commandId));
       return;
     }
 
@@ -876,7 +933,7 @@ public class GrpcServerImpl implements RPCServer {
 
     boolean shutdown = commandExecutor.shutdown();
     if (shutdown) {
-      server.shutdown();
+      signalShutdown();
     }
     RunResponse response =
         RunResponse.newBuilder()
@@ -892,8 +949,10 @@ public class GrpcServerImpl implements RPCServer {
       observer.onCompleted();
     } catch (StatusRuntimeException e) {
       // The client cancelled the call. Log an error and go on.
-      log.info(String.format("Client cancelled command %s just right before its end: %s",
-          commandId, e.getMessage()));
+      logger.info(
+          String.format(
+              "Client cancelled command %s just right before its end: %s",
+              commandId, e.getMessage()));
     }
   }
 
@@ -921,13 +980,15 @@ public class GrpcServerImpl implements RPCServer {
 
             streamObserver.onNext(response.build());
             streamObserver.onCompleted();
+          } catch (InterruptedException e) {
+            // Ignore, we are shutting down anyway
           }
         }
 
         @Override
         public void cancel(
             final CancelRequest request, final StreamObserver<CancelResponse> streamObserver) {
-          log.info(String.format("Got CancelRequest for command id %s", request.getCommandId()));
+          logger.info(String.format("Got CancelRequest for command id %s", request.getCommandId()));
           if (!request.getCookie().equals(requestCookie)) {
             streamObserver.onCompleted();
             return;
@@ -944,14 +1005,14 @@ public class GrpcServerImpl implements RPCServer {
             synchronized (runningCommands) {
               RunningCommand pendingCommand = runningCommands.get(request.getCommandId());
               if (pendingCommand != null) {
-                log.info(
+                logger.info(
                     String.format(
                         "Interrupting command %s on thread %s",
                         request.getCommandId(), pendingCommand.thread.getName()));
                 pendingCommand.thread.interrupt();
                 startSlowInterruptWatcher(ImmutableSet.of(request.getCommandId()));
               } else {
-                log.info("Cannot find command " + request.getCommandId() + " to interrupt");
+                logger.info("Cannot find command " + request.getCommandId() + " to interrupt");
               }
             }
 
@@ -960,9 +1021,11 @@ public class GrpcServerImpl implements RPCServer {
               streamObserver.onCompleted();
             } catch (StatusRuntimeException e) {
               // There is no one to report the failure to
-              log.info(
+              logger.info(
                   "Client cancelled RPC of cancellation request for " + request.getCommandId());
             }
+          } catch (InterruptedException e) {
+            // Ignore, we are shutting down anyway
           }
         }
       };

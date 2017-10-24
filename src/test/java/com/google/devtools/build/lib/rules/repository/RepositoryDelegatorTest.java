@@ -19,6 +19,7 @@ import static com.google.common.truth.Truth.assertThat;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
+import com.google.devtools.build.lib.analysis.ServerDirectories;
 import com.google.devtools.build.lib.cmdline.RepositoryName;
 import com.google.devtools.build.lib.events.StoredEventHandler;
 import com.google.devtools.build.lib.pkgcache.PathPackageLocator;
@@ -46,6 +47,7 @@ import com.google.devtools.build.skyframe.EvaluationResult;
 import com.google.devtools.build.skyframe.InMemoryMemoizingEvaluator;
 import com.google.devtools.build.skyframe.MemoizingEvaluator;
 import com.google.devtools.build.skyframe.RecordingDifferencer;
+import com.google.devtools.build.skyframe.SequencedRecordingDifferencer;
 import com.google.devtools.build.skyframe.SequentialBuildDriver;
 import com.google.devtools.build.skyframe.SkyFunction;
 import com.google.devtools.build.skyframe.SkyFunctionName;
@@ -70,17 +72,18 @@ public class RepositoryDelegatorTest extends FoundationTestCase {
   @Before
   public void setupDelegator() throws Exception {
     Path root = scratch.dir("/outputbase");
-    delegatorFunction = new RepositoryDelegatorFunction(
-        ImmutableMap.<String, RepositoryFunction>of(), null, new AtomicBoolean(true));
-    AtomicReference<PathPackageLocator> pkgLocator = new AtomicReference<>(
-        new PathPackageLocator(root, ImmutableList.of(root)));
-    BlazeDirectories directories = new BlazeDirectories(root, root, root,
-        TestConstants.PRODUCT_NAME);
+    BlazeDirectories directories =
+        new BlazeDirectories(new ServerDirectories(root, root), root, TestConstants.PRODUCT_NAME);
+    delegatorFunction =
+        new RepositoryDelegatorFunction(
+            ImmutableMap.of(), null, new AtomicBoolean(true), ImmutableMap::of, directories);
+    AtomicReference<PathPackageLocator> pkgLocator =
+        new AtomicReference<>(new PathPackageLocator(root, ImmutableList.of(root)));
     ExternalFilesHelper externalFilesHelper = new ExternalFilesHelper(
         pkgLocator,
         ExternalFileAction.DEPEND_ON_EXTERNAL_PKG_FOR_EXTERNAL_REPO_PATHS,
         directories);
-    RecordingDifferencer differencer = new RecordingDifferencer();
+    RecordingDifferencer differencer = new SequencedRecordingDifferencer();
     MemoizingEvaluator evaluator =
         new InMemoryMemoizingEvaluator(
             ImmutableMap.<SkyFunctionName, SkyFunction>builder()
@@ -121,7 +124,6 @@ public class RepositoryDelegatorTest extends FoundationTestCase {
         ImmutableMap.<RepositoryName, PathFragment>builder()
             .put(RepositoryName.createFromValidStrippedName("foo"), overrideDirectory.asFragment())
             .build());
-    PrecomputedValue.BLAZE_DIRECTORIES.set(differencer, directories);
     PrecomputedValue.PATH_PACKAGE_LOCATOR.set(differencer, pkgLocator.get());
   }
 

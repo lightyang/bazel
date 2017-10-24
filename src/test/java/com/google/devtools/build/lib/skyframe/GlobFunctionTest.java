@@ -25,6 +25,7 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.testing.EqualsTester;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
+import com.google.devtools.build.lib.analysis.ServerDirectories;
 import com.google.devtools.build.lib.cmdline.PackageIdentifier;
 import com.google.devtools.build.lib.events.NullEventHandler;
 import com.google.devtools.build.lib.pkgcache.PathPackageLocator;
@@ -48,6 +49,7 @@ import com.google.devtools.build.skyframe.EvaluationResult;
 import com.google.devtools.build.skyframe.InMemoryMemoizingEvaluator;
 import com.google.devtools.build.skyframe.MemoizingEvaluator;
 import com.google.devtools.build.skyframe.RecordingDifferencer;
+import com.google.devtools.build.skyframe.SequencedRecordingDifferencer;
 import com.google.devtools.build.skyframe.SequentialBuildDriver;
 import com.google.devtools.build.skyframe.SkyFunction;
 import com.google.devtools.build.skyframe.SkyFunctionName;
@@ -108,7 +110,7 @@ public abstract class GlobFunctionTest {
         new AtomicReference<>(
             new PathPackageLocator(outputBase, ImmutableList.of(writableRoot, root)));
 
-    differencer = new RecordingDifferencer();
+    differencer = new SequencedRecordingDifferencer();
     evaluator = new InMemoryMemoizingEvaluator(createFunctionMap(), differencer);
     driver = new SequentialBuildDriver(evaluator);
     PrecomputedValue.BUILD_ID.set(differencer, UUID.randomUUID());
@@ -122,10 +124,12 @@ public abstract class GlobFunctionTest {
   private Map<SkyFunctionName, SkyFunction> createFunctionMap() {
     AtomicReference<ImmutableSet<PackageIdentifier>> deletedPackages =
         new AtomicReference<>(ImmutableSet.<PackageIdentifier>of());
-    ExternalFilesHelper externalFilesHelper = new ExternalFilesHelper(
-        pkgLocator,
-        ExternalFileAction.DEPEND_ON_EXTERNAL_PKG_FOR_EXTERNAL_REPO_PATHS,
-        new BlazeDirectories(root, root, root, TestConstants.PRODUCT_NAME));
+    ExternalFilesHelper externalFilesHelper =
+        new ExternalFilesHelper(
+            pkgLocator,
+            ExternalFileAction.DEPEND_ON_EXTERNAL_PKG_FOR_EXTERNAL_REPO_PATHS,
+            new BlazeDirectories(
+                new ServerDirectories(root, root), root, TestConstants.PRODUCT_NAME));
 
     Map<SkyFunctionName, SkyFunction> skyFunctions = new HashMap<>();
     skyFunctions.put(SkyFunctions.GLOB, new GlobFunction(alwaysUseDirListing()));

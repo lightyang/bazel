@@ -25,16 +25,16 @@ import com.google.devtools.build.lib.analysis.BaseRuleClasses;
 import com.google.devtools.build.lib.analysis.MakeVariableInfo;
 import com.google.devtools.build.lib.analysis.RuleDefinition;
 import com.google.devtools.build.lib.analysis.RuleDefinitionEnvironment;
-import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.packages.Attribute;
-import com.google.devtools.build.lib.packages.Attribute.LateBoundLabel;
+import com.google.devtools.build.lib.packages.Attribute.ComputedDefault;
+import com.google.devtools.build.lib.packages.Attribute.LateBoundDefault;
 import com.google.devtools.build.lib.packages.AttributeMap;
 import com.google.devtools.build.lib.packages.BuildType;
-import com.google.devtools.build.lib.packages.Rule;
 import com.google.devtools.build.lib.packages.RuleClass;
 import com.google.devtools.build.lib.packages.RuleClass.Builder.RuleClassType;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration;
+import com.google.devtools.build.lib.rules.cpp.CppHelper;
 import com.google.devtools.build.lib.rules.cpp.CppRuleClasses;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.FileTypeSet;
@@ -49,15 +49,26 @@ public class GenRuleBaseRule implements RuleDefinition {
    * Late-bound dependency on the C++ toolchain <i>iff</i> the genrule has make variables that need
    * that toolchain.
    */
-  public static Attribute.LateBoundLabel<BuildConfiguration> ccToolchainAttribute(
-      RuleDefinitionEnvironment env) {
-    return new LateBoundLabel<BuildConfiguration>(
-        env.getToolsLabel(CppRuleClasses.CROSSTOOL_LABEL), CppConfiguration.class) {
+  public static LateBoundDefault<?, Label> ccToolchainAttribute(RuleDefinitionEnvironment env) {
+    return LateBoundDefault.fromTargetConfiguration(
+        CppConfiguration.class,
+        env.getToolsLabel(CppRuleClasses.CROSSTOOL_LABEL),
+        // null guards are needed for LateBoundAttributeTest
+        (rule, attributes, cppConfig) ->
+            attributes != null
+                    && attributes.get("cmd", Type.STRING) != null
+                    && GenRuleBase.requiresCrosstool(attributes.get("cmd", Type.STRING))
+                ? CppRuleClasses.ccToolchainAttribute(env).resolve(rule, attributes, cppConfig)
+                : null);
+  }
+
+  /** Computed dependency on the C++ toolchain type. */
+  public static ComputedDefault ccToolchainTypeAttribute(RuleDefinitionEnvironment env) {
+    return new ComputedDefault("cmd") {
       @Override
-      public Label resolve(Rule rule, AttributeMap attributes, BuildConfiguration configuration) {
-        return attributes != null
-                && GenRuleBase.requiresCrosstool(attributes.get("cmd", Type.STRING))
-            ? CppRuleClasses.ccToolchainAttribute(env).resolve(rule, attributes, configuration)
+      public Object getDefault(AttributeMap rule) {
+        return GenRuleBase.requiresCrosstool(rule.get("cmd", Type.STRING))
+            ? CppHelper.getCcToolchainType(env.getToolsRepository())
             : null;
       }
     };
@@ -95,7 +106,7 @@ public class GenRuleBaseRule implements RuleDefinition {
         <a href="../build-ref.html#deps">dependencies</a> for more information. <br/>
         <p>
           The build system ensures these prerequisites are built before running the genrule command;
-          they are built using the <a href='../blaze-user-manual.html#configurations'><i>host</i>
+          they are built using the <a href='../user-manual.html#configurations'><i>host</i>
           configuration</a>, since these tools are executed as part of the build. The path of an
           individual <code>tools</code> target <code>//x:y</code> can be obtained using
           <code>$(location //x:y)</code>.

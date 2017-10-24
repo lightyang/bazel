@@ -203,8 +203,9 @@ public class ObjcSkylarkTest extends ObjcRuleTestCase {
         "   srcs = ['a.m'],",
         "   defines = ['mock_define']",
         ")",
-        "objc_binary(",
+        "apple_binary(",
         "   name = 'bin',",
+        "   platform_type = 'ios',",
         "   deps = [':my_target']",
         ")");
 
@@ -240,8 +241,9 @@ public class ObjcSkylarkTest extends ObjcRuleTestCase {
         "   srcs = ['a.m'],",
         "   deps = [':my_target']",
         ")",
-        "objc_binary(",
+        "apple_binary(",
         "   name = 'bin',",
+        "   platform_type = 'ios',",
         "   deps = [':lib']",
         ")");
 
@@ -257,11 +259,13 @@ public class ObjcSkylarkTest extends ObjcRuleTestCase {
     scratch.file(
         "examples/rule/apple_rules.bzl",
         "def swift_binary_impl(ctx):",
+        "   xcode_config = ctx.attr._xcode_config[apple_common.XcodeVersionConfig]",
         "   cpu = ctx.fragments.apple.ios_cpu()",
         "   platform = ctx.fragments.apple.ios_cpu_platform()",
-        "   env = ctx.fragments.apple.target_apple_env(platform)",
-        "   xcode_version = ctx.fragments.apple.xcode_version()",
-        "   sdk_version = ctx.fragments.apple.sdk_version_for_platform(platform)",
+        "   xcode_config = ctx.attr._xcode_config[apple_common.XcodeVersionConfig]",
+        "   env = apple_common.target_apple_env(xcode_config, platform)",
+        "   xcode_version = xcode_config.xcode_version()",
+        "   sdk_version = xcode_config.sdk_version_for_platform(platform)",
         "   single_arch_platform = ctx.fragments.apple.single_arch_platform",
         "   single_arch_cpu = ctx.fragments.apple.single_arch_cpu",
         "   platform_type = single_arch_platform.platform_type",
@@ -277,8 +281,10 @@ public class ObjcSkylarkTest extends ObjcRuleTestCase {
         "      bitcode_mode=str(bitcode_mode)",
         "   )",
         "swift_binary = rule(",
-        "implementation = swift_binary_impl,",
-        "fragments = ['apple']",
+        "    implementation = swift_binary_impl,",
+        "    fragments = ['apple'],",
+        "    attrs = { '_xcode_config': ",
+        "        attr.label(default=Label('//examples/apple_skylark:current_xcode_config')) },",
         ")");
 
     scratch.file("examples/apple_skylark/a.m");
@@ -286,11 +292,12 @@ public class ObjcSkylarkTest extends ObjcRuleTestCase {
         "examples/apple_skylark/BUILD",
         "package(default_visibility = ['//visibility:public'])",
         "load('/examples/rule/apple_rules', 'swift_binary')",
+        "xcode_config_alias(name='current_xcode_config')",
         "swift_binary(",
         "   name='my_target',",
         ")");
 
-    useConfiguration("--cpu=ios_i386", "--xcode_version=7.1");
+    useConfiguration("--cpu=ios_i386", "--xcode_version=7.3");
     ConfiguredTarget skylarkTarget = getConfiguredTarget("//examples/apple_skylark:my_target");
 
 
@@ -304,7 +311,7 @@ public class ObjcSkylarkTest extends ObjcRuleTestCase {
     assertThat(env).containsEntry("APPLE_SDK_PLATFORM", "iPhoneSimulator");
     assertThat(env).containsEntry("APPLE_SDK_VERSION_OVERRIDE", "8.4");
     assertThat(sdkVersion).isEqualTo("8.4");
-    assertThat(skylarkTarget.get("xcode_version")).isEqualTo("7.1");
+    assertThat(skylarkTarget.get("xcode_version")).isEqualTo("7.3");
     assertThat(skylarkTarget.get("single_arch_platform")).isEqualTo("IOS_SIMULATOR");
     assertThat(skylarkTarget.get("single_arch_cpu")).isEqualTo("i386");
     assertThat(skylarkTarget.get("platform_type")).isEqualTo("ios");
@@ -390,19 +397,20 @@ public class ObjcSkylarkTest extends ObjcRuleTestCase {
     scratch.file(
         "examples/rule/apple_rules.bzl",
         "def swift_binary_impl(ctx):",
-        "   ios_sdk_version = ctx.fragments.apple.sdk_version_for_platform\\",
+        "   xcode_config = ctx.attr._xcode_config[apple_common.XcodeVersionConfig]",
+        "   ios_sdk_version = xcode_config.sdk_version_for_platform\\",
         "(apple_common.platform.ios_device)",
-        "   watchos_sdk_version = ctx.fragments.apple.sdk_version_for_platform\\",
+        "   watchos_sdk_version = xcode_config.sdk_version_for_platform\\",
         "(apple_common.platform.watchos_device)",
-        "   tvos_sdk_version = ctx.fragments.apple.sdk_version_for_platform\\",
+        "   tvos_sdk_version = xcode_config.sdk_version_for_platform\\",
         "(apple_common.platform.tvos_device)",
-        "   macos_sdk_version = ctx.fragments.apple.sdk_version_for_platform\\",
+        "   macos_sdk_version = xcode_config.sdk_version_for_platform\\",
         "(apple_common.platform.macos)",
-        "   ios_minimum_os = ctx.fragments.apple.minimum_os_for_platform_type\\",
+        "   ios_minimum_os = xcode_config.minimum_os_for_platform_type\\",
         "(apple_common.platform_type.ios)",
-        "   watchos_minimum_os = ctx.fragments.apple.minimum_os_for_platform_type\\",
+        "   watchos_minimum_os = xcode_config.minimum_os_for_platform_type\\",
         "(apple_common.platform_type.watchos)",
-        "   tvos_minimum_os = ctx.fragments.apple.minimum_os_for_platform_type\\",
+        "   tvos_minimum_os = xcode_config.minimum_os_for_platform_type\\",
         "(apple_common.platform_type.tvos)",
         "   return struct(",
         "      ios_sdk_version=str(ios_sdk_version),",
@@ -414,8 +422,10 @@ public class ObjcSkylarkTest extends ObjcRuleTestCase {
         "      tvos_minimum_os=str(tvos_minimum_os)",
         "   )",
         "swift_binary = rule(",
-        "implementation = swift_binary_impl,",
-        "fragments = ['apple']",
+        "    implementation = swift_binary_impl,",
+        "    fragments = ['apple'],",
+        "    attrs = { '_xcode_config': ",
+        "        attr.label(default=Label('//examples/apple_skylark:current_xcode_config')) },",
         ")");
 
     scratch.file("examples/apple_skylark/a.m");
@@ -423,6 +433,7 @@ public class ObjcSkylarkTest extends ObjcRuleTestCase {
         "examples/apple_skylark/BUILD",
         "package(default_visibility = ['//visibility:public'])",
         "load('/examples/rule/apple_rules', 'swift_binary')",
+        "xcode_config_alias(name='current_xcode_config')",
         "swift_binary(",
         "   name='my_target',",
         ")");

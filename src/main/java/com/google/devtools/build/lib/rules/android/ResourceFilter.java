@@ -15,7 +15,6 @@ package com.google.devtools.build.lib.rules.android;
 
 import com.android.ide.common.resources.configuration.DensityQualifier;
 import com.android.ide.common.resources.configuration.FolderConfiguration;
-import com.android.ide.common.resources.configuration.LocaleQualifier;
 import com.android.ide.common.resources.configuration.VersionQualifier;
 import com.android.resources.Density;
 import com.android.resources.ResourceFolderType;
@@ -74,10 +73,6 @@ public class ResourceFilter {
    * themselves to trigger pseudolocalization, and the other filters to prevent aapt from filtering
    * matching resources out.
    */
-  private static final ImmutableSet<LocaleQualifier> PSEUDOLOCATION_LOCALES =
-      ImmutableSet.of(
-          LocaleQualifier.getQualifier("en-rXA"), LocaleQualifier.getQualifier("ar-rXB"));
-
   @VisibleForTesting
   static enum FilterBehavior {
     /**
@@ -403,8 +398,36 @@ public class ResourceFilter {
    * Filters a NestedSet of resource containers that contain dependencies of the current rule. This
    * may be a no-op if this filter is empty or if resource prefiltering is disabled.
    */
-  NestedSet<ResourceContainer> filterDependencies(
+  NestedSet<ResourceContainer> filterDependencyContainers(
       RuleErrorConsumer ruleErrorConsumer, NestedSet<ResourceContainer> resources) {
+    if (!shouldFilterDependencies()) {
+      return resources;
+    }
+
+    NestedSetBuilder<ResourceContainer> builder = new NestedSetBuilder<>(resources.getOrder());
+
+    for (ResourceContainer resource : resources) {
+      builder.add(resource.filter(ruleErrorConsumer, this));
+    }
+
+    return builder.build();
+  }
+
+  /**
+   * Filters a NestedSet of artifact dependencies of the current rule. Returns a filtered copy of
+   * the input, or the input itself if no filtering needs to be done.
+   */
+  NestedSet<Artifact> filterDependencies(
+      RuleErrorConsumer ruleErrorConsumer, NestedSet<Artifact> resources) {
+    if (!shouldFilterDependencies()) {
+      return resources;
+    }
+
+    return NestedSetBuilder.wrap(
+        resources.getOrder(), filter(ruleErrorConsumer, ImmutableList.copyOf(resources)));
+  }
+
+  private boolean shouldFilterDependencies() {
     if (!isPrefiltering() || usesDynamicConfiguration()) {
       /*
        * If the filter is empty, resource prefiltering is disabled, or the resources of dependencies
@@ -420,16 +443,10 @@ public class ResourceFilter {
        * by its dependencies into a new NestedSet rather than just create a NestedSet pointing at
        * its dependencies's NestedSets.
        */
-      return resources;
+      return false;
     }
 
-    NestedSetBuilder<ResourceContainer> builder = new NestedSetBuilder<>(resources.getOrder());
-
-    for (ResourceContainer resource : resources) {
-      builder.add(resource.filter(ruleErrorConsumer, this));
-    }
-
-    return builder.build();
+    return true;
   }
 
   ImmutableList<Artifact> filter(
@@ -717,36 +734,6 @@ public class ResourceFilter {
     return filterBehavior == FilterBehavior.FILTER_IN_ANALYSIS_WITH_DYNAMIC_CONFIGURATION;
   }
 
-  /**
-   * @return whether resource configuration filters should be propagated to the resource processing
-   *     action and eventually to aapt.
-   */
-  public boolean shouldPropagateConfigs(RuleErrorConsumer ruleErrorConsumer) {
-    if (!hasConfigurationFilters()) {
-      // There are no filters to propagate
-      return false;
-    }
-
-    if (!isPrefiltering()) {
-      // The filters were not applied in analysis and must be applied in execution
-      return true;
-    }
-
-    for (FolderConfiguration config : getConfigurationFilters((ruleErrorConsumer))) {
-      for (LocaleQualifier pseudoLocale : PSEUDOLOCATION_LOCALES) {
-        if (pseudoLocale.equals(config.getLocaleQualifier())) {
-          // A pseudolocale was used, and needs to be propagated to aapt. Propagate all
-          // configuration values so that aapt does not filter out those that were skipped.
-          return true;
-        }
-      }
-    }
-
-    // Filtering already happened, and there's no reason to have aapt waste its time trying to
-    // filter again. Don't propagate the filters.
-    return false;
-  }
-
   /*
    * TODO: Stop tracking these once {@link FilterBehavior#FILTER_IN_ANALYSIS} is fully replaced by
    * {@link FilterBehavior#FILTER_IN_ANALYSIS_WITH_DYNAMIC_CONFIGURATION}.
@@ -865,11 +852,6 @@ public class ResourceFilter {
 
   private abstract static class BaseDynamicallyConfiguredResourceFilteringTransition
       implements PatchTransition {
-    @Override
-    public boolean defaultsToSelf() {
-      return false;
-    }
-
     @Override
     public BuildOptions apply(BuildOptions options) {
       BuildOptions newOptions = options.clone();

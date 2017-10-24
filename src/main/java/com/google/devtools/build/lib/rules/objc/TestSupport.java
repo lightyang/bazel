@@ -22,12 +22,12 @@ import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.FileProvider;
 import com.google.devtools.build.lib.analysis.PrerequisiteArtifacts;
-import com.google.devtools.build.lib.analysis.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.Runfiles.Builder;
 import com.google.devtools.build.lib.analysis.RunfilesProvider;
 import com.google.devtools.build.lib.analysis.actions.TemplateExpansionAction;
 import com.google.devtools.build.lib.analysis.actions.TemplateExpansionAction.Substitution;
+import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.test.InstrumentedFilesProvider;
 import com.google.devtools.build.lib.analysis.test.TestEnvironmentInfo;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
@@ -124,8 +124,13 @@ public class TestSupport {
       template = testTemplateForLabDevice();
     }
 
-    ruleContext.registerAction(new TemplateExpansionAction(ruleContext.getActionOwner(),
-        template, generatedTestScript(), substitutions.build(), /*executable=*/true));
+    ruleContext.registerAction(
+        new TemplateExpansionAction(
+            ruleContext.getActionOwner(),
+            template,
+            generatedTestScript(),
+            substitutions.build(),
+            /* makeExecutable= */ true));
   }
 
   private boolean runWithLabDevice() {
@@ -260,12 +265,11 @@ public class TestSupport {
         ruleContext.getPrerequisite(
             IosTest.TARGET_DEVICE, Mode.TARGET, IosDeviceProvider.SKYLARK_CONSTRUCTOR);
     DottedVersion xcodeVersion = deviceProvider.getXcodeVersion();
-    AppleConfiguration configuration = ruleContext.getFragment(AppleConfiguration.class);
 
     ImmutableMap.Builder<String, String> envBuilder = ImmutableMap.builder();
 
     if (xcodeVersion != null) {
-      envBuilder.putAll(configuration.getXcodeVersionEnv(xcodeVersion));
+      envBuilder.putAll(AppleConfiguration.getXcodeVersionEnv(xcodeVersion));
     }
 
     if (ruleContext.getConfiguration().isCodeCoverageEnabled()) {

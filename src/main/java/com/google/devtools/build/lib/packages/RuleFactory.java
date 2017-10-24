@@ -38,6 +38,8 @@ import javax.annotation.Nullable;
  * performs a number of checks and associates the {@link Rule} and the owning {@link Package}
  * with each other.
  *
+ * <p>This class is immutable, once created the set of managed {@link RuleClass}es will not change.
+ *
  * <p>Note: the code that actually populates the RuleClass map has been moved to {@link
  * RuleClassProvider}.
  */
@@ -338,7 +340,7 @@ public class RuleFactory {
     FuncallExpression generator = topCall.first;
     BaseFunction function = topCall.second;
     String name = generator.getNameArg();
-    
+
     ImmutableMap.Builder<String, Object> builder = ImmutableMap.builder();
     for (Map.Entry<String, Object> attributeAccessor : args.getAttributeAccessors()) {
       String attributeName = args.getName(attributeAccessor);
@@ -384,7 +386,7 @@ public class RuleFactory {
     // rules created from function calls in a subincluded file, even if both files share a path
     // prefix (for example, when //a/package:BUILD subincludes //a/package/with/a/subpackage:BUILD).
     // We can revert to that approach once subincludes aren't supported anymore.
-    String absolutePath = Location.printPathAndLine(location);
+    String absolutePath = Location.printLocation(location);
     int pos = absolutePath.indexOf(label.getPackageName());
     return (pos < 0) ? null : absolutePath.substring(pos);
   }

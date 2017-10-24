@@ -31,11 +31,11 @@ import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.EventReportingArtifacts;
 import com.google.devtools.build.lib.analysis.BuildInfoEvent;
 import com.google.devtools.build.lib.analysis.NoBuildEvent;
-import com.google.devtools.build.lib.analysis.NoBuildRequestFinishedEvent;
 import com.google.devtools.build.lib.analysis.extra.ExtraAction;
 import com.google.devtools.build.lib.buildeventstream.AbortedEvent;
 import com.google.devtools.build.lib.buildeventstream.AnnounceBuildEventTransportsEvent;
 import com.google.devtools.build.lib.buildeventstream.ArtifactGroupNamer;
+import com.google.devtools.build.lib.buildeventstream.BuildCompletingEvent;
 import com.google.devtools.build.lib.buildeventstream.BuildEvent;
 import com.google.devtools.build.lib.buildeventstream.BuildEventId;
 import com.google.devtools.build.lib.buildeventstream.BuildEventStreamProtos.Aborted.AbortReason;
@@ -51,7 +51,7 @@ import com.google.devtools.build.lib.buildtool.BuildRequest;
 import com.google.devtools.build.lib.buildtool.buildevent.BuildCompleteEvent;
 import com.google.devtools.build.lib.buildtool.buildevent.BuildInterruptedEvent;
 import com.google.devtools.build.lib.buildtool.buildevent.BuildStartingEvent;
-import com.google.devtools.build.lib.buildtool.buildevent.TestingCompleteEvent;
+import com.google.devtools.build.lib.buildtool.buildevent.NoAnalyzeEvent;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetView;
 import com.google.devtools.build.lib.events.Event;
@@ -97,7 +97,7 @@ public class BuildEventStreamer implements EventHandler {
   // Will be set to true if the build was invoked through "bazel test".
   private boolean isTestCommand;
 
-  private static final Logger log = Logger.getLogger(BuildEventStreamer.class.getName());
+  private static final Logger logger = Logger.getLogger(BuildEventStreamer.class.getName());
 
   /**
    * Provider for stdout and stderr output.
@@ -255,6 +255,27 @@ public class BuildEventStreamer implements EventHandler {
     }
   }
 
+  /**
+   * If some events are blocked on the absence of a build_started event, generate such an event;
+   * moreover, make that artificial start event announce all events blocked on it, as well as the
+   * {@link BuildCompletingEvent} that caused the early end of the stream.
+   */
+  private void clearMissingStartEvent(BuildEventId id) {
+    if (pendingEvents.containsKey(BuildEventId.buildStartedId())) {
+      ImmutableSet.Builder<BuildEventId> children = ImmutableSet.<BuildEventId>builder();
+      children.add(ProgressEvent.INITIAL_PROGRESS_UPDATE);
+      children.add(id);
+      children.addAll(
+          pendingEvents
+              .get(BuildEventId.buildStartedId())
+              .stream()
+              .map(BuildEvent::getEventId)
+              .collect(ImmutableSet.<BuildEventId>toImmutableSet()));
+      buildEvent(
+          new AbortedEvent(BuildEventId.buildStartedId(), children.build(), abortReason, ""));
+    }
+  }
+
   /** Clear pending events by generating aborted events for all their requisits. */
   private void clearPendingEvents() {
     while (!pendingEvents.isEmpty()) {
@@ -326,7 +347,7 @@ public class BuildEventStreamer implements EventHandler {
         Futures.allAsList(closeFutures).get();
         f.cancel(true);
       } catch (Exception e) {
-        log.severe("Failed to close a build event transport: " + e);
+        logger.severe("Failed to close a build event transport: " + e);
       }
     } finally {
       if (executor != null) {
@@ -374,6 +395,11 @@ public class BuildEventStreamer implements EventHandler {
   }
 
   @Subscribe
+  public void noAnalyze(NoAnalyzeEvent event) {
+    abortReason = AbortReason.NO_ANALYZE;
+  }
+
+  @Subscribe
   public void buildEvent(BuildEvent event) {
     if (isActionWithoutError(event)
         || bufferUntilPrerequisitesReceived(event)
@@ -405,6 +431,11 @@ public class BuildEventStreamer implements EventHandler {
       }
     }
 
+    if (event instanceof BuildCompletingEvent
+        && !event.getEventId().equals(BuildEventId.buildStartedId())) {
+      clearMissingStartEvent(event.getEventId());
+    }
+
     post(event);
 
     // Reconsider all events blocked by the event just posted.
@@ -413,9 +444,7 @@ public class BuildEventStreamer implements EventHandler {
       buildEvent(freedEvent);
     }
 
-    if (event instanceof BuildCompleteEvent
-        || event instanceof TestingCompleteEvent
-        || event instanceof NoBuildRequestFinishedEvent) {
+    if (event instanceof BuildCompletingEvent) {
       buildComplete();
     }
 

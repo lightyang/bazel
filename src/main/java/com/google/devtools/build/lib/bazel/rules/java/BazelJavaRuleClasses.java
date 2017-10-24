@@ -32,6 +32,7 @@ import com.google.devtools.build.lib.analysis.RuleDefinition;
 import com.google.devtools.build.lib.analysis.RuleDefinitionEnvironment;
 import com.google.devtools.build.lib.analysis.TransitiveInfoProvider;
 import com.google.devtools.build.lib.bazel.rules.cpp.BazelCppRuleClasses;
+import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.packages.Attribute;
 import com.google.devtools.build.lib.packages.AttributeMap;
 import com.google.devtools.build.lib.packages.ImplicitOutputsFunction;
@@ -318,6 +319,10 @@ public class BazelJavaRuleClasses {
 
     @Override
     public RuleClass build(Builder builder, final RuleDefinitionEnvironment env) {
+      Label launcher = env.getLauncherLabel();
+      if (launcher != null) {
+        builder.add(attr("$launcher", LABEL).cfg(HOST).value(launcher));
+      }
       return builder
           /* <!-- #BLAZE_RULE($base_java_binary).ATTRIBUTE(classpath_resources) -->
           <em class="harmful">DO NOT USE THIS OPTION UNLESS THERE IS NO OTHER WAY)</em>
@@ -429,7 +434,7 @@ public class BazelJavaRuleClasses {
             <li><code>stamp = 0</code>: Always replace build information by constant values. This
               gives good build result caching.</li>
             <li><code>stamp = -1</code>: Embedding of build information is controlled by the
-              <a href="../blaze-user-manual.html#flag--stamp">--[no]stamp</a> flag.</li>
+              <a href="../user-manual.html#flag--stamp">--[no]stamp</a> flag.</li>
           </ul>
           <!-- #END_BLAZE_RULE.ATTRIBUTE --> */
           // TODO(bazel-team): describe how to access this data at runtime
@@ -446,7 +451,7 @@ public class BazelJavaRuleClasses {
           indicates that you want to use the normal JDK launcher (bin/java or java.exe)
           as the value for this attribute. This is the default.</p>
 
-          <p>The related <a href="../blaze-user-manual.html#flag--java_launcher"><code>
+          <p>The related <a href="../user-manual.html#flag--java_launcher"><code>
           --java_launcher</code></a> Bazel flag affects only those
           <code>java_binary</code> and <code>java_test</code> targets that have
           <i>not</i> specified a <code>launcher</code> attribute.</p>

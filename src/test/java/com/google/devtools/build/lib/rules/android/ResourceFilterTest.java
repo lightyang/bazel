@@ -54,7 +54,7 @@ public class ResourceFilterTest extends ResourceTestBase {
     assertThat(
             makeResourceFilter(
                     "en", "hdpi", FilterBehavior.FILTER_IN_ANALYSIS_WITH_DYNAMIC_CONFIGURATION)
-                .filterDependencies(errorConsumer, resourceContainers))
+                .filterDependencyContainers(errorConsumer, resourceContainers))
         .isSameAs(resourceContainers);
   }
 
@@ -696,27 +696,5 @@ public class ResourceFilterTest extends ResourceTestBase {
     androidOptions.resourceFilter = resourceFilter;
 
     return androidOptions;
-  }
-
-  @Test
-  public void testHasPseudolocationFilters() throws Exception {
-    // Basic pseudolocation filters
-    for (String filter : ImmutableList.of("en_XA", "en-rXA", "ar_XB", "ar-rXB")) {
-      assertHasPseudolocationFilters(filter).isTrue();
-    }
-
-    // Additional qualifiers should not mask whether pseudolocation filters are used
-    assertHasPseudolocationFilters("en-rXA-port").isTrue();
-
-    // Without pseudolocation, even though the locale is similar
-    for (String filter : ImmutableList.of("", "en", "ar", "en-rUS")) {
-      assertHasPseudolocationFilters(filter).isFalse();
-    }
-  }
-
-  private BooleanSubject assertHasPseudolocationFilters(String filters) throws Exception {
-    return assertThat(
-        makeResourceFilter(filters, "", FilterBehavior.FILTER_IN_ANALYSIS)
-            .shouldPropagateConfigs(errorConsumer));
   }
 }

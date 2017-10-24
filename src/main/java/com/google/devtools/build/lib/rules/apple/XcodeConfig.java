@@ -16,17 +16,19 @@ package com.google.devtools.build.lib.rules.apple;
 
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
+import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.RedirectChaser;
-import com.google.devtools.build.lib.analysis.RuleConfiguredTarget;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetBuilder;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetFactory;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.RunfilesProvider;
 import com.google.devtools.build.lib.analysis.config.ConfigurationEnvironment;
 import com.google.devtools.build.lib.analysis.config.InvalidConfigurationException;
+import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.packages.BuildType;
@@ -35,16 +37,15 @@ import com.google.devtools.build.lib.packages.NoSuchTargetException;
 import com.google.devtools.build.lib.packages.NonconfigurableAttributeMapper;
 import com.google.devtools.build.lib.packages.Rule;
 import com.google.devtools.build.lib.packages.Target;
-import com.google.devtools.build.lib.syntax.Type;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import javax.annotation.Nullable;
 
 /**
  * Implementation for the {@code xcode_config} rule.
  */
 public class XcodeConfig implements RuleConfiguredTargetFactory {
+
   private static ImmutableList<XcodeVersionRuleData> getAvailableVersions(
       ConfigurationEnvironment env, Rule xcodeConfigTarget)
       throws InvalidConfigurationException, InterruptedException {
@@ -81,12 +82,8 @@ public class XcodeConfig implements RuleConfiguredTargetFactory {
     ImmutableList<XcodeVersionRuleData> versions = getAvailableVersions(env, xcodeConfigRule);
     XcodeVersionRuleData defaultVersion = getDefaultVersion(env, xcodeConfigRule);
 
-    boolean requireDefinedVersions = NonconfigurableAttributeMapper.of(xcodeConfigRule)
-        .get(XcodeConfigRule.REQUIRE_DEFINED_VERSIONS_ATTR_NAME, Type.BOOLEAN);
-
     try {
-      return resolveXcodeVersion(
-          requireDefinedVersions, appleOptions.xcodeVersion, versions, defaultVersion);
+      return resolveXcodeVersion(appleOptions.xcodeVersion, versions, defaultVersion);
     } catch (XcodeConfigException e) {
       throw new InvalidConfigurationException(e.getMessage());
     }
@@ -96,6 +93,7 @@ public class XcodeConfig implements RuleConfiguredTargetFactory {
    * An exception that signals that an Xcode config setup was invalid.
    */
   public static class XcodeConfigException extends Exception {
+
     XcodeConfigException(String reason) {
       super(reason);
     }
@@ -112,12 +110,9 @@ public class XcodeConfig implements RuleConfiguredTargetFactory {
     Iterable<XcodeVersionRuleData> availableVersions = ruleContext.getPrerequisites(
         XcodeConfigRule.VERSIONS_ATTR_NAME, RuleConfiguredTarget.Mode.TARGET,
         XcodeVersionRuleData.class);
-    boolean requireDefinedVersions = ruleContext.attributes().get(
-        XcodeConfigRule.REQUIRE_DEFINED_VERSIONS_ATTR_NAME, Type.BOOLEAN);
     XcodeVersionProperties xcodeVersionProperties;
     try {
       xcodeVersionProperties = resolveXcodeVersion(
-          requireDefinedVersions,
           appleOptions.xcodeVersion,
           availableVersions,
           defaultVersion);
@@ -152,78 +147,82 @@ public class XcodeConfig implements RuleConfiguredTargetFactory {
 
     return new RuleConfiguredTargetBuilder(ruleContext)
         .addProvider(RunfilesProvider.class, RunfilesProvider.EMPTY)
-        .addProvider(xcodeVersions)
+        .addNativeDeclaredProvider(xcodeVersions)
         .addNativeDeclaredProvider(xcodeVersionProperties)
         .build();
   }
-  
+
   /**
    * Uses the {@link AppleCommandLineOptions#xcodeVersion} and {@link
    * AppleCommandLineOptions#xcodeVersionConfig} command line options to determine and return the
    * effective xcode version and its properties.
    *
-   * @param requireDefinedVersions whether the version config requires an explicitly defined version
    * @param xcodeVersionOverrideFlag the value of the {@code --xcode_version} command line flag
    * @param xcodeVersions the Xcode versions listed in the {@code xcode_config} rule
-   * @param defaultVersion the default Xcode version in the {@code xcode_config} rule. Can be null.
-   * @throws XcodeConfigException if the options given (or configuration targets) were
-   *     malformed and thus the xcode version could not be determined
+   * @param defaultVersion the default Xcode version in the {@code xcode_config} rule.
+   * @throws XcodeConfigException if the options given (or configuration targets) were malformed and
+   *     thus the xcode version could not be determined
    */
   static XcodeVersionProperties resolveXcodeVersion(
-      boolean requireDefinedVersions,
-      DottedVersion xcodeVersionOverrideFlag,
+      String xcodeVersionOverrideFlag,
       Iterable<XcodeVersionRuleData> xcodeVersions,
-      @Nullable XcodeVersionRuleData defaultVersion)
+      XcodeVersionRuleData defaultVersion)
       throws XcodeConfigException {
-    XcodeVersionRuleData xcodeVersion = resolveExplicitlyDefinedVersion(
-        requireDefinedVersions, xcodeVersions, defaultVersion, xcodeVersionOverrideFlag);
-
-    if (xcodeVersion != null) {
-      return xcodeVersion.getXcodeVersionProperties();
-    } else if (xcodeVersionOverrideFlag != null) {
-      return new XcodeVersionProperties(xcodeVersionOverrideFlag);
-    } else {
+    if (defaultVersion != null
+        && Iterables.isEmpty(
+            Iterables.filter(
+                xcodeVersions,
+                ruleData -> ruleData.getLabel().equals(defaultVersion.getLabel())))) {
+      throw new XcodeConfigException(
+          String.format("default label '%s' must be contained in versions attribute",
+              defaultVersion.getLabel()));
+    }
+    if (Iterables.isEmpty(xcodeVersions)) {
+      if (defaultVersion != null) {
+        throw new XcodeConfigException(
+            "default label must be contained in versions attribute");
+      }
       return XcodeVersionProperties.unknownXcodeVersionProperties();
     }
+    if (defaultVersion == null) {
+      throw new XcodeConfigException(
+          "if any versions are specified, a default version must be specified");
+    }
+
+    XcodeVersionRuleData xcodeVersion = resolveExplicitlyDefinedVersion(
+        xcodeVersions, defaultVersion, xcodeVersionOverrideFlag);
+
+    return xcodeVersion.getXcodeVersionProperties();
   }
 
   /**
    * Returns the {@link XcodeVersionRuleData} associated with the {@code xcode_version} target
    * explicitly defined in the {@code --xcode_version_config} build flag and selected by the {@code
    * --xcode_version} flag. If {@code --xcode_version} is unspecified, then this will return the
-   * default rule data as specified in the {@code --xcode_version_config} target. Returns null if
-   * either the {@code --xcode_version} did not match any {@code xcode_version} target, or if {@code
-   * --xcode_version} is unspecified and {@code --xcode_version_config} specified no default target.
+   * default rule data as specified in the {@code --xcode_version_config} target.
    */
-  @Nullable
   private static XcodeVersionRuleData resolveExplicitlyDefinedVersion(
-      boolean requireDefinedVersions,
       Iterable<XcodeVersionRuleData> xcodeVersionRules,
-      @Nullable XcodeVersionRuleData defaultVersion,
-      DottedVersion versionOverrideFlag)
+      XcodeVersionRuleData defaultVersion,
+      String versionOverrideFlag)
       throws XcodeConfigException {
 
     Map<String, XcodeVersionRuleData> aliasesToVersionMap = aliasesToVersionMap(xcodeVersionRules);
 
-    if (versionOverrideFlag != null) {
+    if (!Strings.isNullOrEmpty(versionOverrideFlag)) {
       // The version override flag is not necessarily an actual version - it may be a version
       // alias.
       XcodeVersionRuleData explicitVersion =
-          aliasesToVersionMap.get(versionOverrideFlag.toString());
+          aliasesToVersionMap.get(versionOverrideFlag);
       if (explicitVersion != null) {
         return explicitVersion;
+      } else {
+        throw new XcodeConfigException(
+            String.format("%s matches no alias in the config", versionOverrideFlag));
       }
-    } else if (defaultVersion != null) {
-      // No override specified. Use default.
-      return defaultVersion;
-    }
-    
-    if (requireDefinedVersions) {
-      throw new XcodeConfigException(
-          "xcode version config required an explicitly defined version, but none was available");
     }
 
-    return null;
+    return defaultVersion;
   }
 
   /**
@@ -249,12 +248,11 @@ public class XcodeConfig implements RuleConfiguredTargetFactory {
    * Returns a map where keys are "names" of xcode versions as defined by the configuration target,
    * and values are the rule data objects which contain information regarding that xcode version.
    *
-   * @throws XcodeConfigException if there are duplicate aliases (if two xcode versions
-   *     were registered to the same alias)
+   * @throws XcodeConfigException if there are duplicate aliases (if two xcode versions were
+   *     registered to the same alias)
    */
   private static Map<String, XcodeVersionRuleData> aliasesToVersionMap(
-      Iterable<XcodeVersionRuleData> xcodeVersionRules)
-      throws XcodeConfigException {
+      Iterable<XcodeVersionRuleData> xcodeVersionRules) throws XcodeConfigException {
     Map<String, XcodeVersionRuleData> aliasesToXcodeRules = Maps.newLinkedHashMap();
     for (XcodeVersionRuleData xcodeVersionRule : xcodeVersionRules) {
       for (String alias : xcodeVersionRule.getAliases()) {
@@ -274,13 +272,13 @@ public class XcodeConfig implements RuleConfiguredTargetFactory {
     }
     return aliasesToXcodeRules;
   }
-  
+
   /**
-   * Convenience method for throwing an {@link XcodeConfigException} due to presence
-   * of duplicate aliases in an {@code xcode_config} target definition. 
+   * Convenience method for throwing an {@link XcodeConfigException} due to presence of duplicate
+   * aliases in an {@code xcode_config} target definition.
    */
-  private static void configErrorDuplicateAlias(String alias,
-      Iterable<XcodeVersionRuleData> xcodeVersionRules) throws XcodeConfigException {
+  private static void configErrorDuplicateAlias(
+      String alias, Iterable<XcodeVersionRuleData> xcodeVersionRules) throws XcodeConfigException {
 
     ImmutableList.Builder<Label> labelsContainingAlias = ImmutableList.builder();
     for (XcodeVersionRuleData xcodeVersionRule : xcodeVersionRules) {
@@ -337,7 +335,7 @@ public class XcodeConfig implements RuleConfiguredTargetFactory {
     XcodeConfigProvider versions = ruleContext.getPrerequisite(
         XcodeConfigRule.XCODE_CONFIG_ATTR_NAME,
         RuleConfiguredTarget.Mode.TARGET,
-        XcodeConfigProvider.class);
+        XcodeConfigProvider.PROVIDER);
     DottedVersion fromProvider = versions.getMinimumOsForPlatformType(platformType);
     DottedVersion fromConfig = config.getMinimumOsForPlatformType(platformType);
     // This sanity check is there to keep this provider in sync with AppleConfiguration until the
@@ -355,14 +353,8 @@ public class XcodeConfig implements RuleConfiguredTargetFactory {
     XcodeConfigProvider versions = ruleContext.getPrerequisite(
         XcodeConfigRule.XCODE_CONFIG_ATTR_NAME,
         RuleConfiguredTarget.Mode.TARGET,
-        XcodeConfigProvider.class);
-    DottedVersion fromProvider = versions.getSdkVersionForPlatform(platform);
-    DottedVersion fromConfig = ruleContext.getFragment(AppleConfiguration.class)
-        .getSdkVersionForPlatform(platform);
-    // This sanity check is there to keep this provider in sync with AppleConfiguration until the
-    // latter can be removed. Tracking bug: https://github.com/bazelbuild/bazel/issues/3424
-    Preconditions.checkState(fromProvider.equals(fromConfig));
-    return fromProvider;
+        XcodeConfigProvider.PROVIDER);
+    return versions.getSdkVersionForPlatform(platform);
   }
 
   /**
@@ -373,12 +365,8 @@ public class XcodeConfig implements RuleConfiguredTargetFactory {
   public static DottedVersion getXcodeVersion(RuleContext ruleContext) {
     XcodeConfigProvider versions = ruleContext.getPrerequisite(
         XcodeConfigRule.XCODE_CONFIG_ATTR_NAME,
-        RuleConfiguredTarget.Mode.TARGET, XcodeConfigProvider.class);
-    DottedVersion fromProvider = versions.getXcodeVersion();
-    DottedVersion fromConfig = ruleContext.getFragment(AppleConfiguration.class).getXcodeVersion();
-    // This sanity check is there to keep this provider in sync with AppleConfiguration until the
-    // latter can be removed. Tracking bug: https://github.com/bazelbuild/bazel/issues/3424
-    Preconditions.checkState(Objects.equals(fromProvider, fromConfig));
-    return fromProvider;
+        RuleConfiguredTarget.Mode.TARGET,
+        XcodeConfigProvider.PROVIDER);
+    return versions.getXcodeVersion();
   }
 }

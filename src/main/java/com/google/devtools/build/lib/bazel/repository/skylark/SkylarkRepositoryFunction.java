@@ -58,7 +58,7 @@ public class SkylarkRepositoryFunction extends RepositoryFunction {
       // This Skylark environment ignores command line flags.
       com.google.devtools.build.lib.syntax.Environment buildEnv =
           com.google.devtools.build.lib.syntax.Environment.builder(mutability)
-              .setGlobals(rule.getRuleClassObject().getRuleDefinitionEnvironment().getGlobals())
+              .useDefaultSemantics()
               .setEventHandler(env.getListener())
               .build();
       SkylarkRepositoryContext skylarkRepositoryContext =
@@ -71,8 +71,8 @@ public class SkylarkRepositoryFunction extends RepositoryFunction {
       // structure as it is.
       Object retValue =
           function.call(
-              ImmutableList.<Object>of(skylarkRepositoryContext),
-              ImmutableMap.<String, Object>of(),
+              /*args=*/ ImmutableList.of(skylarkRepositoryContext),
+              /*kwargs=*/ ImmutableMap.of(),
               null,
               buildEnv);
       if (retValue != Runtime.NONE) {

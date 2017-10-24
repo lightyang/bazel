@@ -31,6 +31,7 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.Sets;
+import com.google.common.util.concurrent.AsyncCallable;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -41,7 +42,7 @@ import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.PackageIdentifier;
 import com.google.devtools.build.lib.cmdline.TargetParsingException;
 import com.google.devtools.build.lib.cmdline.TargetPattern;
-import com.google.devtools.build.lib.collect.CompactHashSet;
+import com.google.devtools.build.lib.collect.compacthashset.CompactHashSet;
 import com.google.devtools.build.lib.concurrent.BlockingStack;
 import com.google.devtools.build.lib.concurrent.MultisetSemaphore;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadSafe;
@@ -139,7 +140,7 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
   static final int BATCH_CALLBACK_SIZE = 10000;
   protected static final int DEFAULT_THREAD_COUNT = Runtime.getRuntime().availableProcessors();
   private static final int MAX_QUERY_EXPRESSION_LOG_CHARS = 1000;
-  private static final Logger LOG = Logger.getLogger(SkyQueryEnvironment.class.getName());
+  private static final Logger logger = Logger.getLogger(SkyQueryEnvironment.class.getName());
 
   private final BlazeTargetAccessor accessor = new BlazeTargetAccessor(this);
   protected final int loadingPhaseThreads;
@@ -249,7 +250,7 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
       // assume here that this environment cannot be initialized-but-stale if the factory is up
       // to date.
       EvaluationResult<SkyValue> result;
-      try (AutoProfiler p = AutoProfiler.logged("evaluation and walkable graph", LOG)) {
+      try (AutoProfiler p = AutoProfiler.logged("evaluation and walkable graph", logger)) {
         result = graphFactory.prepareAndGet(roots, loadingPhaseThreads, universeEvalEventHandler);
       }
 
@@ -363,12 +364,15 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
   public final QueryExpression transformParsedQuery(QueryExpression queryExpression) {
     QueryExpressionMapper mapper = getQueryExpressionMapper();
     QueryExpression transformedQueryExpression = queryExpression.accept(mapper);
-    LOG.info(String.format(
-        "transformed query [%s] to [%s]",
-        Ascii.truncate(
-            queryExpression.toString(), MAX_QUERY_EXPRESSION_LOG_CHARS, "[truncated]"),
-        Ascii.truncate(
-            transformedQueryExpression.toString(), MAX_QUERY_EXPRESSION_LOG_CHARS, "[truncated]")));
+    logger.info(
+        String.format(
+            "transformed query [%s] to [%s]",
+            Ascii.truncate(
+                queryExpression.toString(), MAX_QUERY_EXPRESSION_LOG_CHARS, "[truncated]"),
+            Ascii.truncate(
+                transformedQueryExpression.toString(),
+                MAX_QUERY_EXPRESSION_LOG_CHARS,
+                "[truncated]")));
     return transformedQueryExpression;
   }
 
@@ -392,7 +396,7 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
       throwableToThrow = throwable;
     } finally {
       if (throwableToThrow != null) {
-        LOG.log(
+        logger.log(
             Level.INFO,
             "About to shutdown query threadpool because of throwable",
             throwableToThrow);
@@ -577,6 +581,14 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
     }
   }
 
+  private <R> ListenableFuture<R> safeSubmitAsync(AsyncCallable<R> callable) {
+    try {
+      return Futures.submitAsync(callable, executor);
+    } catch (RejectedExecutionException e) {
+      return Futures.immediateCancelledFuture();
+    }
+  }
+
   @ThreadSafe
   @Override
   public QueryTaskFuture<Void> eval(
@@ -585,10 +597,9 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
       final Callback<Target> callback) {
     // TODO(bazel-team): As in here, use concurrency for the async #eval of other QueryEnvironment
     // implementations.
-    Callable<QueryTaskFutureImpl<Void>> task =
+    AsyncCallable<Void> task =
         () -> (QueryTaskFutureImpl<Void>) expr.eval(SkyQueryEnvironment.this, context, callback);
-    ListenableFuture<QueryTaskFutureImpl<Void>> futureFuture = safeSubmit(task);
-    return QueryTaskFutureImpl.ofDelegate(Futures.dereference(futureFuture));
+    return QueryTaskFutureImpl.ofDelegate(safeSubmitAsync(task));
   }
 
   @Override
@@ -1245,6 +1256,15 @@ public class SkyQueryEnvironment extends AbstractBlazeQueryEnvironment<Target>
       Callback<Target> callback) {
     return ParallelSkyQueryUtils.getAllRdepsUnboundedParallel(
         this, expression, context, callback, packageSemaphore);
+  }
+
+  @Override
+  public QueryTaskFuture<Void> getRdepsUnboundedInUniverseParallel(
+      QueryExpression expression,
+      VariableContext<Target> context,
+      List<Argument> args,
+      Callback<Target> callback) {
+    return RdepsFunction.evalWithBoundedDepth(this, context, expression, args, callback);
   }
 
   @ThreadSafe

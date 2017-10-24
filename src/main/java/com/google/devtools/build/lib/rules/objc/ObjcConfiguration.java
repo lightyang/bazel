@@ -16,7 +16,6 @@ package com.google.devtools.build.lib.rules.objc;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
-import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.CompilationMode;
 import com.google.devtools.build.lib.cmdline.Label;
@@ -41,7 +40,7 @@ import javax.annotation.Nullable;
 public class ObjcConfiguration extends BuildConfiguration.Fragment {
   @VisibleForTesting
   static final ImmutableList<String> DBG_COPTS =
-      ImmutableList.of("-O0", "-DDEBUG=1", "-fstack-protector", "-fstack-protector-all", "-g");
+      ImmutableList.of("-O0", "-DDEBUG", "-fstack-protector", "-fstack-protector-all", "-g");
 
   @VisibleForTesting
   static final ImmutableList<String> GLIBCXX_DBG_COPTS =
@@ -51,7 +50,7 @@ public class ObjcConfiguration extends BuildConfiguration.Fragment {
   @VisibleForTesting
   static final ImmutableList<String> OPT_COPTS =
       ImmutableList.of(
-          "-Os", "-DNDEBUG=1", "-Wno-unused-variable", "-Winit-self", "-Wno-extra");
+          "-Os", "-DNDEBUG", "-Wno-unused-variable", "-Winit-self", "-Wno-extra");
 
   private final DottedVersion iosSimulatorVersion;
   private final String iosSimulatorDevice;
@@ -79,8 +78,7 @@ public class ObjcConfiguration extends BuildConfiguration.Fragment {
   private final Label objcHeaderScannerTool;
   private final Label appleSdk;
 
-  ObjcConfiguration(ObjcCommandLineOptions objcOptions, BuildConfiguration.Options options,
-      @Nullable BlazeDirectories directories) {
+  ObjcConfiguration(ObjcCommandLineOptions objcOptions, BuildConfiguration.Options options) {
     this.iosSimulatorDevice =
         Preconditions.checkNotNull(objcOptions.iosSimulatorDevice, "iosSimulatorDevice");
     this.iosSimulatorVersion =

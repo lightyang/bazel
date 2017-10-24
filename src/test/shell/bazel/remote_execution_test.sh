@@ -355,6 +355,85 @@ EOF
       || fail "Failed to run //a:test with remote execution"
 }
 
+function test_timeout() {
+  mkdir -p a
+  cat > a/BUILD <<'EOF'
+sh_test(
+  name = "sleep",
+  timeout = "short",
+  srcs = ["sleep.sh"],
+)
+EOF
+
+  cat > a/sleep.sh <<'EOF'
+#!/bin/sh
+sleep 2
+EOF
+  chmod +x a/sleep.sh
+  bazel --host_jvm_args=-Dbazel.DigestFunction=SHA1 test \
+      --spawn_strategy=remote \
+      --remote_executor=localhost:${worker_port} \
+      --test_output=errors \
+      --test_timeout=1,1,1,1 \
+      //a:sleep >& $TEST_log \
+      && fail "Test failure (timeout) expected" || true
+  expect_log "TIMEOUT"
+}
+
+function test_passed_env_user() {
+  mkdir -p a
+  cat > a/BUILD <<'EOF'
+sh_test(
+  name = "user_test",
+  timeout = "short",
+  srcs = ["user_test.sh"],
+)
+EOF
+
+  cat > a/user_test.sh <<'EOF'
+#!/bin/sh
+echo "user=$USER"
+EOF
+  chmod +x a/user_test.sh
+  bazel --host_jvm_args=-Dbazel.DigestFunction=SHA1 test \
+      --spawn_strategy=remote \
+      --remote_executor=localhost:${worker_port} \
+      --test_output=all \
+      --test_env=USER=boo \
+      //a:user_test >& $TEST_log \
+      || fail "Failed to run //a:user_test with remote execution"
+  expect_log "user=boo"
+
+  # Rely on the test-setup script to set USER value to whoami.
+  export USER=
+  bazel --host_jvm_args=-Dbazel.DigestFunction=SHA1 test \
+      --spawn_strategy=remote \
+      --remote_executor=localhost:${worker_port} \
+      --test_output=all \
+      //a:user_test >& $TEST_log \
+      || fail "Failed to run //a:user_test with remote execution"
+  expect_log "user=$(whoami)"
+}
+
+function test_exitcode() {
+  mkdir -p a
+  cat > a/BUILD <<'EOF'
+genrule(
+  name = "foo",
+  srcs = [],
+  outs = ["foo.txt"],
+  cmd = "echo \"hello world\" > \"$@\"",
+)
+EOF
+
+  (set +e
+    bazel --host_jvm_args=-Dbazel.DigestFunction=SHA1 build \
+      --genrule_strategy=remote \
+      --remote_executor=bazel-test-does-not-exist \
+      //a:foo >& $TEST_log
+    [ $? -eq 34 ]) || fail "Test failed due to wrong exit code"
+}
+
 # TODO(alpha): Add a test that fails remote execution when remote worker
 # supports sandbox.
 

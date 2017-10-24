@@ -229,9 +229,19 @@ public class PackageLookupFunction implements SkyFunction {
       if (localRepository.exists()
           && !localRepository.getRepository().equals(packageIdentifier.getRepository())) {
         // There is a repository mismatch, this is an error.
-        // TODO(jcater): Work out the correct package name for this error message.
-        return PackageLookupValue.invalidPackageName(
-            "Package crosses into repository " + localRepository.getRepository().getName());
+        // The correct package path is the one originally given, minus the part that is the local
+        // repository.
+        PathFragment pathToRequestedPackage = packageIdentifier.getPathUnderExecRoot();
+        PathFragment localRepositoryPath = localRepository.getPath();
+        if (localRepositoryPath.isAbsolute()) {
+          // We need the package path to also be absolute.
+          pathToRequestedPackage =
+              packagePathEntry.asFragment().getRelative(pathToRequestedPackage);
+        }
+        PathFragment remainingPath = pathToRequestedPackage.relativeTo(localRepositoryPath);
+        PackageIdentifier correctPackage =
+            PackageIdentifier.create(localRepository.getRepository(), remainingPath);
+        return PackageLookupValue.incorrectRepositoryReference(packageIdentifier, correctPackage);
       }
 
       // There's no local repository, keep going.

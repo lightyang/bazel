@@ -40,7 +40,7 @@ public final class OptionsTesterTest {
   /** Test options class for optionAnnotationCheck_PassesWhenAllFieldsAnnotated. */
   public static class BaseAllFieldsAnnotated extends OptionsBase {
     @Option(
-      name = "public inherited field with annotation",
+      name = "public_inherited_field_with_annotation",
       documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
       effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "defaultFoo"
@@ -51,21 +51,20 @@ public final class OptionsTesterTest {
   /** Test options class for optionAnnotationCheck_PassesWhenAllFieldsAnnotated. */
   public static final class OptionAnnotationCheckAllFieldsAnnotated extends BaseAllFieldsAnnotated {
     @Option(
-      name = "public declared field with annotation",
-      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-      effectTags = {OptionEffectTag.NO_OP},
-      defaultValue = "defaultFoo"
+        name = "public_declared_field_with_annotation",
+        documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+        effectTags = {OptionEffectTag.NO_OP},
+        defaultValue = "defaultFoo"
     )
     public String publicField;
 
     @Option(
-      name = "private declared field with annotation",
-      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-      effectTags = {OptionEffectTag.NO_OP},
-      defaultValue = "defaultFoo"
+        name = "other_public_declared_field_with_annotation",
+        documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+        effectTags = {OptionEffectTag.NO_OP},
+        defaultValue = "defaultFoo"
     )
-    @SuppressWarnings("unused")
-    private String privateField;
+    public String publicField2;
   }
 
   @Test
@@ -137,16 +136,10 @@ public final class OptionsTesterTest {
     private String privateUnAnnotatedField;
   }
 
-  @Test
-  public void optionAccessCheck_PassesWhenAllFieldsPublicNotStaticNotFinal() throws Exception {
-    new OptionsTester(OptionAccessCheckAllFieldsPublicNotStaticNotFinal.class)
-        .testAllOptionFieldsPublic();
-  }
-
   /** Test options class for optionAccessCheck_PassesWhenAllFieldsPublicNotStaticNotFinal. */
   public static class BaseAllFieldsPublicNotStaticNotFinal extends OptionsBase {
     @Option(
-      name = "public inherited field with annotation",
+      name = "public_inherited_field_with_annotation",
       documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
       effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "defaultFoo"
@@ -158,17 +151,12 @@ public final class OptionsTesterTest {
   public static final class OptionAccessCheckAllFieldsPublicNotStaticNotFinal
       extends BaseAllFieldsPublicNotStaticNotFinal {
     @Option(
-      name = "public declared field with annotation",
+      name = "public_declared_field_with_annotation",
       documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
       effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "defaultFoo"
     )
     public String annotatedField;
-  }
-
-  @Test
-  public void optionAccessCheck_IgnoresNonAnnotatedFields() throws Exception {
-    new OptionsTester(OptionAccessCheckNonAnnotatedFields.class).testAllOptionFieldsPublic();
   }
 
   /** Test options class for optionAccessCheck_IgnoresNonAnnotatedFields. */
@@ -184,88 +172,6 @@ public final class OptionsTesterTest {
 
     public static final String PUBLIC_DECLARED_UN_ANNOTATED_STATIC_FIELD = "";
     protected String protectedDeclaredField;
-  }
-
-  @Test
-  public void optionAccessCheck_FailsForNonPublicFields() throws Exception {
-    try {
-      new OptionsTester(OptionAccessCheckNonPublicStaticField.class).testAllOptionFieldsPublic();
-    } catch (AssertionError expected) {
-      assertThat(expected).hasMessageThat().contains("protectedField");
-      return;
-    }
-    fail("test is expected to have failed");
-  }
-
-  /** Test options class for optionAccessCheck_FailsForNonPublicFields. */
-  public static class OptionAccessCheckNonPublicStaticField extends OptionsBase {
-    @Option(
-      name = "protected declared field with annotation",
-      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-      effectTags = {OptionEffectTag.NO_OP},
-      defaultValue = "defaultFoo"
-    )
-    protected String protectedField;
-  }
-
-  @Test
-  public void optionAccessCheck_FailsForNonPublicFieldsInSuperclass() throws Exception {
-    try {
-      new OptionsTester(OptionAccessCheckInheritedUnAnnotatedField.class)
-          .testAllOptionFieldsPublic();
-    } catch (AssertionError expected) {
-      assertThat(expected).hasMessageThat().contains("protectedField");
-      return;
-    }
-    fail("test is expected to have failed");
-  }
-
-  /** Test options class for optionAccessCheck_FailsForNonPublicFieldsInSuperclass. */
-  public static final class OptionAccessCheckInheritedUnAnnotatedField
-      extends OptionAccessCheckNonPublicStaticField {}
-
-  @Test
-  public void optionAccessCheck_FailsForStaticFields() throws Exception {
-    try {
-      new OptionsTester(OptionAccessCheckPublicStaticField.class).testAllOptionFieldsPublic();
-    } catch (AssertionError expected) {
-      assertThat(expected).hasMessageThat().contains("staticField");
-      return;
-    }
-    fail("test is expected to have failed");
-  }
-
-  /** Test options class for optionAccessCheck_FailsForStaticFields. */
-  public static final class OptionAccessCheckPublicStaticField extends OptionsBase {
-    @Option(
-      name = "public static declared field with annotation",
-      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-      effectTags = {OptionEffectTag.NO_OP},
-      defaultValue = "defaultFoo"
-    )
-    public static String staticField;
-  }
-
-  @Test
-  public void optionAccessCheck_FailsForFinalFields() throws Exception {
-    try {
-      new OptionsTester(OptionAccessCheckPublicFinalField.class).testAllOptionFieldsPublic();
-    } catch (AssertionError expected) {
-      assertThat(expected).hasMessageThat().contains("finalField");
-      return;
-    }
-    fail("test is expected to have failed");
-  }
-
-  /** Test options class for optionAccessCheck_FailsForStaticFields. */
-  public static final class OptionAccessCheckPublicFinalField extends OptionsBase {
-    @Option(
-      name = "public final declared field with annotation",
-      documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-      effectTags = {OptionEffectTag.NO_OP},
-      defaultValue = "defaultFoo"
-    )
-    public final String finalField = "";
   }
 
   /** Test converter class for testing testAllDefaultValuesTestedBy. */
@@ -295,7 +201,7 @@ public final class OptionsTesterTest {
   /** Test options class for defaultTestCheck_PassesIfAllDefaultsTested. */
   public static final class DefaultTestCheck extends OptionsBase {
     @Option(
-      name = "tested field",
+      name = "tested_field",
       documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
       effectTags = {OptionEffectTag.NO_OP},
       converter = TestConverter.class,
@@ -304,7 +210,7 @@ public final class OptionsTesterTest {
     public String testedField;
 
     @Option(
-      name = "field implicitly using default converter",
+      name = "field_implicitly_using_default_converter",
       documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
       effectTags = {OptionEffectTag.NO_OP},
       defaultValue = "implicitConverterDefault"
@@ -312,7 +218,7 @@ public final class OptionsTesterTest {
     public String implicitConverterField;
 
     @Option(
-      name = "other tested field",
+      name = "other_tested_field",
       documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
       effectTags = {OptionEffectTag.NO_OP},
       converter = TestConverter.class,
@@ -321,7 +227,7 @@ public final class OptionsTesterTest {
     public String otherTestedField;
 
     @Option(
-      name = "field with null default",
+      name = "field_with_null_default",
       documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
       effectTags = {OptionEffectTag.NO_OP},
       converter = TestConverter.class,
@@ -330,7 +236,7 @@ public final class OptionsTesterTest {
     public String nullDefaultField;
 
     @Option(
-      name = "allowMultiple field",
+      name = "allowMultiple_field",
       documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
       effectTags = {OptionEffectTag.NO_OP},
       converter = TestConverter.class,
@@ -374,7 +280,7 @@ public final class OptionsTesterTest {
    */
   public static final class DefaultTestCheckUntestedField extends OptionsBase {
     @Option(
-      name = "untested field",
+      name = "untested_field",
       documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
       effectTags = {OptionEffectTag.NO_OP},
       converter = TestConverter.class,
@@ -398,7 +304,7 @@ public final class OptionsTesterTest {
   /** Test options class for defaultTestCheck_FailsIfTesterIsAbsentEvenForNullDefault. */
   public static final class DefaultTestCheckUntestedNullField extends OptionsBase {
     @Option(
-      name = "untested field",
+      name = "untested_field",
       documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
       effectTags = {OptionEffectTag.NO_OP},
       converter = TestConverter.class,
@@ -422,7 +328,7 @@ public final class OptionsTesterTest {
   /** Test options class for defaultTestCheck_FailsIfTesterIsAbsentEvenForAllowMultiple. */
   public static final class DefaultTestCheckUntestedMultipleField extends OptionsBase {
     @Option(
-      name = "untested field",
+      name = "untested_field",
       documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
       effectTags = {OptionEffectTag.NO_OP},
       converter = TestConverter.class,

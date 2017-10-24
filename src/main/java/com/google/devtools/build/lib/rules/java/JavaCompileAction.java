@@ -32,6 +32,7 @@ import com.google.devtools.build.lib.actions.ActionEnvironment;
 import com.google.devtools.build.lib.actions.ActionOwner;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.ArtifactOwner;
+import com.google.devtools.build.lib.actions.CommandLineExpansionException;
 import com.google.devtools.build.lib.actions.EmptyRunfilesSupplier;
 import com.google.devtools.build.lib.actions.ParameterFile;
 import com.google.devtools.build.lib.actions.ResourceSet;
@@ -43,6 +44,7 @@ import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.actions.CommandLine;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine.CustomMultiArgv;
+import com.google.devtools.build.lib.analysis.actions.CustomCommandLine.VectorArg;
 import com.google.devtools.build.lib.analysis.actions.ParameterFileWriteAction;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
@@ -320,28 +322,38 @@ public final class JavaCompileAction extends SpawnAction {
   }
 
   /**
-   * Constructs a command line that can be used to invoke the
-   * JavaBuilder.
+   * Constructs a command line that can be used to invoke the JavaBuilder.
    *
-   * <p>Do not use this method, except for testing (and for the in-process
-   * strategy).
+   * <p>Do not use this method, except for testing (and for the in-process strategy).
    */
   @VisibleForTesting
   public Iterable<String> buildCommandLine() {
-    return javaCompileCommandLine.arguments();
+    try {
+      return javaCompileCommandLine.arguments();
+    } catch (CommandLineExpansionException e) {
+      throw new AssertionError("JavaCompileAction command line expansion cannot fail");
+    }
   }
 
   /** Returns the command and arguments for a java compile action. */
   public List<String> getCommand() {
-    return ImmutableList.copyOf(commandLine.arguments());
+    try {
+      return ImmutableList.copyOf(commandLine.arguments());
+    } catch (CommandLineExpansionException e) {
+      throw new AssertionError("JavaCompileAction command line expansion cannot fail");
+    }
   }
 
   @Override
   public String toString() {
-    StringBuilder result = new StringBuilder();
-    result.append("JavaBuilder ");
-    Joiner.on(' ').appendTo(result, commandLine.arguments());
-    return result.toString();
+    try {
+      StringBuilder result = new StringBuilder();
+      result.append("JavaBuilder ");
+      Joiner.on(' ').appendTo(result, commandLine.arguments());
+      return result.toString();
+    } catch (CommandLineExpansionException e) {
+      return "Error expanding command line";
+    }
   }
 
   @Override
@@ -356,8 +368,11 @@ public final class JavaCompileAction extends SpawnAction {
     info.addAllProcessorpath(Artifact.toExecPaths(getProcessorpath()));
     info.setOutputjar(getOutputJar().getExecPathString());
 
-    return super.getExtraActionInfo()
-        .setExtension(JavaCompileInfo.javaCompileInfo, info.build());
+    try {
+      return super.getExtraActionInfo().setExtension(JavaCompileInfo.javaCompileInfo, info.build());
+    } catch (CommandLineExpansionException e) {
+      throw new AssertionError("JavaCompileAction command line expansion cannot fail");
+    }
   }
 
   /**
@@ -427,13 +442,14 @@ public final class JavaCompileAction extends SpawnAction {
             CustomCommandLine.builder().addPath(javaExecutable).addAll(javaBuilderJvmFlags);
         if (!instrumentationJars.isEmpty()) {
           builder
-              .addJoinedExecPaths(
+              .addExecPaths(
                   "-cp",
-                  pathDelimiter,
-                  ImmutableList.<Artifact>builder()
-                      .addAll(instrumentationJars)
-                      .add(javaBuilderJar)
-                      .build())
+                  VectorArg.join(pathDelimiter)
+                      .each(
+                          ImmutableList.<Artifact>builder()
+                              .addAll(instrumentationJars)
+                              .add(javaBuilderJar)
+                              .build()))
               .addDynamicString(javaBuilderMainClass);
         } else {
           // If there are no instrumentation jars, use simpler '-jar' option to launch JavaBuilder.
@@ -510,8 +526,6 @@ public final class JavaCompileAction extends SpawnAction {
     private PathFragment classDirectory;
     private NestedSet<Artifact> processorPath = NestedSetBuilder.emptySet(Order.NAIVE_LINK_ORDER);
     private final List<String> processorNames = new ArrayList<>();
-    /** The list of custom javac flags to pass to annotation processors. */
-    private final List<String> processorFlags = new ArrayList<>();
     private String ruleKind;
     private Label targetLabel;
     private boolean testOnly = false;
@@ -696,9 +710,6 @@ public final class JavaCompileAction extends SpawnAction {
       }
       if (!processorNames.isEmpty()) {
         result.addAll("--processors", ImmutableList.copyOf(processorNames));
-      }
-      if (!processorFlags.isEmpty()) {
-        result.addAll("--javacopts", ImmutableList.copyOf(processorFlags));
       }
       if (!sourceJars.isEmpty()) {
         result.addExecPaths("--source_jars", ImmutableList.copyOf(sourceJars));
@@ -962,11 +973,6 @@ public final class JavaCompileAction extends SpawnAction {
       return this;
     }
 
-    public Builder addProcessorFlags(Collection<String> processorFlags) {
-      this.processorFlags.addAll(processorFlags);
-      return this;
-    }
-
     public Builder setLangtoolsJar(Artifact langtoolsJar) {
       this.langtoolsJar = langtoolsJar;
       return this;
@@ -998,7 +1004,7 @@ public final class JavaCompileAction extends SpawnAction {
       this.targetLabel = targetLabel;
       return this;
     }
-    
+
     public Builder setTestOnly(boolean testOnly) {
       this.testOnly = testOnly;
       return this;

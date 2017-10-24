@@ -60,11 +60,11 @@ import com.google.common.collect.Iterables;
 import com.google.common.collect.UnmodifiableIterator;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
-import com.google.devtools.build.lib.analysis.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.analysis.TransitiveInfoProvider;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
+import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.packages.Info;
 import com.google.devtools.build.lib.packages.NativeProvider;
 import com.google.devtools.build.lib.rules.apple.AppleToolchain;
@@ -429,8 +429,6 @@ public final class ObjcCommon {
 
       for (ObjcProvider provider : runtimeDepObjcProviders) {
         objcProvider.addTransitiveAndPropagate(ObjcProvider.DYNAMIC_FRAMEWORK_FILE, provider);
-        // TODO(b/28637288): Remove STATIC_FRAMEWORK_FILE and MERGE_ZIP when they are
-        // no longer provided by ios_framework.
         objcProvider.addTransitiveAndPropagate(ObjcProvider.STATIC_FRAMEWORK_FILE, provider);
         objcProvider.addTransitiveAndPropagate(ObjcProvider.MERGE_ZIP, provider);
       }
@@ -647,7 +645,7 @@ public final class ObjcCommon {
   static Iterable<String> getNonCrosstoolCopts(RuleContext ruleContext) {
     return Iterables.concat(
         ruleContext.getFragment(ObjcConfiguration.class).getCopts(),
-        ruleContext.getTokenizedStringListAttr("copts"));
+        ruleContext.getExpander().withDataLocations().tokenized("copts"));
   }
 
   static ImmutableSet<PathFragment> userHeaderSearchPaths(

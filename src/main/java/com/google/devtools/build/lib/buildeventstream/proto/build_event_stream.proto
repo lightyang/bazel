@@ -20,6 +20,7 @@ option java_package = "com.google.devtools.build.lib.buildeventstream";
 option java_outer_classname = "BuildEventStreamProtos";
 
 import "src/main/protobuf/invocation_policy.proto";
+import "src/main/protobuf/command_line.proto";
 
 // Identifier for a build event. It is deliberately structured to also provide
 // information about which build target etc the event is related to.
@@ -53,7 +54,16 @@ message BuildEventId {
 
   // Identifier on an event indicating the original commandline received by
   // the bazel server.
-  message CommandLineId {
+  message UnstructuredCommandLineId {
+  }
+
+  // Identifier on an event describing the commandline received by Bazel.
+  message StructuredCommandLineId {
+    // A title for this command line value, as there may be multiple.
+    // For example, a single invocation may wish to report both the literal and
+    // canonical command lines, and this label would be used to differentiate
+    // between both versions.
+    string command_line_label = 1;
   }
 
   // Identifier of an event indicating the workspace status.
@@ -86,6 +96,10 @@ message BuildEventId {
   // identifying for which configurations it should be build.
   message TargetConfiguredId {
     string label = 1;
+
+    // If not empty, the id refers to the expansion of the target for a given
+    // aspect.
+    string aspect = 2;
   }
 
   // Identifier of an event introducing a named set of files (usually artifacts)
@@ -128,6 +142,15 @@ message BuildEventId {
     ConfigurationId configuration = 3;
   }
 
+  // Identifier of an event reporting an event associated with an unconfigured
+  // label. Usually, this indicates a failure due to a missing input file. In
+  // any case, it will report some form of error (i.e., the payload will be an
+  // Aborted event); there are no regular events using this identifier. The
+  // purpose of those events is to serve as the root cause of a failed target.
+  message UnconfiguredLabelId {
+    string label = 1;
+  }
+
   // Identifier of an event reporting on an individual test run. The label
   // identifies the test that is reported about, the remaining fields are
   // in such a way as to uniquely identify the action within a build. In fact,
@@ -155,7 +178,8 @@ message BuildEventId {
     UnknownBuildEventId unknown = 1;
     ProgressId progress = 2;
     BuildStartedId started = 3;
-    CommandLineId command_line = 11;
+    UnstructuredCommandLineId unstructured_command_line = 11;
+    StructuredCommandLineId structured_command_line = 18;
     WorkspaceStatusId workspace_status = 14;
     OptionsParsedId options_parsed = 12;
     FetchId fetch = 17;
@@ -166,6 +190,7 @@ message BuildEventId {
     NamedSetOfFilesId named_set = 13;
     TargetCompletedId target_completed = 5;
     ActionCompletedId action_completed = 6;
+    UnconfiguredLabelId unconfigured_label = 19;
     TestResultId test_result = 8;
     TestSummaryId test_summary = 7;
     BuildFinishedId build_finished = 9;
@@ -193,6 +218,9 @@ message Aborted {
 
     // The user requested the build to be aborted (e.g., by hitting Ctl-C).
     USER_INTERRUPTED = 1;
+
+    // The user requested that no analysis be performed.
+    NO_ANALYZE = 8;
 
     // The build or target was aborted as a timeout was exceeded.
     TIME_OUT = 2;
@@ -256,7 +284,7 @@ message BuildStarted {
 // like name and relevant entries of rc-files and client environment variables.
 // However, it does contain enough information to reproduce the build
 // invocation.
-message CommandLine {
+message UnstructuredCommandLine {
   repeated string args = 1;
 }
 
@@ -267,6 +295,7 @@ message OptionsParsed {
   repeated string cmd_line = 3;
   repeated string explicit_cmd_line = 4;
   blaze.invocation_policy.InvocationPolicy invocation_policy = 5;
+  string tool_tag = 6;
 }
 
 // Payload of an event indicating that an external resource was fetched. This
@@ -335,9 +364,10 @@ message File {
   string name = 1;
 
   oneof file {
-    // A location where the contents of the file can be found.
+    // A location where the contents of the file can be found. The string is
+    // encoded according to RFC2396.
     string uri = 2;
-    // The conents of the file, if they are guaranteed to be short.
+    // The contents of the file, if they are guaranteed to be short.
     bytes contents = 3;
   }
 }
@@ -431,7 +461,7 @@ enum TestStatus {
   INCOMPLETE = 5;
   REMOTE_FAILURE = 6;
   FAILED_TO_BUILD = 7;
-  BLAZE_HALTED_BEFORE_TESTING = 8;
+  TOOL_HALTED_BEFORE_TESTING = 8;
 };
 
 // Payload on events reporting about individual test action.
@@ -525,7 +555,8 @@ message BuildEvent {
     Progress progress = 3;
     Aborted aborted = 4;
     BuildStarted started = 5;
-    CommandLine command_line = 12;
+    UnstructuredCommandLine unstructured_command_line = 12;
+    command_line.CommandLine structured_command_line = 22;
     OptionsParsed options_parsed = 13;
     WorkspaceStatus workspace_status = 16;
     Fetch fetch = 21;

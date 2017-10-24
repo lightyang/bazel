@@ -31,12 +31,12 @@ import com.google.devtools.build.lib.analysis.DefaultInfo;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
 import com.google.devtools.build.lib.analysis.LabelExpander;
 import com.google.devtools.build.lib.analysis.LabelExpander.NotUniqueExpansionException;
-import com.google.devtools.build.lib.analysis.MakeVariableExpander.ExpansionException;
-import com.google.devtools.build.lib.analysis.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.FragmentCollection;
+import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
+import com.google.devtools.build.lib.analysis.stringtemplate.ExpansionException;
 import com.google.devtools.build.lib.analysis.test.InstrumentedFilesCollector;
 import com.google.devtools.build.lib.analysis.test.InstrumentedFilesProvider;
 import com.google.devtools.build.lib.cmdline.Label;
@@ -68,7 +68,7 @@ import com.google.devtools.build.lib.syntax.Runtime;
 import com.google.devtools.build.lib.syntax.SkylarkDict;
 import com.google.devtools.build.lib.syntax.SkylarkIndexable;
 import com.google.devtools.build.lib.syntax.SkylarkList;
-import com.google.devtools.build.lib.syntax.SkylarkSemanticsOptions;
+import com.google.devtools.build.lib.syntax.SkylarkSemantics;
 import com.google.devtools.build.lib.syntax.SkylarkType;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.syntax.Type.LabelClass;
@@ -181,7 +181,7 @@ public final class SkylarkRuleContext implements SkylarkValue {
   private FragmentCollection fragments;
   private FragmentCollection hostFragments;
   private AspectDescriptor aspectDescriptor;
-  private final SkylarkSemanticsOptions skylarkSemantics;
+  private final SkylarkSemantics skylarkSemantics;
 
   private SkylarkDict<String, String> makeVariables;
   private SkylarkRuleAttributesCollection attributesCollection;
@@ -200,9 +200,9 @@ public final class SkylarkRuleContext implements SkylarkValue {
    */
   public SkylarkRuleContext(RuleContext ruleContext,
       @Nullable AspectDescriptor aspectDescriptor,
-      SkylarkSemanticsOptions skylarkSemantics)
+      SkylarkSemantics skylarkSemantics)
       throws EvalException, InterruptedException {
-    this.actionFactory = new SkylarkActionFactory(this, ruleContext);
+    this.actionFactory = new SkylarkActionFactory(this, skylarkSemantics, ruleContext);
     this.ruleContext = Preconditions.checkNotNull(ruleContext);
     this.ruleLabelCanonicalName = ruleContext.getLabel().getCanonicalForm();
     this.fragments = new FragmentCollection(ruleContext, ConfigurationTransition.NONE);
@@ -582,12 +582,6 @@ public final class SkylarkRuleContext implements SkylarkValue {
     public void repr(SkylarkPrinter printer) {
       printer.append("<rule collection for " + skylarkRuleContext.ruleLabelCanonicalName + ">");
     }
-
-    @Override
-    public void reprLegacy(SkylarkPrinter printer) {
-      printer.append("rule_collection:");
-      printer.repr(skylarkRuleContext);
-    }
   }
 
   private void addOutput(HashMap<String, Object> outputsBuilder, String key, Object value)
@@ -610,10 +604,6 @@ public final class SkylarkRuleContext implements SkylarkValue {
     } else {
       printer.append("<rule context for " + ruleLabelCanonicalName + ">");
     }
-  }
-  @Override
-  public void reprLegacy(SkylarkPrinter printer) {
-    printer.append(ruleLabelCanonicalName);
   }
 
   /**
@@ -1019,9 +1009,7 @@ public final class SkylarkRuleContext implements SkylarkValue {
   public String expandMakeVariables(String attributeName, String command,
       final Map<String, String> additionalSubstitutions) throws EvalException {
     checkMutable("expand_make_variables");
-    return ruleContext.expandMakeVariables(
-        attributeName,
-        command,
+    ConfigurationMakeVariableContext makeVariableContext =
         new ConfigurationMakeVariableContext(
             // TODO(lberki): This should be removed. But only after either verifying that no one
             // uses it or providing an alternative.
@@ -1029,14 +1017,15 @@ public final class SkylarkRuleContext implements SkylarkValue {
             ruleContext.getRule().getPackage(),
             ruleContext.getConfiguration()) {
           @Override
-          public String lookupMakeVariable(String variableName) throws ExpansionException {
+          public String lookupVariable(String variableName) throws ExpansionException {
             if (additionalSubstitutions.containsKey(variableName)) {
               return additionalSubstitutions.get(variableName);
             } else {
-              return super.lookupMakeVariable(variableName);
+              return super.lookupVariable(variableName);
             }
           }
-        });
+        };
+    return ruleContext.getExpander(makeVariableContext).expand(attributeName, command);
   }
 
 

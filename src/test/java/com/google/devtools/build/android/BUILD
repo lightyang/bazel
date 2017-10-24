@@ -2,6 +2,7 @@ filegroup(
     name = "srcs",
     srcs = glob(["**"]) + [
         "//src/test/java/com/google/devtools/build/android/idlclass:srcs",
+        "//src/test/java/com/google/devtools/build/android/desugar:srcs",
         "//src/test/java/com/google/devtools/build/android/dexer:srcs",
         "//src/test/java/com/google/devtools/build/android/junctions:srcs",
         "//src/test/java/com/google/devtools/build/android/resources:srcs",
@@ -274,4 +275,27 @@ java_library(
         "//third_party:guava",
         "//third_party:truth",
     ],
+)
+
+test_suite(
+    name = "windows_tests",
+    tags = [
+        "-no_windows",
+        "-slow",
+    ],
+    visibility = ["//visibility:private"],
+)
+
+test_suite(
+    name = "all_windows_tests",
+    tests = [
+        ":windows_tests",
+        "//src/test/java/com/google/devtools/build/android/desugar:all_windows_tests",
+        "//src/test/java/com/google/devtools/build/android/dexer:all_windows_tests",
+        "//src/test/java/com/google/devtools/build/android/idlclass:all_windows_tests",
+        "//src/test/java/com/google/devtools/build/android/junctions:all_windows_tests",
+        "//src/test/java/com/google/devtools/build/android/resources:all_windows_tests",
+        "//src/test/java/com/google/devtools/build/android/ziputils:all_windows_tests",
+    ],
+    visibility = ["//src:__pkg__"],
 )

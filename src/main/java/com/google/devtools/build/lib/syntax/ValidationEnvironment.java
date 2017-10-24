@@ -56,8 +56,9 @@ public final class ValidationEnvironment extends SyntaxTreeVisitor {
     }
   }
 
-  private final SkylarkSemanticsOptions semantics;
+  private final SkylarkSemantics semantics;
   private Block block;
+  private int loopCount;
 
   /** Create a ValidationEnvironment for a given global Environment. */
   ValidationEnvironment(Environment env) {
@@ -106,7 +107,24 @@ public final class ValidationEnvironment extends SyntaxTreeVisitor {
   public void visit(ReturnStatement node) {
     if (isTopLevel()) {
       throw new ValidationException(
-          node.getLocation(), "Return statements must be inside a function");
+          node.getLocation(), "return statements must be inside a function");
+    }
+    super.visit(node);
+  }
+
+  @Override
+  public void visit(ForStatement node) {
+    loopCount++;
+    super.visit(node);
+    Preconditions.checkState(loopCount > 0);
+    loopCount--;
+  }
+
+  @Override
+  public void visit(FlowStatement node) {
+    if (loopCount <= 0) {
+      throw new ValidationException(
+          node.getLocation(), node.getKind().getName() + " statement must be inside a for loop");
     }
     super.visit(node);
   }
@@ -119,7 +137,7 @@ public final class ValidationEnvironment extends SyntaxTreeVisitor {
 
   @Override
   public void visit(AbstractComprehension node) {
-    if (semantics.incompatibleComprehensionVariablesDoNotLeak) {
+    if (semantics.incompatibleComprehensionVariablesDoNotLeak()) {
       openBlock();
       super.visit(node);
       closeBlock();
@@ -147,7 +165,7 @@ public final class ValidationEnvironment extends SyntaxTreeVisitor {
 
   @Override
   public void visit(IfStatement node) {
-    if (semantics.incompatibleDisallowToplevelIfStatement && isTopLevel()) {
+    if (semantics.incompatibleDisallowToplevelIfStatement() && isTopLevel()) {
       throw new ValidationException(
           node.getLocation(),
           "if statements are not allowed at the top level. You may move it inside a function "
@@ -239,7 +257,7 @@ public final class ValidationEnvironment extends SyntaxTreeVisitor {
   /** Validates the AST and runs static checks. */
   private void validateAst(List<Statement> statements) {
     // Check that load() statements are on top.
-    if (semantics.incompatibleBzlDisallowLoadAfterStatement) {
+    if (semantics.incompatibleBzlDisallowLoadAfterStatement()) {
       checkLoadAfterStatement(statements);
     }
 

@@ -51,13 +51,14 @@ import com.google.devtools.build.lib.actions.ParameterFile;
 import com.google.devtools.build.lib.analysis.AnalysisEnvironment;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
 import com.google.devtools.build.lib.analysis.PrerequisiteArtifacts;
-import com.google.devtools.build.lib.analysis.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.actions.CommandLine;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
+import com.google.devtools.build.lib.analysis.actions.CustomCommandLine.VectorArg;
 import com.google.devtools.build.lib.analysis.actions.ParameterFileWriteAction;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
+import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.test.InstrumentedFilesCollector;
 import com.google.devtools.build.lib.analysis.test.InstrumentedFilesCollector.InstrumentationSpec;
 import com.google.devtools.build.lib.analysis.test.InstrumentedFilesCollector.LocalMetadataCollector;
@@ -73,6 +74,7 @@ import com.google.devtools.build.lib.rules.apple.ApplePlatform;
 import com.google.devtools.build.lib.rules.apple.ApplePlatform.PlatformType;
 import com.google.devtools.build.lib.rules.apple.AppleToolchain;
 import com.google.devtools.build.lib.rules.apple.XcodeConfig;
+import com.google.devtools.build.lib.rules.apple.XcodeConfigProvider;
 import com.google.devtools.build.lib.rules.cpp.CcToolchain;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainProvider;
 import com.google.devtools.build.lib.rules.cpp.CppFileTypes;
@@ -301,6 +303,7 @@ public abstract class CompilationSupport {
   protected final IntermediateArtifacts intermediateArtifacts;
   protected final boolean useDeps;
   protected final Map<String, NestedSet<Artifact>> outputGroupCollector;
+  protected final CcToolchainProvider toolchain;
   protected final boolean isTestRule;
   protected final boolean usePch;
 
@@ -324,6 +327,7 @@ public abstract class CompilationSupport {
       CompilationAttributes compilationAttributes,
       boolean useDeps,
       Map<String, NestedSet<Artifact>> outputGroupCollector,
+      CcToolchainProvider toolchain,
       boolean isTestRule,
       boolean usePch) {
     this.ruleContext = ruleContext;
@@ -336,6 +340,18 @@ public abstract class CompilationSupport {
     this.isTestRule = isTestRule;
     this.outputGroupCollector = outputGroupCollector;
     this.usePch = usePch;
+    // TODO(b/62143697): Remove this check once all rules are using the crosstool support.
+    if (ruleContext
+        .attributes()
+        .has(CcToolchain.CC_TOOLCHAIN_DEFAULT_ATTRIBUTE_NAME, BuildType.LABEL)) {
+      if (toolchain == null) {
+        toolchain =  CppHelper.getToolchainUsingDefaultCcToolchainAttribute(ruleContext);
+      }
+      this.toolchain = toolchain;
+    } else {
+      // Since the rule context doesn't have a toolchain at all, ignore any provided override.
+      this.toolchain = null;
+    }
   }
 
   /** Builder for {@link CompilationSupport} */
@@ -347,6 +363,7 @@ public abstract class CompilationSupport {
     private boolean useDeps = true;
     private Map<String, NestedSet<Artifact>> outputGroupCollector;
     private boolean isObjcLibrary = false;
+    private CcToolchainProvider toolchain;
     private boolean isTestRule = false;
     private boolean usePch = true;
 
@@ -423,6 +440,17 @@ public abstract class CompilationSupport {
     }
 
     /**
+     * Sets {@link CcToolchainProvider} for the calling target.
+     *
+     * <p>This is needed if it can't correctly be inferred directly from the rule context. Setting
+     * to null causes the default to be used as if this was never called.
+     */
+    public Builder setToolchainProvider(CcToolchainProvider toolchain) {
+      this.toolchain = toolchain;
+      return this;
+    }
+
+    /**
      * Returns a {@link CompilationSupport} instance. This is either a {@link
      * CrosstoolCompilationSupport} or {@link LegacyCompilationSupport} depending on the value of
      * --experimental_objc_crosstool.
@@ -458,6 +486,7 @@ public abstract class CompilationSupport {
             compilationAttributes,
             useDeps,
             outputGroupCollector,
+            toolchain,
             isTestRule,
             usePch);
       } else {
@@ -468,6 +497,7 @@ public abstract class CompilationSupport {
             compilationAttributes,
             useDeps,
             outputGroupCollector,
+            toolchain,
             isTestRule,
             usePch);
       }
@@ -490,7 +520,7 @@ public abstract class CompilationSupport {
         objcProvider,
         ExtraCompileArgs.NONE,
         ImmutableList.<PathFragment>of(),
-        maybeGetCcToolchain(),
+        toolchain,
         maybeGetFdoSupport());
   }
 
@@ -571,7 +601,7 @@ public abstract class CompilationSupport {
     return registerFullyLinkAction(
         objcProvider,
         outputArchive,
-        maybeGetCcToolchain(),
+        toolchain,
         maybeGetFdoSupport());
   }
 
@@ -629,7 +659,7 @@ public abstract class CompilationSupport {
         objcProvider,
         inputArtifacts,
         outputArchive,
-        maybeGetCcToolchain(),
+        toolchain,
         maybeGetFdoSupport());
   }
     
@@ -758,7 +788,7 @@ public abstract class CompilationSupport {
           common.getObjcProvider(),
           extraCompileArgs,
           priorityHeaders,
-          maybeGetCcToolchain(),
+          toolchain,
           maybeGetFdoSupport());
     }
     return this;
@@ -1077,12 +1107,16 @@ public abstract class CompilationSupport {
               .addExecPath("--output_archive", prunedJ2ObjcArchive)
               .addExecPath("--dummy_archive", dummyArchive)
               .addExecPath("--xcrunwrapper", xcrunwrapper(ruleContext).getExecutable())
-              .addJoinedExecPaths("--dependency_mapping_files", ",", j2ObjcDependencyMappingFiles)
-              .addJoinedExecPaths("--header_mapping_files", ",", j2ObjcHeaderMappingFiles)
-              .addJoinedExecPaths(
-                  "--archive_source_mapping_files", ",", j2ObjcArchiveSourceMappingFiles)
+              .addExecPaths(
+                  "--dependency_mapping_files",
+                  VectorArg.join(",").each(j2ObjcDependencyMappingFiles))
+              .addExecPaths(
+                  "--header_mapping_files", VectorArg.join(",").each(j2ObjcHeaderMappingFiles))
+              .addExecPaths(
+                  "--archive_source_mapping_files",
+                  VectorArg.join(",").each(j2ObjcArchiveSourceMappingFiles))
               .add("--entry_classes")
-              .addJoined(",", entryClasses)
+              .addAll(VectorArg.join(",").each(entryClasses))
               .build();
 
       ruleContext.registerAction(
@@ -1094,7 +1128,8 @@ public abstract class CompilationSupport {
               ISO_8859_1));
       ruleContext.registerAction(
           ObjcRuleClasses.spawnAppleEnvActionBuilder(
-                  appleConfiguration, appleConfiguration.getSingleArchPlatform())
+                  XcodeConfigProvider.fromRuleContext(ruleContext),
+                  appleConfiguration.getSingleArchPlatform())
               .setMnemonic("DummyPruner")
               .setExecutable(pruner)
               .addInput(dummyArchive)
@@ -1105,7 +1140,7 @@ public abstract class CompilationSupport {
               .addTransitiveInputs(j2ObjcDependencyMappingFiles)
               .addTransitiveInputs(j2ObjcHeaderMappingFiles)
               .addTransitiveInputs(j2ObjcArchiveSourceMappingFiles)
-              .setCommandLine(
+              .addCommandLine(
                   CustomCommandLine.builder().addFormatted("@%s", paramFile.getExecPath()).build())
               .addOutput(prunedJ2ObjcArchive)
               .build(ruleContext));
@@ -1195,10 +1230,11 @@ public abstract class CompilationSupport {
 
     ruleContext.registerAction(
         ObjcRuleClasses.spawnAppleEnvActionBuilder(
-                appleConfiguration, appleConfiguration.getSingleArchPlatform())
+                XcodeConfigProvider.fromRuleContext(ruleContext),
+                appleConfiguration.getSingleArchPlatform())
             .setMnemonic("ObjcBinarySymbolStrip")
             .setExecutable(xcrunwrapper(ruleContext))
-            .setCommandLine(symbolStripCommandLine(stripArgs, binaryToLink, strippedBinary))
+            .addCommandLine(symbolStripCommandLine(stripArgs, binaryToLink, strippedBinary))
             .addOutput(strippedBinary)
             .addInput(binaryToLink)
             .build(ruleContext));
@@ -1255,7 +1291,7 @@ public abstract class CompilationSupport {
             ImmutableList.<PathFragment>of(),
             /*compiledModule=*/ true,
             /*moduleMapHomeIsCwd=*/ false,
-            /*generateSubModules=*/ false,
+            /* generateSubmodules= */ false,
             /*externDependencies=*/ true));
 
     return this;
@@ -1398,7 +1434,7 @@ public abstract class CompilationSupport {
     }
     ruleContext.registerAction(
         builder
-            .setCommandLine(cmdLine.add("--").addAll(args).build())
+            .addCommandLine(cmdLine.add("--").addAll(args).build())
             .addInputs(compilationArtifacts.getPrivateHdrs())
             .addTransitiveInputs(attributes.hdrs())
             .addTransitiveInputs(objcProvider.get(ObjcProvider.HEADER))
@@ -1441,18 +1477,6 @@ public abstract class CompilationSupport {
       objcHeaderThinningInfoByCommandLine.put(filteredArgumentsBuilder.build(), info);
     }
     return objcHeaderThinningInfoByCommandLine;
-  }
-
-  @Nullable
-  private CcToolchainProvider maybeGetCcToolchain() {
-    // TODO(rduan): Remove this check once all rules are using the crosstool support.
-    if (ruleContext
-        .attributes()
-        .has(CcToolchain.CC_TOOLCHAIN_DEFAULT_ATTRIBUTE_NAME, BuildType.LABEL)) {
-      return CppHelper.getToolchainUsingDefaultCcToolchainAttribute(ruleContext);
-    } else {
-      return null;
-    }
   }
 
   @Nullable

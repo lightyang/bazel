@@ -15,6 +15,7 @@
 package com.google.devtools.build.lib.rules.objc;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
@@ -22,10 +23,12 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.packages.Info;
 import com.google.devtools.build.lib.packages.Provider;
+import com.google.devtools.build.lib.rules.apple.AppleConfiguration;
 import com.google.devtools.build.lib.rules.apple.ApplePlatform;
 import com.google.devtools.build.lib.rules.apple.ApplePlatform.PlatformType;
 import com.google.devtools.build.lib.rules.apple.AppleToolchain;
 import com.google.devtools.build.lib.rules.apple.DottedVersion;
+import com.google.devtools.build.lib.rules.apple.XcodeConfigProvider;
 import com.google.devtools.build.lib.rules.apple.XcodeVersionProperties;
 import com.google.devtools.build.lib.rules.objc.ObjcProvider.Key;
 import com.google.devtools.build.lib.skylarkinterface.Param;
@@ -148,6 +151,15 @@ public class AppleSkylarkCommon {
   )
   public Provider getXcodeVersionPropertiesConstructor() {
     return XcodeVersionProperties.SKYLARK_CONSTRUCTOR;
+  }
+
+  @SkylarkCallable(
+      name = XcodeConfigProvider.SKYLARK_NAME,
+      doc = "The constructor/key for the <code>XcodeVersionConfig</code> provider.",
+      structField =  true
+  )
+  public Provider getXcodeVersionConfigConstructor() {
+    return XcodeConfigProvider.PROVIDER;
   }
 
   @SkylarkCallable(
@@ -274,6 +286,32 @@ public class AppleSkylarkCommon {
   )
   public Provider getIosDeviceProviderConstructor() {
     return IosDeviceProvider.SKYLARK_CONSTRUCTOR;
+  }
+
+  @SkylarkCallable(
+      name = "apple_host_system_env",
+      doc =
+          "Returns a <a href='dict.html'>dict</a> of environment variables that should be set "
+              + "for actions that need to run build tools on an Apple host system, such as the "
+              + " version of Xcode that should be used. The keys are variable names and the values "
+              + " are their corresponding values."
+  )
+  public ImmutableMap<String, String> getAppleHostSystemEnv(XcodeConfigProvider xcodeConfig) {
+    return AppleConfiguration.getXcodeVersionEnv(xcodeConfig.getXcodeVersion());
+  }
+
+  @SkylarkCallable(
+      name = "target_apple_env",
+      doc =
+          "Returns a <code>dict</code> of environment variables that should be set for actions "
+              + "that build targets of the given Apple platform type. For example, this dictionary "
+              + "contains variables that denote the platform name and SDK version with which to "
+              + "build. The keys are variable names and the values are their corresponding values."
+  )
+  public ImmutableMap<String, String> getTargetAppleEnvironment(
+      XcodeConfigProvider xcodeConfig, ApplePlatform platform) {
+    return AppleConfiguration.appleTargetPlatformEnv(
+        platform, xcodeConfig.getSdkVersionForPlatform(platform));
   }
 
   @SkylarkSignature(

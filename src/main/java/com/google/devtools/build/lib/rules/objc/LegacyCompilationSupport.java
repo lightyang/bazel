@@ -44,15 +44,17 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.Artifact.TreeFileArtifact;
+import com.google.devtools.build.lib.actions.CommandLineExpansionException;
 import com.google.devtools.build.lib.analysis.OutputGroupProvider;
 import com.google.devtools.build.lib.analysis.PrerequisiteArtifacts;
-import com.google.devtools.build.lib.analysis.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.actions.CommandLine;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
+import com.google.devtools.build.lib.analysis.actions.CustomCommandLine.VectorArg;
 import com.google.devtools.build.lib.analysis.actions.SpawnActionTemplate;
 import com.google.devtools.build.lib.analysis.actions.SpawnActionTemplate.OutputPathMapper;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
+import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
@@ -64,6 +66,7 @@ import com.google.devtools.build.lib.rules.apple.ApplePlatform;
 import com.google.devtools.build.lib.rules.apple.AppleToolchain;
 import com.google.devtools.build.lib.rules.apple.DottedVersion;
 import com.google.devtools.build.lib.rules.apple.XcodeConfig;
+import com.google.devtools.build.lib.rules.apple.XcodeConfigProvider;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainProvider;
 import com.google.devtools.build.lib.rules.cpp.CppCompileAction.DotdFile;
 import com.google.devtools.build.lib.rules.cpp.CppModuleMap;
@@ -79,9 +82,8 @@ import javax.annotation.Nullable;
 /**
  * Constructs command lines for objc compilation, archiving, and linking.  Uses hard-coded
  * command line templates.
- * 
- * TODO(b/28403953): Deprecate in favor of {@link CrosstoolCompilationSupport} in all objc rules.
  */
+// TODO(b/65163377): Remove this implementation.
 public class LegacyCompilationSupport extends CompilationSupport {
 
   /**
@@ -148,6 +150,7 @@ public class LegacyCompilationSupport extends CompilationSupport {
       CompilationAttributes compilationAttributes,
       boolean useDeps,
       Map<String, NestedSet<Artifact>> outputGroupCollector,
+      CcToolchainProvider toolchain,
       boolean isTestRule,
       boolean usePch) {
     super(
@@ -157,6 +160,7 @@ public class LegacyCompilationSupport extends CompilationSupport {
         compilationAttributes,
         useDeps,
         outputGroupCollector,
+        toolchain,
         isTestRule,
         usePch);
   }
@@ -303,14 +307,15 @@ public class LegacyCompilationSupport extends CompilationSupport {
         .addAll(
             commonLinkAndCompileFlagsForClang(objcProvider, objcConfiguration, appleConfiguration))
         .addAll(objcConfiguration.getCoptsForCompilationMode())
-        .addBeforeEachPath(
-            "-iquote", ObjcCommon.userHeaderSearchPaths(objcProvider, buildConfiguration))
-        .addBeforeEachExecPath("-include", pchFile.asSet())
-        .addBeforeEachPath("-I", ImmutableList.copyOf(priorityHeaders))
-        .addBeforeEachPath("-I", objcProvider.get(INCLUDE))
-        .addBeforeEachPath("-isystem", objcProvider.get(INCLUDE_SYSTEM))
+        .addPaths(
+            VectorArg.addBefore("-iquote")
+                .each(ObjcCommon.userHeaderSearchPaths(objcProvider, buildConfiguration)))
+        .addExecPaths(VectorArg.addBefore("-include").each(pchFile.asSet()))
+        .addPaths(VectorArg.addBefore("-I").each(ImmutableList.copyOf(priorityHeaders)))
+        .addPaths(VectorArg.addBefore("-I").each(objcProvider.get(INCLUDE)))
+        .addPaths(VectorArg.addBefore("-isystem").each(objcProvider.get(INCLUDE_SYSTEM)))
         .addAll(ImmutableList.copyOf(otherFlags))
-        .addFormatEach("-D%s", objcProvider.get(DEFINE))
+        .addAll(VectorArg.format("-D%s").each(objcProvider.get(DEFINE)))
         .addAll(coverageFlags)
         .addAll(ImmutableList.copyOf(getCompileRuleCopts()));
 
@@ -394,7 +399,8 @@ public class LegacyCompilationSupport extends CompilationSupport {
     // TODO(bazel-team): Remove private headers from inputs once they're added to the provider.
     ObjcCompileAction.Builder compileBuilder =
         ObjcCompileAction.Builder.createObjcCompileActionBuilderWithAppleEnv(
-                appleConfiguration, appleConfiguration.getSingleArchPlatform())
+                XcodeConfigProvider.fromRuleContext(ruleContext),
+                appleConfiguration.getSingleArchPlatform())
             .setDotdPruningPlan(objcConfiguration.getDotdPruningPlan())
             .setSourceFile(sourceFile)
             .addTransitiveHeaders(objcProvider.get(HEADER))
@@ -416,7 +422,7 @@ public class LegacyCompilationSupport extends CompilationSupport {
         compileBuilder
             .setMnemonic("ObjcCompile")
             .setExecutable(xcrunwrapper(ruleContext))
-            .setCommandLine(commandLine)
+            .addCommandLine(commandLine)
             .addOutput(objFile)
             .addOutputs(gcnoFile.asSet())
             .addOutput(dotdFile.artifact())
@@ -463,7 +469,7 @@ public class LegacyCompilationSupport extends CompilationSupport {
             getPchFile(),
             Optional.<Artifact>absent(),
             otherFlags,
-            /* runCodeCoverage=*/ false,
+            /* collectCodeCoverage= */ false,
             /* isCPlusPlusSource=*/ false);
 
     AppleConfiguration appleConfiguration = ruleContext.getFragment(AppleConfiguration.class);
@@ -479,7 +485,9 @@ public class LegacyCompilationSupport extends CompilationSupport {
             .setMnemonics("ObjcCompileActionTemplate", "ObjcCompile")
             .setExecutable(xcrunwrapper(ruleContext))
             .setCommandLineTemplate(commandLine)
-            .setEnvironment(ObjcRuleClasses.appleToolchainEnvironment(appleConfiguration, platform))
+            .setEnvironment(
+                ObjcRuleClasses.appleToolchainEnvironment(
+                    XcodeConfigProvider.fromRuleContext(ruleContext), platform))
             .setExecutionInfo(ObjcRuleClasses.darwinActionExecutionRequirement())
             .setOutputPathMapper(COMPILE_ACTION_TEMPLATE_OUTPUT_PATH_MAPPER)
             .addCommonTransitiveInputs(objcProvider.get(HEADER))
@@ -503,10 +511,11 @@ public class LegacyCompilationSupport extends CompilationSupport {
     Artifact objList = intermediateArtifacts.archiveObjList();
     ruleContext.registerAction(
         ObjcRuleClasses.spawnAppleEnvActionBuilder(
-                appleConfiguration, appleConfiguration.getSingleArchPlatform())
+                XcodeConfigProvider.fromRuleContext(ruleContext),
+                appleConfiguration.getSingleArchPlatform())
             .setMnemonic("ObjcLink")
             .setExecutable(libtool(ruleContext))
-            .setCommandLine(
+            .addCommandLine(
                 new CustomCommandLine.Builder()
                     .add("-static")
                     .addExecPath("-filelist", objList)
@@ -526,10 +535,11 @@ public class LegacyCompilationSupport extends CompilationSupport {
       @Nullable CcToolchainProvider ccToolchain, @Nullable FdoSupportProvider fdoSupport) {
     ruleContext.registerAction(
         ObjcRuleClasses.spawnAppleEnvActionBuilder(
-                appleConfiguration, appleConfiguration.getSingleArchPlatform())
+                XcodeConfigProvider.fromRuleContext(ruleContext),
+                appleConfiguration.getSingleArchPlatform())
             .setMnemonic("ObjcLink")
             .setExecutable(libtool(ruleContext))
-            .setCommandLine(
+            .addCommandLine(
                 new CustomCommandLine.Builder()
                     .add("-static")
                     .add("-arch_only", appleConfiguration.getSingleArchitecture())
@@ -590,9 +600,15 @@ public class LegacyCompilationSupport extends CompilationSupport {
   }
 
   private StrippingType getStrippingType(CommandLine commandLine) {
-    return Iterables.contains(commandLine.arguments(), "-dynamiclib")
-        ? StrippingType.DYNAMIC_LIB
-        : StrippingType.DEFAULT;
+    try {
+      return Iterables.contains(commandLine.arguments(), "-dynamiclib")
+          ? StrippingType.DYNAMIC_LIB
+          : StrippingType.DEFAULT;
+    } catch (CommandLineExpansionException e) {
+      // This can't actually happen, because the command lines used by this class do
+      // not throw. This class is slated for deletion, so throwing an assertion is good enough.
+      throw new AssertionError("Cannot fail to expand command line but did.", e);
+    }
   }
 
   private void registerLinkAction(
@@ -621,10 +637,11 @@ public class LegacyCompilationSupport extends CompilationSupport {
             bitcodeSymbolMap);
     ruleContext.registerAction(
         ObjcRuleClasses.spawnAppleEnvActionBuilder(
-                appleConfiguration, appleConfiguration.getSingleArchPlatform())
+                XcodeConfigProvider.fromRuleContext(ruleContext),
+                appleConfiguration.getSingleArchPlatform())
             .setMnemonic("ObjcLink")
             .setShellCommand(ImmutableList.of("/bin/bash", "-c"))
-            .setCommandLine(new SingleArgCommandLine(commandLine))
+            .addCommandLine(new SingleArgCommandLine(commandLine))
             .addOutput(binaryToLink)
             .addOutputs(dsymBundleZip.asSet())
             .addOutputs(linkmap.asSet())
@@ -729,11 +746,13 @@ public class LegacyCompilationSupport extends CompilationSupport {
         .add("@executable_path/Frameworks")
         .add("-fobjc-link-runtime")
         .addAll(DEFAULT_LINKER_FLAGS)
-        .addBeforeEach("-framework", frameworkNames(objcProvider))
-        .addBeforeEach("-weak_framework", SdkFramework.names(objcProvider.get(WEAK_SDK_FRAMEWORK)))
-        .addFormatEach("-l%s", libraryNames)
+        .addAll(VectorArg.addBefore("-framework").each(frameworkNames(objcProvider)))
+        .addAll(
+            VectorArg.addBefore("-weak_framework")
+                .each(SdkFramework.names(objcProvider.get(WEAK_SDK_FRAMEWORK))))
+        .addAll(VectorArg.format("-l%s").each(libraryNames))
         .addExecPath("-o", linkedBinary)
-        .addBeforeEachExecPath("-force_load", forceLinkArtifacts)
+        .addExecPaths(VectorArg.addBefore("-force_load").each(forceLinkArtifacts))
         .addAll(ImmutableList.copyOf(extraLinkArgs))
         .addAll(objcProvider.get(ObjcProvider.LINKOPT));
 
@@ -789,7 +808,7 @@ public class LegacyCompilationSupport extends CompilationSupport {
     }
 
     @Override
-    public Iterable<String> arguments() {
+    public Iterable<String> arguments() throws CommandLineExpansionException {
       return ImmutableList.of(Joiner.on(' ').join(original.arguments()));
     }
   }

@@ -33,7 +33,6 @@ import com.google.devtools.build.lib.analysis.config.PatchTransition;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.packages.AggregatingAttributeMapper;
-import com.google.devtools.build.lib.packages.Attribute.SplitTransition;
 import com.google.devtools.build.lib.packages.RuleClass.ConfiguredTargetFactory.RuleErrorException;
 import com.google.devtools.build.lib.packages.Target;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.DynamicMode;
@@ -391,6 +390,16 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
     )
     public boolean desugarJava8;
 
+    // This flag is intended to be flipped globally.
+    @Option(
+      name = "experimental_check_desugar_deps",
+      defaultValue = "false",
+      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+      effectTags = {OptionEffectTag.UNKNOWN},
+      help = "Whether to double-check correct desugaring at Android binary level."
+    )
+    public boolean checkDesugarDeps;
+
     @Option(
       name = "incremental_dexing",
       defaultValue = "true",
@@ -400,19 +409,6 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
       help = "Does most of the work for dexing separately for each Jar file."
     )
     public boolean incrementalDexing;
-
-    // TODO(b/31711689): remove this flag from config files and here
-    @Option(
-      name = "host_incremental_dexing",
-      defaultValue = "false",
-      metadataTags = {OptionMetadataTag.HIDDEN},
-      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
-      effectTags = {OptionEffectTag.UNKNOWN},
-      help =
-          "This flag is deprecated in favor of applying --incremental_dexing to both host "
-              + "and target configuration.  This flag will be removed in a future release."
-    )
-    public boolean hostIncrementalDexing;
 
     // Do not use on the command line.
     // The idea is that this option lets us gradually turn on incremental dexing for different
@@ -454,6 +450,19 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
       help = "Do not use."
     )
     public boolean incrementalDexingErrorOnMissedJars;
+
+    // TODO(b/31711689): Remove this flag when this optimization is proven to work globally.
+    @Option(
+      name = "experimental_android_assume_minsdkversion",
+      defaultValue = "false",
+      metadataTags = {OptionMetadataTag.EXPERIMENTAL},
+      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+      effectTags = {OptionEffectTag.UNKNOWN},
+      help =
+          "When enabled, the minSdkVersion is parsed from the merged AndroidManifest and used to "
+              + "instruct Proguard on valid Android build versions."
+    )
+    public boolean assumeMinSdkVersion;
 
     @Option(
       name = "experimental_android_use_parallel_dex2oat",
@@ -499,17 +508,25 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
 
     // Do not use on the command line.
     // This flag is intended to be updated as we add supported flags to the incremental dexing tools
-    // TODO(b/31711689): remove --no-optimize and --no-locals as DexFileMerger no longer needs them
     @Option(
       name = "dexopts_supported_in_dexmerger",
       converter = Converters.CommaSeparatedOptionListConverter.class,
-      defaultValue = "--no-optimize,--no-locals,--minimal-main-dex,--set-max-idx-number",
+      defaultValue = "--minimal-main-dex,--set-max-idx-number",
       metadataTags = {OptionMetadataTag.HIDDEN},
       documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
       effectTags = {OptionEffectTag.UNKNOWN},
       help = "dx flags supported in tool that merges dex archives into final classes.dex files."
     )
     public List<String> dexoptsSupportedInDexMerger;
+
+    @Option(
+      name = "use_workers_with_dexbuilder",
+      defaultValue = "true",
+      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+      effectTags = {OptionEffectTag.UNKNOWN},
+      help = "Whether dexbuilder supports being run in local worker mode."
+    )
+    public boolean useWorkersWithDexbuilder;
 
     @Option(
       name = "experimental_android_rewrite_dexes_with_rex",
@@ -522,7 +539,7 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
 
     @Option(
       name = "experimental_allow_android_library_deps_without_srcs",
-      defaultValue = "true",
+      defaultValue = "false",
       documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
       effectTags = {OptionEffectTag.UNKNOWN},
       help =
@@ -575,20 +592,6 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
               + "Flag to help the test and transition to aapt2."
     )
     public AndroidAaptVersion androidAaptVersion;
-
-    // Do not use on the command line.
-    @Option(
-      name = "experimental_use_parallel_android_resource_processing",
-      defaultValue = "true",
-      deprecationWarning =
-          "This flag is deprecated and is a no-op. It will be removed in a future release.",
-      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
-      effectTags = {OptionEffectTag.UNKNOWN},
-      help =
-          "Process android_library resources with higher parallelism. Generates library "
-              + "R classes from a merge action, separately from aapt."
-    )
-    public boolean useParallelResourceProcessing;
 
     @Option(
       name = "apk_signing_method",
@@ -654,17 +657,6 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
     public boolean includeLibraryResourceJars;
 
     @Option(
-      name = "experimental_android_use_nocompress_extensions_on_apk",
-      defaultValue = "false",
-      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
-      effectTags = {OptionEffectTag.UNKNOWN},
-      help =
-          "Use the value of nocompress_extensions attribute with the SingleJar "
-              + "--nocompress_suffixes flag when building the APK."
-    )
-    public boolean useNocompressExtensionsOnApk;
-
-    @Option(
       name = "experimental_android_library_exports_manifest_default",
       defaultValue = "false",
       documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
@@ -710,38 +702,47 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
         documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
         effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS},
         help = "For use in testing before migrating away from android_resources. If false, will"
-            + " fail when android_resources rules are encountered"
+            + " fail when non-whitelisted android_resources rules are encountered."
     )
     public boolean allowAndroidResources;
 
+    @Option(
+        name = "experimental_android_allow_resources_attr",
+        defaultValue = "true",
+        documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+        effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS},
+        help = "For use in testing before migrating away from android_resources. If false, will"
+            + " fail when non-whitelisted instances of the 'resources' attribute are encountered."
+    )
+    public boolean allowResourcesAttr;
+
     @Override
-    public FragmentOptions getHost(boolean fallback) {
-      Options host = (Options) super.getHost(fallback);
+    public FragmentOptions getHost() {
+      Options host = (Options) super.getHost();
       host.androidCrosstoolTop = androidCrosstoolTop;
       host.sdk = sdk;
       host.fatApkCpus = ImmutableList.of(); // Fat APK archs don't apply to the host.
 
       host.desugarJava8 = desugarJava8;
+      host.checkDesugarDeps = checkDesugarDeps;
       host.incrementalDexing = incrementalDexing;
       host.incrementalDexingBinaries = incrementalDexingBinaries;
       host.incrementalDexingForLiteProtos = incrementalDexingForLiteProtos;
       host.incrementalDexingErrorOnMissedJars = incrementalDexingErrorOnMissedJars;
+      host.assumeMinSdkVersion = assumeMinSdkVersion;
       host.nonIncrementalPerTargetDexopts = nonIncrementalPerTargetDexopts;
       host.dexoptsSupportedInIncrementalDexing = dexoptsSupportedInIncrementalDexing;
       host.dexoptsSupportedInDexMerger = dexoptsSupportedInDexMerger;
+      host.useWorkersWithDexbuilder = useWorkersWithDexbuilder;
       host.manifestMerger = manifestMerger;
       host.androidAaptVersion = androidAaptVersion;
+      host.allowAndroidLibraryDepsWithoutSrcs = allowAndroidLibraryDepsWithoutSrcs;
       return host;
     }
 
     @Override
     public ImmutableList<String> getDefaultsRules() {
       return ImmutableList.of("android_tools_defaults_jar(name = 'android_jar')");
-    }
-
-    @Override
-    public List<SplitTransition<BuildOptions>> getPotentialSplitTransitions() {
-      return ImmutableList.of(AndroidRuleClasses.ANDROID_SPLIT_TRANSITION);
     }
   }
 
@@ -773,10 +774,13 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
   private final ImmutableSet<AndroidBinaryType> incrementalDexingBinaries;
   private final boolean incrementalDexingForLiteProtos;
   private final boolean incrementalDexingErrorOnMissedJars;
+  private final boolean assumeMinSdkVersion;
   private final ImmutableList<String> dexoptsSupportedInIncrementalDexing;
   private final ImmutableList<String> targetDexoptsThatPreventIncrementalDexing;
   private final ImmutableList<String> dexoptsSupportedInDexMerger;
+  private final boolean useWorkersWithDexbuilder;
   private final boolean desugarJava8;
+  private final boolean checkDesugarDeps;
   private final boolean useRexToCompressDexFiles;
   private final boolean allowAndroidLibraryDepsWithoutSrcs;
   private final boolean useAndroidResourceShrinking;
@@ -786,7 +790,6 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
   private final ResourceFilter resourceFilter;
   private final boolean compressJavaResources;
   private final boolean includeLibraryResourceJars;
-  private final boolean useNocompressExtensionsOnApk;
   private final boolean exportsManifestDefault;
   private final AndroidAaptVersion androidAaptVersion;
   private final boolean generateRobolectricRClass;
@@ -794,6 +797,7 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
   private final boolean useParallelDex2Oat;
   private final boolean useManifestFromResourceApk;
   private final boolean allowAndroidResources;
+  private final boolean allowResourcesAttr;
 
 
   AndroidConfiguration(Options options) throws InvalidConfigurationException {
@@ -808,12 +812,15 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
     }
     this.incrementalDexingForLiteProtos = options.incrementalDexingForLiteProtos;
     this.incrementalDexingErrorOnMissedJars = options.incrementalDexingErrorOnMissedJars;
+    this.assumeMinSdkVersion = options.assumeMinSdkVersion;
     this.dexoptsSupportedInIncrementalDexing =
         ImmutableList.copyOf(options.dexoptsSupportedInIncrementalDexing);
     this.targetDexoptsThatPreventIncrementalDexing =
         ImmutableList.copyOf(options.nonIncrementalPerTargetDexopts);
     this.dexoptsSupportedInDexMerger = ImmutableList.copyOf(options.dexoptsSupportedInDexMerger);
+    this.useWorkersWithDexbuilder = options.useWorkersWithDexbuilder;
     this.desugarJava8 = options.desugarJava8;
+    this.checkDesugarDeps = options.checkDesugarDeps;
     this.allowAndroidLibraryDepsWithoutSrcs = options.allowAndroidLibraryDepsWithoutSrcs;
     this.useAndroidResourceShrinking = options.useAndroidResourceShrinking
         || options.useExperimentalAndroidResourceShrinking;
@@ -824,7 +831,6 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
     this.resourceFilter = options.resourceFilter;
     this.compressJavaResources = options.compressJavaResources;
     this.includeLibraryResourceJars = options.includeLibraryResourceJars;
-    this.useNocompressExtensionsOnApk = options.useNocompressExtensionsOnApk;
     this.exportsManifestDefault = options.exportsManifestDefault;
     this.androidAaptVersion = options.androidAaptVersion;
     this.generateRobolectricRClass = options.generateRobolectricRClass;
@@ -832,6 +838,7 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
     this.useParallelDex2Oat = options.useParallelDex2Oat;
     this.useManifestFromResourceApk = options.useManifestFromResourceApk;
     this.allowAndroidResources = options.allowAndroidResources;
+    this.allowResourcesAttr = options.allowResourcesAttr;
 
     if (!dexoptsSupportedInIncrementalDexing.contains("--no-locals")) {
       // TODO(bazel-team): Still needed? See DexArchiveAspect
@@ -876,6 +883,14 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
   }
 
   /**
+   * Returns true if an -assumevalues should be generated for Proguard based on the minSdkVersion
+   * of the merged AndroidManifest.
+   */
+  public boolean assumeMinSdkVersion() {
+    return assumeMinSdkVersion;
+  }
+
+  /**
    * dx flags supported in incremental dexing actions.
    */
   public ImmutableList<String> getDexoptsSupportedInIncrementalDexing() {
@@ -897,8 +912,17 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
     return targetDexoptsThatPreventIncrementalDexing;
   }
 
+  /** Whether to assume the dexbuilder tool supports local worker mode. */
+  public boolean useWorkersWithDexbuilder() {
+    return useWorkersWithDexbuilder;
+  }
+
   public boolean desugarJava8() {
     return desugarJava8;
+  }
+
+  public boolean checkDesugarDeps() {
+    return checkDesugarDeps;
   }
 
   public boolean useRexToCompressDexFiles() {
@@ -945,10 +969,6 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
     return includeLibraryResourceJars;
   }
 
-  boolean useNocompressExtensionsOnApk() {
-    return useNocompressExtensionsOnApk;
-  }
-
   boolean getExportsManifestDefault() {
     return exportsManifestDefault;
   }
@@ -967,6 +987,10 @@ public class AndroidConfiguration extends BuildConfiguration.Fragment {
 
   public boolean allowAndroidResources() {
     return this.allowAndroidResources;
+  }
+
+  public boolean allowResourcesAttr() {
+    return this.allowResourcesAttr;
   }
 
   @Override
