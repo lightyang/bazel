@@ -22,6 +22,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Sets;
 import com.google.devtools.build.lib.actions.AbstractAction;
+import com.google.devtools.build.lib.actions.ActionEnvironment;
 import com.google.devtools.build.lib.actions.ActionExecutionContext;
 import com.google.devtools.build.lib.actions.ActionExecutionException;
 import com.google.devtools.build.lib.actions.ActionLookupValue;
@@ -34,6 +35,7 @@ import com.google.devtools.build.lib.actions.Artifact.ArtifactExpander;
 import com.google.devtools.build.lib.actions.ArtifactResolver;
 import com.google.devtools.build.lib.actions.CommandAction;
 import com.google.devtools.build.lib.actions.CommandLineExpansionException;
+import com.google.devtools.build.lib.actions.EmptyRunfilesSupplier;
 import com.google.devtools.build.lib.actions.ExecException;
 import com.google.devtools.build.lib.actions.ExecutionInfoSpecifier;
 import com.google.devtools.build.lib.actions.ExecutionRequirements;
@@ -181,7 +183,6 @@ public class CppCompileAction extends AbstractAction
    */
   public static final String CLIF_MATCH = "clif-match";
 
-  private final ImmutableMap<String, String> localShellEnvironment;
   protected final Artifact outputFile;
   private final Artifact sourceFile;
   private final Artifact optionalSourceFile;
@@ -303,7 +304,7 @@ public class CppCompileAction extends AbstractAction
       @Nullable Artifact dwoFile,
       @Nullable Artifact ltoIndexingFile,
       Artifact optionalSourceFile,
-      ImmutableMap<String, String> localShellEnvironment,
+      ActionEnvironment actionEnv,
       CppConfiguration cppConfiguration,
       CppCompilationContext context,
       Class<? extends CppCompileActionContext> actionContext,
@@ -319,14 +320,16 @@ public class CppCompileAction extends AbstractAction
       CcToolchainProvider cppProvider) {
     super(
         owner,
+        ImmutableList.<Artifact>of(),
         allInputs,
+        EmptyRunfilesSupplier.INSTANCE,
         CollectionUtils.asListWithoutNulls(
             outputFile,
             (dotdFile == null ? null : dotdFile.artifact()),
             gcnoFile,
             dwoFile,
-            ltoIndexingFile));
-    this.localShellEnvironment = localShellEnvironment;
+            ltoIndexingFile),
+        actionEnv);
     this.sourceFile = sourceFile;
     this.outputFile = Preconditions.checkNotNull(outputFile);
     this.optionalSourceFile = optionalSourceFile;
@@ -720,7 +723,7 @@ public class CppCompileAction extends AbstractAction
 
   @Override
   public ImmutableMap<String, String> getEnvironment() {
-    Map<String, String> environment = new LinkedHashMap<>(localShellEnvironment);
+    Map<String, String> environment = new LinkedHashMap<>(env.getFixedEnv());
     if (!getExecutionInfo().containsKey(ExecutionRequirements.REQUIRES_DARWIN)) {
       // Linux: this prevents gcc/clang from writing the unpredictable (and often irrelevant) value
       // of getcwd() into the debug info. Not applicable to Darwin or Windows, which have no /proc.
@@ -730,6 +733,12 @@ public class CppCompileAction extends AbstractAction
     environment.putAll(this.environment);
     environment.putAll(compileCommandLine.getEnvironment());
 
+    return ImmutableMap.copyOf(environment);
+  }
+
+  public ImmutableMap<String, String> getEnvironment(Map<String, String> clientEnv) {
+    LinkedHashMap<String, String> environment = new LinkedHashMap<>(CppCompileAction.this.getEnvironment());
+    env.resolveInheritedEnv(environment, clientEnv);
     return ImmutableMap.copyOf(environment);
   }
 
@@ -1116,6 +1125,7 @@ public class CppCompileAction extends AbstractAction
     Fingerprint f = new Fingerprint();
     f.addUUID(actionClassId);
     f.addStringMap(getEnvironment());
+    f.addStrings(getClientEnvironmentVariables());
     f.addStringMap(executionInfo);
 
     // For the argv part of the cache key, ignore all compiler flags that explicitly denote module
@@ -1360,6 +1370,18 @@ public class CppCompileAction extends AbstractAction
     StringBuilder message = new StringBuilder();
     message.append(getProgressMessage());
     message.append('\n');
+    for (Map.Entry<String, String> entry : getEnvironment().entrySet()) {
+      message.append("  Environment variable: ");
+      message.append(ShellEscaper.escapeString(entry.getKey()));
+      message.append('=');
+      message.append(ShellEscaper.escapeString(entry.getValue()));
+      message.append('\n');
+    }
+    for (String var : getClientEnvironmentVariables()) {
+      message.append("  Environment variables taken from the client environment: ");
+      message.append(ShellEscaper.escapeString(var));
+      message.append('\n');
+    }
     // Outputting one argument per line makes it easier to diff the results.
     // The first element in getArgv() is actually the command to execute.
     String legend = "  Command: ";

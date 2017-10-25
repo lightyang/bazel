@@ -16,15 +16,18 @@ package com.google.devtools.build.lib.analysis.actions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.actions.AbstractAction;
+import com.google.devtools.build.lib.actions.ActionEnvironment;
 import com.google.devtools.build.lib.actions.ActionExecutionContext;
 import com.google.devtools.build.lib.actions.ActionExecutionException;
 import com.google.devtools.build.lib.actions.ActionOwner;
 import com.google.devtools.build.lib.actions.ActionResult;
 import com.google.devtools.build.lib.actions.Artifact;
+import com.google.devtools.build.lib.actions.EmptyRunfilesSupplier;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.util.Fingerprint;
 import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.vfs.Path;
+import java.util.LinkedHashMap;
 import javax.annotation.Nullable;
 
 /**
@@ -39,7 +42,6 @@ public final class SymlinkTreeAction extends AbstractAction {
   private final Artifact inputManifest;
   private final Artifact outputManifest;
   private final boolean filesetTree;
-  private final ImmutableMap<String, String> shellEnvironment;
   private final boolean enableRunfiles;
 
   /**
@@ -61,14 +63,19 @@ public final class SymlinkTreeAction extends AbstractAction {
       @Nullable Artifact artifactMiddleman,
       Artifact outputManifest,
       boolean filesetTree,
-      ImmutableMap<String, String> shellEnvironment,
+      ActionEnvironment env,
       boolean enableRunfiles) {
-    super(owner, computeInputs(inputManifest, artifactMiddleman), ImmutableList.of(outputManifest));
+    super(
+        owner,
+        ImmutableList.<Artifact>of(),
+        computeInputs(inputManifest, artifactMiddleman),
+        EmptyRunfilesSupplier.INSTANCE,
+        ImmutableList.of(outputManifest),
+        env);
     Preconditions.checkArgument(outputManifest.getPath().getBaseName().equals("MANIFEST"));
     this.inputManifest = inputManifest;
     this.outputManifest = outputManifest;
     this.filesetTree = filesetTree;
-    this.shellEnvironment = shellEnvironment;
     this.enableRunfiles = enableRunfiles;
   }
 
@@ -119,9 +126,13 @@ public final class SymlinkTreeAction extends AbstractAction {
   @Override
   public ActionResult execute(ActionExecutionContext actionExecutionContext)
       throws ActionExecutionException, InterruptedException {
+    LinkedHashMap<String, String> effectiveEnv = new LinkedHashMap<>(env.getFixedEnv());
+    ImmutableMap<String, String> clientEnv = actionExecutionContext.getClientEnv();
+    env.resolveInheritedEnv(effectiveEnv, clientEnv);
     return ActionResult.create(
         actionExecutionContext
             .getContext(SymlinkTreeActionContext.class)
-            .createSymlinks(this, actionExecutionContext, shellEnvironment, enableRunfiles));
+            .createSymlinks(
+              this, actionExecutionContext, ImmutableMap.copyOf(effectiveEnv), enableRunfiles));
   }
 }

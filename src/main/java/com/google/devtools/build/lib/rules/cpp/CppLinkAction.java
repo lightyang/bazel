@@ -23,6 +23,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.AbstractAction;
+import com.google.devtools.build.lib.actions.ActionEnvironment;
 import com.google.devtools.build.lib.actions.ActionExecutionContext;
 import com.google.devtools.build.lib.actions.ActionExecutionException;
 import com.google.devtools.build.lib.actions.ActionOwner;
@@ -30,6 +31,7 @@ import com.google.devtools.build.lib.actions.ActionResult;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.CommandAction;
 import com.google.devtools.build.lib.actions.CommandLineExpansionException;
+import com.google.devtools.build.lib.actions.EmptyRunfilesSupplier;
 import com.google.devtools.build.lib.actions.ExecException;
 import com.google.devtools.build.lib.actions.ExecutionInfoSpecifier;
 import com.google.devtools.build.lib.actions.ExecutionRequirements;
@@ -59,6 +61,7 @@ import java.io.IOException;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import javax.annotation.Nullable;
 
 /** 
@@ -105,8 +108,6 @@ public final class CppLinkAction extends AbstractAction
   private final LibraryToLink outputLibrary;
   private final Artifact linkOutput;
   private final LibraryToLink interfaceOutputLibrary;
-  private final ImmutableSet<String> clientEnvironmentVariables;
-  private final ImmutableMap<String, String> actionEnv;
   private final ImmutableMap<String, String> toolchainEnv;
   private final ImmutableSet<String> executionRequirements;
 
@@ -159,12 +160,17 @@ public final class CppLinkAction extends AbstractAction
       boolean isLtoIndexing,
       Iterable<LtoBackendArtifacts> allLtoBackendArtifacts,
       LinkCommandLine linkCommandLine,
-      ImmutableSet<String> clientEnvironmentVariables,
-      ImmutableMap<String, String> actionEnv,
+      ActionEnvironment env,
       ImmutableMap<String, String> toolchainEnv,
       ImmutableSet<String> executionRequirements,
       CcToolchainProvider toolchain) {
-    super(owner, inputs, outputs);
+    super(
+        owner,
+        ImmutableList.<Artifact>of(),
+        inputs,
+        EmptyRunfilesSupplier.INSTANCE,
+        outputs,
+        env);
     if (mnemonic == null) {
       this.mnemonic = (isLtoIndexing) ? "CppLTOIndexing" : "CppLink";
     } else {
@@ -179,8 +185,6 @@ public final class CppLinkAction extends AbstractAction
     this.isLtoIndexing = isLtoIndexing;
     this.allLtoBackendArtifacts = allLtoBackendArtifacts;
     this.linkCommandLine = linkCommandLine;
-    this.clientEnvironmentVariables = clientEnvironmentVariables;
-    this.actionEnv = actionEnv;
     this.toolchainEnv = toolchainEnv;
     this.executionRequirements = executionRequirements;
     this.ldExecutable = toolchain.getToolPathFragment(Tool.LD);
@@ -206,15 +210,10 @@ public final class CppLinkAction extends AbstractAction
   }
 
   @Override
-  public Iterable<String> getClientEnvironmentVariables() {
-    return clientEnvironmentVariables;
-  }
-
-  @Override
   public ImmutableMap<String, String> getEnvironment() {
     LinkedHashMap<String, String> result = new LinkedHashMap<>();
 
-    result.putAll(actionEnv);
+    result.putAll(env.getFixedEnv());
     result.putAll(toolchainEnv);
 
     if (!executionRequirements.contains(ExecutionRequirements.REQUIRES_DARWIN)) {
@@ -223,6 +222,12 @@ public final class CppLinkAction extends AbstractAction
       result.put("PWD", "/proc/self/cwd");
     }
     return ImmutableMap.copyOf(result);
+  }
+
+  public ImmutableMap<String, String> getEnvironment(Map<String, String> clientEnv) {
+    LinkedHashMap<String, String> environment = new LinkedHashMap<>(CppLinkAction.this.getEnvironment());
+    env.resolveInheritedEnv(environment, clientEnv);
+    return ImmutableMap.copyOf(environment);
   }
 
   /**
@@ -313,7 +318,7 @@ public final class CppLinkAction extends AbstractAction
         Spawn spawn = new SimpleSpawn(
             this,
             ImmutableList.copyOf(getCommandLine()),
-            getEnvironment(),
+            getEnvironment(actionExecutionContext.getClientEnv()),
             getExecutionInfo(),
             ImmutableList.copyOf(getMandatoryInputs()),
             getOutputs().asList(),

@@ -20,6 +20,7 @@ import static java.util.stream.Collectors.joining;
 import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.devtools.build.lib.actions.ActionEnvironment;
 import com.google.devtools.build.lib.actions.ActionExecutionContext;
 import com.google.devtools.build.lib.actions.ActionExecutionException;
 import com.google.devtools.build.lib.actions.ActionOwner;
@@ -70,7 +71,7 @@ public class FakeCppCompileAction extends CppCompileAction {
       Artifact outputFile,
       PathFragment tempOutputFile,
       DotdFile dotdFile,
-      ImmutableMap<String, String> localShellEnvironment,
+      ActionEnvironment env,
       CppConfiguration cppConfiguration,
       CppCompilationContext context,
       Class<? extends CppCompileActionContext> actionContext,
@@ -97,7 +98,7 @@ public class FakeCppCompileAction extends CppCompileAction {
         null,
         null,
         null,
-        localShellEnvironment,
+        env,
         cppConfiguration,
         // We only allow inclusion of header files explicitly declared in
         // "srcs", so we only use declaredIncludeSrcs, not declaredIncludeDirs.

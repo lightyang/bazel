@@ -932,8 +932,7 @@ public class CppLinkActionBuilder {
         isLtoIndexing,
         allLtoArtifacts,
         linkCommandLine,
-        configuration.getVariableShellEnvironment(),
-        configuration.getLocalShellEnvironment(),
+        configuration.getActionEnvironment(),
         toolchainEnv,
         executionRequirements.build(),
         toolchain);

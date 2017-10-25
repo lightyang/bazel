@@ -21,6 +21,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.ActionOwner;
+import com.google.devtools.build.lib.actions.ActionEnvironment;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
@@ -81,7 +82,7 @@ public class CppCompileActionBuilder {
   private Map<String, String> environment = new LinkedHashMap<>();
   private CppSemantics cppSemantics;
   private CcToolchainProvider ccToolchain;
-  private final ImmutableMap<String, String> localShellEnvironment;
+  private final ActionEnvironment env;
   private final boolean codeCoverageEnabled;
   // New fields need to be added to the copy constructor.
 
@@ -121,7 +122,7 @@ public class CppCompileActionBuilder {
     this.lipoScannableMap = ImmutableMap.copyOf(lipoScannableMap);
     this.mandatoryInputsBuilder = NestedSetBuilder.stableOrder();
     this.allowUsingHeaderModules = true;
-    this.localShellEnvironment = configuration.getLocalShellEnvironment();
+    this.env = configuration.getActionEnvironment();
     this.codeCoverageEnabled = configuration.isCodeCoverageEnabled();
     this.actionContext = CppCompileActionContext.class;
     this.ccToolchain = ccToolchain;
@@ -172,7 +173,7 @@ public class CppCompileActionBuilder {
     this.shouldScanIncludes = other.shouldScanIncludes;
     this.executionInfo = new LinkedHashMap<>(other.executionInfo);
     this.environment = new LinkedHashMap<>(other.environment);
-    this.localShellEnvironment = other.localShellEnvironment;
+    this.env = other.env;
     this.codeCoverageEnabled = other.codeCoverageEnabled;
     this.cppSemantics = other.cppSemantics;
     this.ccToolchain = other.ccToolchain;
@@ -363,7 +364,7 @@ public class CppCompileActionBuilder {
               outputFile,
               tempOutputFile,
               dotdFile,
-              localShellEnvironment,
+              env,
               cppConfiguration,
               context,
               actionContext,
@@ -392,7 +393,7 @@ public class CppCompileActionBuilder {
               dwoFile,
               ltoIndexingFile,
               optionalSourceFile,
-              localShellEnvironment,
+              env,
               cppConfiguration,
               context,
               actionContext,

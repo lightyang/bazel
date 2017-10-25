@@ -319,7 +319,7 @@ public final class RunfilesSupport {
                 artifactsMiddleman,
                 outputManifest,
                 /*filesetTree=*/ false,
-                config.getLocalShellEnvironment(),
+                config.getActionEnvironment(),
                 config.runfilesEnabled()));
     return outputManifest;
   }
