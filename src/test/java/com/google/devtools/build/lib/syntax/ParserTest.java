@@ -25,7 +25,6 @@ import com.google.devtools.build.lib.syntax.DictionaryLiteral.DictionaryEntryLit
 import com.google.devtools.build.lib.syntax.Parser.ParsingLevel;
 import com.google.devtools.build.lib.syntax.SkylarkImports.SkylarkImportSyntaxException;
 import com.google.devtools.build.lib.syntax.util.EvaluationTestCase;
-import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.LinkedList;
 import java.util.List;
 import org.junit.Test;
@@ -565,6 +564,32 @@ public class ParserTest extends EvaluationTestCase {
     assertThat(getText(input, stmt)).isEqualTo(input);
   }
 
+  @Test
+  public void testIfStatementPosition() throws Exception {
+    assertStatementLocationCorrect(ParsingLevel.LOCAL_LEVEL, "if True:\n  pass");
+    assertStatementLocationCorrect(
+        ParsingLevel.LOCAL_LEVEL, "if True:\n  pass\nelif True:\n  pass");
+    assertStatementLocationCorrect(ParsingLevel.LOCAL_LEVEL, "if True:\n  pass\nelse:\n  pass");
+  }
+
+  @Test
+  public void testForStatementPosition() throws Exception {
+    assertStatementLocationCorrect(ParsingLevel.LOCAL_LEVEL, "for x in []:\n  pass");
+  }
+
+  @Test
+  public void testDefStatementPosition() throws Exception {
+    assertStatementLocationCorrect(ParsingLevel.TOP_LEVEL, "def foo():\n  pass");
+  }
+
+  private void assertStatementLocationCorrect(ParsingLevel level, String stmtStr) {
+    Statement stmt = parseStatement(level, stmtStr);
+    assertThat(getText(stmtStr, stmt)).isEqualTo(stmtStr);
+    // Also try it with another token at the end (newline), which broke the location in the past.
+    stmt = parseStatement(level, stmtStr + "\n");
+    assertThat(getText(stmtStr, stmt)).isEqualTo(stmtStr);
+  }
+
   private void assertExpressionLocationCorrect(String exprStr) {
     Expression expr = parseExpression(exprStr);
     assertThat(getText(exprStr, expr)).isEqualTo(exprStr);
@@ -1060,26 +1085,6 @@ public class ParserTest extends EvaluationTestCase {
     setFailFast(false);
     parseFile("f(1, 5, ,)\n");
     assertContainsError("syntax error");
-  }
-
-  @Test
-  public void testValidAbsoluteImportPath() throws SkylarkImportSyntaxException {
-    String importString = "/some/skylark/file";
-    List<Statement> statements =
-        parseFileForSkylark("load('" + importString + "', 'fun_test')\n");
-    LoadStatement stmt = (LoadStatement) statements.get(0);
-    SkylarkImport imp = SkylarkImports.create(stmt.getImport().getValue());
-
-    assertThat(imp.getImportString()).named("getImportString()").isEqualTo("/some/skylark/file");
-    assertThat(imp.hasAbsolutePath()).named("hasAbsolutePath()").isTrue();
-    assertThat(imp.getAbsolutePath()).named("getAbsolutePath()")
-        .isEqualTo(PathFragment.create("/some/skylark/file.bzl"));
-
-    int startOffset = stmt.getImport().getLocation().getStartOffset();
-    int endOffset = stmt.getImport().getLocation().getEndOffset();
-    assertThat(startOffset).named("getStartOffset()").isEqualTo(5);
-    assertThat(endOffset).named("getEndOffset()")
-        .isEqualTo(startOffset + importString.length() + 2);
   }
 
   private void validNonAbsoluteImportTest(String importString, String containingFileLabelString,

@@ -18,6 +18,7 @@ import static com.google.common.collect.Sets.newEnumSet;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
+import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
 import com.google.common.base.Predicates;
 import com.google.common.base.Verify;
@@ -42,7 +43,6 @@ import com.google.devtools.build.lib.syntax.Type.ConversionException;
 import com.google.devtools.build.lib.syntax.Type.LabelClass;
 import com.google.devtools.build.lib.util.FileType;
 import com.google.devtools.build.lib.util.FileTypeSet;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.util.StringUtil;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -67,9 +67,9 @@ import javax.annotation.concurrent.Immutable;
 @Immutable
 public final class Attribute implements Comparable<Attribute> {
 
-  public static final Predicate<RuleClass> ANY_RULE = Predicates.alwaysTrue();
+  public static final RuleClassNamePredicate ANY_RULE = RuleClassNamePredicate.unspecified();
 
-  public static final Predicate<RuleClass> NO_RULE = Predicates.alwaysFalse();
+  public static final RuleClassNamePredicate NO_RULE = RuleClassNamePredicate.only();
 
   /**
    * Wraps the information necessary to construct an Aspect.
@@ -406,8 +406,8 @@ public final class Attribute implements Comparable<Attribute> {
     private final String name;
     private final Type<TYPE> type;
     private Transition configTransition = ConfigurationTransition.NONE;
-    private Predicate<RuleClass> allowedRuleClassesForLabels = Predicates.alwaysTrue();
-    private Predicate<RuleClass> allowedRuleClassesForLabelsWarning = Predicates.alwaysFalse();
+    private RuleClassNamePredicate allowedRuleClassesForLabels = ANY_RULE;
+    private RuleClassNamePredicate allowedRuleClassesForLabelsWarning = NO_RULE;
     private SplitTransitionProvider splitTransitionProvider;
     private FileTypeSet allowedFileTypesForLabels;
     private ValidityPredicate validityPredicate = ANY_EDGE;
@@ -680,7 +680,6 @@ public final class Attribute implements Comparable<Attribute> {
      */
     public Builder<TYPE> value(LateBoundDefault<?, ? extends TYPE> defaultValue) {
       Preconditions.checkState(!valueSet, "the default value is already set");
-      Preconditions.checkState(name.isEmpty() || isLateBound(name));
       value = defaultValue;
       valueSource = AttributeValueSource.LATE_BOUND;
       valueSet = true;
@@ -770,7 +769,7 @@ public final class Attribute implements Comparable<Attribute> {
      */
     public Builder<TYPE> allowedRuleClasses(Iterable<String> allowedRuleClasses) {
       return allowedRuleClasses(
-          new RuleClassNamePredicate(allowedRuleClasses));
+          RuleClassNamePredicate.only(allowedRuleClasses));
     }
 
     /**
@@ -788,7 +787,7 @@ public final class Attribute implements Comparable<Attribute> {
      * <p>This only works on a per-target basis, not on a per-file basis; with other words, it
      * works for 'deps' attributes, but not 'srcs' attributes.
      */
-    public Builder<TYPE> allowedRuleClasses(Predicate<RuleClass> allowedRuleClasses) {
+    public Builder<TYPE> allowedRuleClasses(RuleClassNamePredicate allowedRuleClasses) {
       Preconditions.checkState(type.getLabelClass() == LabelClass.DEPENDENCY,
           "must be a label-valued type");
       propertyFlags.add(PropertyFlag.STRICT_LABEL_CHECKING);
@@ -871,7 +870,7 @@ public final class Attribute implements Comparable<Attribute> {
      */
     public Builder<TYPE> allowedRuleClassesWithWarning(Collection<String> allowedRuleClasses) {
       return allowedRuleClassesWithWarning(
-          new RuleClassNamePredicate(allowedRuleClasses));
+          RuleClassNamePredicate.only(allowedRuleClasses));
     }
 
     /**
@@ -889,7 +888,7 @@ public final class Attribute implements Comparable<Attribute> {
      * <p>This only works on a per-target basis, not on a per-file basis; with other words, it
      * works for 'deps' attributes, but not 'srcs' attributes.
      */
-    public Builder<TYPE> allowedRuleClassesWithWarning(Predicate<RuleClass> allowedRuleClasses) {
+    public Builder<TYPE> allowedRuleClassesWithWarning(RuleClassNamePredicate allowedRuleClasses) {
       Preconditions.checkState(type.getLabelClass() == LabelClass.DEPENDENCY,
           "must be a label-valued type");
       propertyFlags.add(PropertyFlag.STRICT_LABEL_CHECKING);
@@ -1082,6 +1081,9 @@ public final class Attribute implements Comparable<Attribute> {
      */
     public Attribute build(String name) {
       Preconditions.checkState(!name.isEmpty(), "name has not been set");
+      if (valueSource == AttributeValueSource.LATE_BOUND) {
+        Preconditions.checkState(isLateBound(name));
+      }
       // TODO(bazel-team): Set the default to be no file type, then remove this check, and also
       // remove all allowedFileTypes() calls without parameters.
 
@@ -1100,14 +1102,12 @@ public final class Attribute implements Comparable<Attribute> {
         }
       }
 
-      if (allowedRuleClassesForLabels instanceof RuleClassNamePredicate
-          && allowedRuleClassesForLabelsWarning instanceof RuleClassNamePredicate) {
-        Preconditions.checkState(
-            !((RuleClassNamePredicate) allowedRuleClassesForLabels)
-                .intersects((RuleClassNamePredicate) allowedRuleClassesForLabelsWarning),
-            "allowedRuleClasses and allowedRuleClassesWithWarning may not contain "
-                + "the same rule classes");
-      }
+      Preconditions.checkState(
+          !allowedRuleClassesForLabels.consideredOverlapping(allowedRuleClassesForLabelsWarning),
+          "allowedRuleClasses %s and allowedRuleClassesWithWarning %s "
+              + "may not contain the same rule classes",
+          allowedRuleClassesForLabels,
+          allowedRuleClassesForLabelsWarning);
 
       return new Attribute(
           name,
@@ -1410,7 +1410,7 @@ public final class Attribute implements Comparable<Attribute> {
             @Override
             public Object compute(AttributeMap map) throws InterruptedException {
               try {
-                return owner.computeValue(map);
+                return owner.computeValue(eventHandler, map);
               } catch (EvalException ex) {
                 caughtEvalExceptionIfAny.compareAndSet(null, ex);
                 return null;
@@ -1445,7 +1445,8 @@ public final class Attribute implements Comparable<Attribute> {
       return new SkylarkComputedDefault(dependencies, dependencyTypesBuilder.build(), lookupTable);
     }
 
-    private Object computeValue(AttributeMap rule) throws EvalException, InterruptedException {
+    private Object computeValue(EventHandler eventHandler, AttributeMap rule)
+        throws EvalException, InterruptedException {
       Map<String, Object> attrValues = new HashMap<>();
       for (String attrName : rule.getAttributeNames()) {
         Attribute attr = rule.getAttributeDefinition(attrName);
@@ -1456,15 +1457,15 @@ public final class Attribute implements Comparable<Attribute> {
           }
         }
       }
-      return invokeCallback(attrValues);
+      return invokeCallback(eventHandler, attrValues);
     }
 
-    private Object invokeCallback(Map<String, Object> attrValues)
+    private Object invokeCallback(EventHandler eventHandler, Map<String, Object> attrValues)
         throws EvalException, InterruptedException {
       ClassObject attrs =
           NativeProvider.STRUCT.create(
               attrValues, "No such regular (non computed) attribute '%s'.");
-      Object result = callback.call(attrs);
+      Object result = callback.call(eventHandler, attrs);
       try {
         return type.cast((result == Runtime.NONE) ? type.getDefaultValue() : result);
       } catch (ClassCastException ex) {
@@ -1549,6 +1550,25 @@ public final class Attribute implements Comparable<Attribute> {
     }
   }
 
+  private static final class SimpleLateBoundDefault<FragmentT, ValueT>
+      extends LateBoundDefault<FragmentT, ValueT> {
+
+    private final Resolver<FragmentT, ValueT> resolver;
+
+    private SimpleLateBoundDefault(boolean useHostConfiguration,
+        Class<FragmentT> fragmentClass,
+        ValueT defaultValue, Resolver<FragmentT, ValueT> resolver) {
+      super(useHostConfiguration, fragmentClass, defaultValue);
+
+      this.resolver = resolver;
+    }
+
+    @Override
+    public ValueT resolve(Rule rule, AttributeMap attributes, FragmentT input) {
+      return resolver.resolve(rule, attributes, input);
+    }
+  }
+
   // TODO(b/65746853): Remove documentation about accepting BuildConfiguration when uses are cleaned
   // up.
   /**
@@ -1564,7 +1584,7 @@ public final class Attribute implements Comparable<Attribute> {
    * @param <ValueT> The type of value returned by this class.
    */
   @Immutable
-  public static final class LateBoundDefault<FragmentT, ValueT> {
+  public abstract static class LateBoundDefault<FragmentT, ValueT> {
     /**
      * Functional interface for computing the value of a late-bound attribute.
      *
@@ -1578,7 +1598,6 @@ public final class Attribute implements Comparable<Attribute> {
     private final boolean useHostConfiguration;
     private final ValueT defaultValue;
     private final Class<FragmentT> fragmentClass;
-    private final Resolver<FragmentT, ValueT> resolver;
 
     /**
      * Creates a new LateBoundDefault which uses the rule, its configured attributes, and a fragment
@@ -1618,7 +1637,7 @@ public final class Attribute implements Comparable<Attribute> {
           !fragmentClass.equals(Void.class),
           "Use fromRuleAndAttributesOnly to specify a LateBoundDefault which does not use "
               + "configuration.");
-      return new LateBoundDefault<>(false, fragmentClass, defaultValue, resolver);
+      return new SimpleLateBoundDefault<>(false, fragmentClass, defaultValue, resolver);
     }
 
     /**
@@ -1648,7 +1667,7 @@ public final class Attribute implements Comparable<Attribute> {
           !fragmentClass.equals(Void.class),
           "Use fromRuleAndAttributesOnly to specify a LateBoundDefault which does not use "
               + "configuration.");
-      return new LateBoundDefault<>(true, fragmentClass, defaultValue, resolver);
+      return new SimpleLateBoundDefault<>(true, fragmentClass, defaultValue, resolver);
     }
 
     /**
@@ -1666,7 +1685,7 @@ public final class Attribute implements Comparable<Attribute> {
      */
     public static <ValueT> LateBoundDefault<Void, ValueT> fromRuleAndAttributesOnly(
         ValueT defaultValue, Resolver<Void, ValueT> resolver) {
-      return new LateBoundDefault<>(false, Void.class, defaultValue, resolver);
+      return new SimpleLateBoundDefault<>(false, Void.class, defaultValue, resolver);
     }
 
     /**
@@ -1679,7 +1698,7 @@ public final class Attribute implements Comparable<Attribute> {
       if (defaultValue == null) {
         return alwaysNull();
       }
-      return new LateBoundDefault<>(
+      return new SimpleLateBoundDefault<>(
           false, Void.class, defaultValue, (rule, attributes, unused) -> defaultValue);
     }
 
@@ -1695,24 +1714,22 @@ public final class Attribute implements Comparable<Attribute> {
     }
 
     private static final LateBoundDefault<Void, Void> ALWAYS_NULL =
-        new LateBoundDefault<>(false, Void.class, null, (rule, attributes, unused) -> null);
+        new SimpleLateBoundDefault<>(false, Void.class, null, (rule, attributes, unused) -> null);
 
-    private LateBoundDefault(
+    protected LateBoundDefault(
         boolean useHostConfiguration,
         Class<FragmentT> fragmentClass,
-        ValueT defaultValue,
-        Resolver<FragmentT, ValueT> resolver) {
+        ValueT defaultValue) {
       this.useHostConfiguration = useHostConfiguration;
       this.defaultValue = defaultValue;
       this.fragmentClass = fragmentClass;
-      this.resolver = resolver;
     }
 
     /**
      * Whether to look up the label in the host configuration. This is only here for host
      * compilation tools - we usually need to look up labels in the target configuration.
      */
-    public boolean useHostConfiguration() {
+    public final boolean useHostConfiguration() {
       return useHostConfiguration;
     }
 
@@ -1726,12 +1743,12 @@ public final class Attribute implements Comparable<Attribute> {
      * <p>It may also be BuildConfiguration to receive the entire configuration. This is deprecated,
      * and only necessary when the default is computed from methods of BuildConfiguration itself.
      */
-    public Class<FragmentT> getFragmentClass() {
+    public final Class<FragmentT> getFragmentClass() {
       return fragmentClass;
     }
 
     /** The default value for the attribute that is set during the loading phase. */
-    public ValueT getDefault() {
+    public final ValueT getDefault() {
       return defaultValue;
     }
 
@@ -1744,9 +1761,7 @@ public final class Attribute implements Comparable<Attribute> {
      * @param attributes interface for retrieving the values of the rule's other attributes
      * @param input the configuration fragment to evaluate with
      */
-    public ValueT resolve(Rule rule, AttributeMap attributes, FragmentT input) {
-      return resolver.resolve(rule, attributes, input);
-    }
+    public abstract ValueT resolve(Rule rule, AttributeMap attributes, FragmentT input);
   }
 
   private final String name;
@@ -1775,13 +1790,13 @@ public final class Attribute implements Comparable<Attribute> {
    * For label or label-list attributes, this predicate returns which rule
    * classes are allowed for the targets in the attribute.
    */
-  private final Predicate<RuleClass> allowedRuleClassesForLabels;
+  private final RuleClassNamePredicate allowedRuleClassesForLabels;
 
   /**
    * For label or label-list attributes, this predicate returns which rule
    * classes are allowed for the targets in the attribute with warning.
    */
-  private final Predicate<RuleClass> allowedRuleClassesForLabelsWarning;
+  private final RuleClassNamePredicate allowedRuleClassesForLabelsWarning;
 
   /**
    * For label or label-list attributes, this predicate returns which file
@@ -1824,8 +1839,8 @@ public final class Attribute implements Comparable<Attribute> {
       Object defaultValue,
       Transition configTransition,
       SplitTransitionProvider splitTransitionProvider,
-      Predicate<RuleClass> allowedRuleClassesForLabels,
-      Predicate<RuleClass> allowedRuleClassesForLabelsWarning,
+      RuleClassNamePredicate allowedRuleClassesForLabels,
+      RuleClassNamePredicate allowedRuleClassesForLabelsWarning,
       FileTypeSet allowedFileTypesForLabels,
       ValidityPredicate validityPredicate,
       Predicate<AttributeMap> condition,
@@ -2035,12 +2050,26 @@ public final class Attribute implements Comparable<Attribute> {
   }
 
   /**
+   * Returns a predicate that evaluates to true for rule classes that are allowed labels in this
+   * attribute. If this is not a label or label-list attribute, the returned predicate always
+   * evaluates to true.
+   *
+   * <p>NOTE: This may return Predicates.<RuleClass>alwaysTrue() as a sentinel meaning "do the right
+   * thing", rather than actually allowing all rule classes in that attribute. Others parts of bazel
+   * code check for that specific instance.
+   */
+  public Predicate<RuleClass> getAllowedRuleClassesPredicate() {
+    return allowedRuleClassesForLabels.asPredicateOfRuleClass();
+  }
+
+  /**
    * Returns a predicate that evaluates to true for rule classes that are
    * allowed labels in this attribute. If this is not a label or label-list
    * attribute, the returned predicate always evaluates to true.
    */
-  public Predicate<RuleClass> getAllowedRuleClassesPredicate() {
-    return allowedRuleClassesForLabels;
+  // TODO(b/69917891) Remove these methods once checkbuilddeps no longer depends on them.
+  public Predicate<String> getAllowedRuleClassNamesPredicate() {
+    return allowedRuleClassesForLabels.asPredicateOfRuleClassName();
   }
 
   /**
@@ -2049,7 +2078,7 @@ public final class Attribute implements Comparable<Attribute> {
    * attribute, the returned predicate always evaluates to true.
    */
   public Predicate<RuleClass> getAllowedRuleClassesWarningPredicate() {
-    return allowedRuleClassesForLabelsWarning;
+    return allowedRuleClassesForLabelsWarning.asPredicateOfRuleClass();
   }
 
   public RequiredProviders getRequiredProviders() {

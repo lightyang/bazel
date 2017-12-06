@@ -21,7 +21,7 @@ Backward incompatible changes are introduced gradually:
 To check if your code will be compatible with future releases you can:
 
 *   Build your code with the flag `--all_incompatible_changes`. This flag
-    enables all backward incomaptible changes, and so you can ensure your code
+    enables all backward incompatible changes, and so you can ensure your code
     is compatible with upcoming changes.
 *   Use boolean flags to enable/disable specific backward incompatible changes.
 
@@ -46,14 +46,18 @@ guarded behind flags in the current release:
 
 ### Set constructor
 
-We are removing the `set` constructor. Use `depset` instead. `set` and `depset`
-are equivalent, you just need to do search and replace to update the old code.
+To maintain a clear distinction between the specialized [`depset`](depsets.md)
+data structure and Python's native `set` datatype (which does not currently
+exist in Skylark), the `set` constructor has been superseded by `depset`. It is
+no longer allowed to run code that calls the old `set` constructor.
 
-We are doing this to reduce confusion between the specialized
-[depset](depsets.md) data structure and Python's set datatype.
+However, for a limited time, it will not be an error to reference the `set`
+constructor from code that is not executed (e.g. a function that is never
+called). Enable this flag to confirm that your code does not still refer to the
+old `set` constructor from unexecuted code.
 
-*   Flag: `--incompatible_disallow_set_constructor`
-*   Default: `true`
+*   Flag: `--incompatible_disallow_uncalled_set_constructor`
+*   Default: `false`
 
 
 ### Keyword-only arguments
@@ -135,7 +139,7 @@ load("//path:foo.bzl", "var")  # recommended
 ```
 
 *   Flag: `--incompatible_load_argument_is_label`
-*   Default: `false`
+*   Default: `true`
 
 
 ### Top level `if` statements

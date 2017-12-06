@@ -334,6 +334,36 @@ EOF
   cat > BUILD
 }
 
+function test_skylark_flags_affect_repository_rule() {
+  setup_skylark_repository
+
+  cat >test.bzl <<EOF
+def _impl(repository_ctx):
+  print("In repo rule: ")
+  # Symlink so a repository is created
+  repository_ctx.symlink(repository_ctx.path("$repo2"), repository_ctx.path(""))
+
+repo = repository_rule(implementation=_impl, local=True)
+EOF
+
+  MARKER="<== skylark flag test ==>"
+
+  bazel build @foo//:bar >& $TEST_log \
+    || fail "Expected build to succeed"
+  expect_log "In repo rule: " "Did not find repository rule print output"
+  expect_not_log "$MARKER" \
+      "Marker string '$MARKER' was seen even though \
+      --internal_skylark_flag_test_canary wasn't passed"
+
+  # Build with the special testing flag that appends a marker string to all
+  # print() calls.
+  bazel build @foo//:bar --internal_skylark_flag_test_canary >& $TEST_log \
+    || fail "Expected build to succeed"
+  expect_log "In repo rule: $MARKER" \
+      "Skylark flags are not propagating to repository rule implementation \
+      function evaluation"
+}
+
 function test_skylark_repository_which_and_execute() {
   setup_skylark_repository
 

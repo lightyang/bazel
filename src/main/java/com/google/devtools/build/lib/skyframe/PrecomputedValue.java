@@ -14,6 +14,7 @@
 package com.google.devtools.build.lib.skyframe;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Preconditions;
 import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableList;
@@ -25,8 +26,6 @@ import com.google.devtools.build.lib.packages.RuleVisibility;
 import com.google.devtools.build.lib.pkgcache.PathPackageLocator;
 import com.google.devtools.build.lib.skyframe.SkyframeActionExecutor.ConflictException;
 import com.google.devtools.build.lib.syntax.SkylarkSemantics;
-import com.google.devtools.build.lib.util.Preconditions;
-import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.skyframe.Injectable;
 import com.google.devtools.build.skyframe.LegacySkyKey;
 import com.google.devtools.build.skyframe.SkyFunction;
@@ -77,10 +76,6 @@ public final class PrecomputedValue implements SkyValue {
 
   public static final Precomputed<String> DEFAULTS_PACKAGE_CONTENTS =
       new Precomputed<>(LegacySkyKey.create(SkyFunctions.PRECOMPUTED, "default_pkg"));
-
-  public static final Precomputed<PathFragment> BLACKLISTED_PACKAGE_PREFIXES_FILE =
-      new Precomputed<>(
-          LegacySkyKey.create(SkyFunctions.PRECOMPUTED, "blacklisted_package_prefixes_file"));
 
   public static final Precomputed<RuleVisibility> DEFAULT_VISIBILITY =
       new Precomputed<>(LegacySkyKey.create(SkyFunctions.PRECOMPUTED, "default_visibility"));

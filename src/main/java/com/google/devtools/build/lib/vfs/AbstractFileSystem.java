@@ -30,6 +30,12 @@ abstract class AbstractFileSystem extends FileSystem {
   protected static final String ERR_PERMISSION_DENIED = " (Permission denied)";
   protected static final Profiler profiler = Profiler.instance();
 
+  public AbstractFileSystem() {}
+
+  public AbstractFileSystem(HashFunction digestFunction) {
+    super(digestFunction);
+  }
+
   @Override
   protected InputStream getInputStream(Path path) throws IOException {
     // This loop is a workaround for an apparent bug in FileInputStream.open, which delegates
@@ -90,16 +96,18 @@ abstract class AbstractFileSystem extends FileSystem {
 
   @Override
   protected OutputStream getOutputStream(Path path, boolean append) throws IOException {
-    try {
-      return createFileOutputStream(path, append);
-    } catch (FileNotFoundException e) {
-      // Why does it throw a *FileNotFoundException* if it can't write?
-      // That does not make any sense! And its in a completely different
-      // format than in other situations, no less!
-      if (e.getMessage().equals(path + ERR_PERMISSION_DENIED)) {
-        throw new FileAccessException(e.getMessage());
+    synchronized (path) {
+      try {
+        return createFileOutputStream(path, append);
+      } catch (FileNotFoundException e) {
+        // Why does it throw a *FileNotFoundException* if it can't write?
+        // That does not make any sense! And its in a completely different
+        // format than in other situations, no less!
+        if (e.getMessage().equals(path + ERR_PERMISSION_DENIED)) {
+          throw new FileAccessException(e.getMessage());
+        }
+        throw e;
       }
-      throw e;
     }
   }
 

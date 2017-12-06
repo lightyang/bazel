@@ -14,6 +14,7 @@
 package com.google.devtools.build.lib.actions;
 
 import com.google.auto.value.AutoValue;
+import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -28,7 +29,6 @@ import com.google.devtools.build.lib.actions.cache.Protos.ActionCacheStatistics.
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.events.EventKind;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -74,6 +74,7 @@ public class ActionCacheChecker {
   };
 
   private final ActionCache actionCache;
+  private final ActionKeyContext actionKeyContext;
   private final Predicate<? super Action> executionFilter;
   private final ArtifactResolver artifactResolver;
   private final CacheConfig cacheConfig;
@@ -103,10 +104,12 @@ public class ActionCacheChecker {
   public ActionCacheChecker(
       ActionCache actionCache,
       ArtifactResolver artifactResolver,
+      ActionKeyContext actionKeyContext,
       Predicate<? super Action> executionFilter,
       @Nullable CacheConfig cacheConfig) {
     this.actionCache = actionCache;
     this.executionFilter = executionFilter;
+    this.actionKeyContext = actionKeyContext;
     this.artifactResolver = artifactResolver;
     this.cacheConfig =
         cacheConfig != null
@@ -303,7 +306,7 @@ public class ActionCacheChecker {
       reportChanged(handler, action);
       actionCache.accountMiss(MissReason.DIFFERENT_FILES);
       return true;
-    } else if (!entry.getActionKey().equals(action.getKey())) {
+    } else if (!entry.getActionKey().equals(action.getKey(actionKeyContext))) {
       reportCommand(handler, action);
       actionCache.accountMiss(MissReason.DIFFERENT_ACTION_KEY);
       return true;
@@ -356,7 +359,8 @@ public class ActionCacheChecker {
     }
     Map<String, String> usedClientEnv = computeUsedClientEnv(action, clientEnv);
     ActionCache.Entry entry =
-        new ActionCache.Entry(action.getKey(), usedClientEnv, action.discoversInputs());
+        new ActionCache.Entry(
+            action.getKey(actionKeyContext), usedClientEnv, action.discoversInputs());
     for (Artifact output : action.getOutputs()) {
       // Remove old records from the cache if they used different key.
       String execPath = output.getExecPathString();

@@ -14,6 +14,7 @@
 
 package com.google.devtools.build.lib.rules.nativedeps;
 
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.actions.Artifact;
@@ -41,7 +42,6 @@ import com.google.devtools.build.lib.rules.cpp.Link.LinkTargetType;
 import com.google.devtools.build.lib.rules.cpp.LinkerInputs;
 import com.google.devtools.build.lib.rules.cpp.LinkerInputs.LibraryToLink;
 import com.google.devtools.build.lib.util.Fingerprint;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -254,9 +254,11 @@ public abstract class NativeDepsHelper {
     if (!builder.getLtoBitcodeFiles().isEmpty()
         && featureConfiguration.isEnabled(CppRuleClasses.THIN_LTO)) {
       builder.setLtoIndexing(true);
-      builder.setUsePicForLtoBackendActions(CppHelper.usePic(ruleContext, false));
+      builder.setUsePicForLtoBackendActions(CppHelper.usePic(ruleContext, toolchain, false));
       CppLinkAction indexAction = builder.build();
-      ruleContext.registerAction(indexAction);
+      if (indexAction != null) {
+        ruleContext.registerAction(indexAction);
+      }
       builder.setLtoIndexing(false);
     }
 

@@ -14,9 +14,9 @@
 
 package com.google.devtools.build.lib.runtime;
 
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.devtools.build.lib.events.Event.of;
 import static com.google.devtools.build.lib.events.EventKind.PROGRESS;
-import static com.google.devtools.build.lib.util.Preconditions.checkArgument;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.HashMultimap;
@@ -44,6 +44,7 @@ import com.google.devtools.build.lib.buildeventstream.BuildEventTransport;
 import com.google.devtools.build.lib.buildeventstream.BuildEventTransportClosedEvent;
 import com.google.devtools.build.lib.buildeventstream.BuildEventWithConfiguration;
 import com.google.devtools.build.lib.buildeventstream.BuildEventWithOrderConstraint;
+import com.google.devtools.build.lib.buildeventstream.ChainableEvent;
 import com.google.devtools.build.lib.buildeventstream.LastBuildEvent;
 import com.google.devtools.build.lib.buildeventstream.NullConfiguration;
 import com.google.devtools.build.lib.buildeventstream.ProgressEvent;
@@ -52,6 +53,7 @@ import com.google.devtools.build.lib.buildtool.buildevent.BuildCompleteEvent;
 import com.google.devtools.build.lib.buildtool.buildevent.BuildInterruptedEvent;
 import com.google.devtools.build.lib.buildtool.buildevent.BuildStartingEvent;
 import com.google.devtools.build.lib.buildtool.buildevent.NoAnalyzeEvent;
+import com.google.devtools.build.lib.buildtool.buildevent.NoExecutionEvent;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetView;
 import com.google.devtools.build.lib.events.Event;
@@ -96,6 +98,14 @@ public class BuildEventStreamer implements EventHandler {
   private AbortReason abortReason = AbortReason.UNKNOWN;
   // Will be set to true if the build was invoked through "bazel test".
   private boolean isTestCommand;
+
+  // After a BuildCompetingEvent we might expect a whitelisted set of events. If non-null,
+  // the streamer is restricted to only allow those events and fully close after having seen
+  // them.
+  private Set<BuildEventId> finalEventsToCome = null;
+
+  // True, if we already closed the stream.
+  private boolean closed;
 
   private static final Logger logger = Logger.getLogger(BuildEventStreamer.class.getName());
 
@@ -288,7 +298,7 @@ public class BuildEventStreamer implements EventHandler {
    * Clear all events that are still announced; events not naturally closed by the expected event
    * normally only occur if the build is aborted.
    */
-  private void clearAnnouncedEvents() {
+  private void clearAnnouncedEvents(Collection<BuildEventId> dontclear) {
     if (announcedEvents != null) {
       // create a copy of the identifiers to clear, as the post method
       // will change the set of already announced events.
@@ -297,7 +307,9 @@ public class BuildEventStreamer implements EventHandler {
         ids = Sets.difference(announcedEvents, postedEvents);
       }
       for (BuildEventId id : ids) {
-        post(new AbortedEvent(id, abortReason, ""));
+        if (!dontclear.contains(id)) {
+          post(new AbortedEvent(id, abortReason, ""));
+        }
       }
     }
   }
@@ -319,7 +331,18 @@ public class BuildEventStreamer implements EventHandler {
         TimeUnit.SECONDS);
   }
 
+  public boolean isClosed() {
+    return closed;
+  }
+
   private void close() {
+    synchronized (this) {
+      if (closed) {
+        return;
+      }
+      closed = true;
+    }
+
     ScheduledExecutorService executor = null;
     try {
       executor = Executors.newSingleThreadScheduledExecutor();
@@ -400,7 +423,23 @@ public class BuildEventStreamer implements EventHandler {
   }
 
   @Subscribe
+  public void noExecution(NoExecutionEvent event) {
+    abortReason = AbortReason.NO_BUILD;
+  }
+
+  @Subscribe
   public void buildEvent(BuildEvent event) {
+    if (finalEventsToCome != null) {
+      synchronized (this) {
+        BuildEventId id = event.getEventId();
+        if (finalEventsToCome.contains(id)) {
+          finalEventsToCome.remove(id);
+        } else {
+          return;
+        }
+      }
+    }
+
     if (isActionWithoutError(event)
         || bufferUntilPrerequisitesReceived(event)
         || isVacuousTestSummary(event)) {
@@ -445,13 +484,17 @@ public class BuildEventStreamer implements EventHandler {
     }
 
     if (event instanceof BuildCompletingEvent) {
-      buildComplete();
+      buildComplete(event);
     }
 
     if (event instanceof NoBuildEvent) {
       if (!((NoBuildEvent) event).separateFinishedEvent()) {
-        buildComplete();
+        buildComplete(event);
       }
+    }
+
+    if (finalEventsToCome != null && finalEventsToCome.isEmpty()) {
+      close();
     }
   }
 
@@ -490,7 +533,7 @@ public class BuildEventStreamer implements EventHandler {
     return ImmutableSet.copyOf(transports);
   }
 
-  private void buildComplete() {
+  private void buildComplete(ChainableEvent event) {
     clearPendingEvents();
     String out = null;
     String err = null;
@@ -499,8 +542,14 @@ public class BuildEventStreamer implements EventHandler {
       err = outErrProvider.getErr();
     }
     post(ProgressEvent.finalProgressUpdate(progressCount, out, err));
-    clearAnnouncedEvents();
-    close();
+    clearAnnouncedEvents(event.getChildrenEvents());
+
+    finalEventsToCome = new HashSet<>(announcedEvents);
+    finalEventsToCome.removeAll(postedEvents);
+
+    if (finalEventsToCome.isEmpty()) {
+      close();
+    }
   }
 
   /**

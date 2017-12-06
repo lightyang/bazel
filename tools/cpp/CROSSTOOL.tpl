@@ -1,3 +1,17 @@
+# Copyright 2016 The Bazel Authors. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 major_version: "local"
 minor_version: ""
 default_target_cpu: "same_as_host"
@@ -117,6 +131,20 @@ toolchain {
   linking_mode_flags { mode: DYNAMIC }
 
 %{coverage}
+
+  feature {
+    name: 'fdo_optimize'
+    provides: 'profile'
+    flag_set {
+      action: 'c-compile'
+      action: 'c++-compile'
+      expand_if_all_available: 'fdo_profile_path'
+      flag_group {
+        flag: '-fprofile-use=%{fdo_profile_path}'
+        flag: '-fprofile-correction',
+      }
+    }
+  }
 }
 
 toolchain {
@@ -136,6 +164,10 @@ toolchain {
   tool_path {
     name: "ar"
     path: "%{msvc_lib_path}"
+  }
+  tool_path {
+    name: "ml"
+    path: "%{msvc_ml_path}"
   }
   tool_path {
     name: "cpp"
@@ -270,6 +302,26 @@ toolchain {
   }
 
   action_config {
+    config_name: 'assemble'
+    action_name: 'assemble'
+    tool {
+      tool_path: '%{msvc_ml_path}'
+    }
+    flag_set {
+      expand_if_all_available: 'output_object_file'
+      flag_group {
+        flag: '/Fo%{output_object_file}'
+        flag: '/Zi'
+        flag: '/c'
+        flag: '%{source_file}'
+      }
+    }
+    implies: 'nologo'
+    implies: 'msvc_env'
+    implies: 'sysroot'
+  }
+
+  action_config {
     config_name: 'c-compile'
     action_name: 'c-compile'
     tool {
@@ -385,6 +437,7 @@ toolchain {
     implies: 'use_linker'
     implies: 'no_stripping'
     implies: 'has_configured_linker_path'
+    implies: 'def_file'
   }
 
   action_config {
@@ -458,7 +511,6 @@ toolchain {
     name: 'legacy_compile_flags'
     flag_set {
       expand_if_all_available: 'legacy_compile_flags'
-      action: 'assemble'
       action: 'preprocess-assemble'
       action: 'c-compile'
       action: 'c++-compile'
@@ -528,6 +580,7 @@ toolchain {
   feature {
     name: 'include_paths'
     flag_set {
+      action: "assemble"
       action: 'preprocess-assemble'
       action: 'c-compile'
       action: 'c++-compile'
@@ -552,6 +605,7 @@ toolchain {
   feature {
     name: "preprocessor_defines"
     flag_set {
+      action: "assemble"
       action: "preprocess-assemble"
       action: "c-compile"
       action: "c++-compile"
@@ -569,7 +623,6 @@ toolchain {
   feature {
     name: 'parse_showincludes'
     flag_set {
-      action: 'assemble'
       action: 'preprocess-assemble'
       action: 'c-compile'
       action: 'c++-compile'
@@ -889,6 +942,7 @@ toolchain {
       flag_group {
         flag: "/Od"
         flag: "/Z7"
+        flag: "/DDEBUG"
       }
     }
     flag_set {
@@ -910,6 +964,7 @@ toolchain {
       flag_group {
         flag: "/Od"
         flag: "/Z7"
+        flag: "/DDEBUG"
       }
     }
     flag_set {
@@ -930,6 +985,7 @@ toolchain {
       action: 'c++-compile'
       flag_group {
         flag: "/O2"
+        flag: "/DNDEBUG"
       }
     }
   }
@@ -938,7 +994,6 @@ toolchain {
     name: 'user_compile_flags'
     flag_set {
       expand_if_all_available: 'user_compile_flags'
-      action: 'assemble'
       action: 'preprocess-assemble'
       action: 'c-compile'
       action: 'c++-compile'
@@ -978,7 +1033,6 @@ toolchain {
     name: 'unfiltered_compile_flags'
     flag_set {
       expand_if_all_available: 'unfiltered_compile_flags'
-      action: 'assemble'
       action: 'preprocess-assemble'
       action: 'c-compile'
       action: 'c++-compile'
@@ -994,7 +1048,7 @@ toolchain {
   }
 
   feature {
-    name: 'windows_export_all_symbols'
+    name : 'def_file',
     flag_set {
       expand_if_all_available: 'def_file_path'
       action: 'c++-link-executable'
@@ -1007,6 +1061,10 @@ toolchain {
         flag: "/ignore:4070"
       }
     }
+  }
+
+  feature {
+    name: 'windows_export_all_symbols'
   }
 
   feature {

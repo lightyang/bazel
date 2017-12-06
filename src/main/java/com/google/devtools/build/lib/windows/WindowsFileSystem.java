@@ -15,9 +15,9 @@ package com.google.devtools.build.lib.windows;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
+import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadSafe;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.vfs.FileStatus;
 import com.google.devtools.build.lib.vfs.FileSystem;
 import com.google.devtools.build.lib.vfs.JavaIoFileSystem;
@@ -307,6 +307,12 @@ public class WindowsFileSystem extends JavaIoFileSystem {
 
   public static final LinkOption[] NO_OPTIONS = new LinkOption[0];
   public static final LinkOption[] NO_FOLLOW = new LinkOption[] {LinkOption.NOFOLLOW_LINKS};
+
+  public WindowsFileSystem() {}
+
+  public WindowsFileSystem(HashFunction hashFunction) {
+    super(hashFunction);
+  }
 
   @Override
   protected PathFactory getPathFactory() {

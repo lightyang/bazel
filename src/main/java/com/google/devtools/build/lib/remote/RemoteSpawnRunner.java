@@ -32,7 +32,8 @@ import com.google.devtools.build.lib.events.Reporter;
 import com.google.devtools.build.lib.exec.SpawnExecException;
 import com.google.devtools.build.lib.exec.SpawnInputExpander;
 import com.google.devtools.build.lib.exec.SpawnRunner;
-import com.google.devtools.build.lib.remote.Digests.ActionKey;
+import com.google.devtools.build.lib.remote.DigestUtil.ActionKey;
+import com.google.devtools.build.lib.remote.Retrier.RetryException;
 import com.google.devtools.build.lib.remote.TreeNodeRepository.TreeNode;
 import com.google.devtools.build.lib.util.ExitCode;
 import com.google.devtools.build.lib.util.io.FileOutErr;
@@ -65,6 +66,8 @@ import javax.annotation.Nullable;
 /** A client for the remote execution service. */
 @ThreadSafe
 class RemoteSpawnRunner implements SpawnRunner {
+  private static final int POSIX_TIMEOUT_EXIT_CODE = /*SIGNAL_BASE=*/128 + /*SIGALRM=*/14;
+
   private final Path execRoot;
   private final RemoteOptions options;
   // TODO(olaola): This will be set on a per-action basis instead.
@@ -77,6 +80,7 @@ class RemoteSpawnRunner implements SpawnRunner {
   @Nullable private final GrpcRemoteExecutor remoteExecutor;
   private final String buildRequestId;
   private final String commandId;
+  private final DigestUtil digestUtil;
 
   // Used to ensure that a warning is reported only once.
   private final AtomicBoolean warningReported = new AtomicBoolean();
@@ -90,7 +94,8 @@ class RemoteSpawnRunner implements SpawnRunner {
       String buildRequestId,
       String commandId,
       @Nullable RemoteActionCache remoteCache,
-      @Nullable GrpcRemoteExecutor remoteExecutor) {
+      @Nullable GrpcRemoteExecutor remoteExecutor,
+      DigestUtil digestUtil) {
     this.execRoot = execRoot;
     this.options = options;
     this.platform = options.parseRemotePlatformOverride();
@@ -101,19 +106,20 @@ class RemoteSpawnRunner implements SpawnRunner {
     this.cmdlineReporter = cmdlineReporter;
     this.buildRequestId = buildRequestId;
     this.commandId = commandId;
+    this.digestUtil = digestUtil;
   }
 
   @Override
   public SpawnResult exec(Spawn spawn, SpawnExecutionPolicy policy)
       throws ExecException, InterruptedException, IOException {
-    if (!spawn.isRemotable() || remoteCache == null) {
+    if (!Spawns.mayBeExecutedRemotely(spawn) || remoteCache == null) {
       return fallbackRunner.exec(spawn, policy);
     }
 
     policy.report(ProgressStatus.EXECUTING, "remote");
     // Temporary hack: the TreeNodeRepository should be created and maintained upstream!
     ActionInputFileCache inputFileCache = policy.getActionInputFileCache();
-    TreeNodeRepository repository = new TreeNodeRepository(execRoot, inputFileCache);
+    TreeNodeRepository repository = new TreeNodeRepository(execRoot, inputFileCache, digestUtil);
     SortedMap<PathFragment, ActionInput> inputMap = policy.getInputMapping();
     TreeNode inputRoot = repository.buildFromActionInputs(inputMap);
     repository.computeMerkleDigests(inputRoot);
@@ -121,13 +127,13 @@ class RemoteSpawnRunner implements SpawnRunner {
     Action action =
         buildAction(
             spawn.getOutputFiles(),
-            Digests.computeDigest(command),
+            digestUtil.compute(command),
             repository.getMerkleDigest(inputRoot),
             platform,
             policy.getTimeout());
 
     // Look up action cache, and reuse the action output if it is found.
-    ActionKey actionKey = Digests.computeActionKey(action);
+    ActionKey actionKey = digestUtil.computeActionKey(action);
     Context withMetadata =
         TracingMetadataUtils.contextWithMetadata(buildRequestId, commandId, actionKey);
     Context previous = withMetadata.attach();
@@ -197,9 +203,10 @@ class RemoteSpawnRunner implements SpawnRunner {
   private SpawnResult downloadRemoteResults(ActionResult result, FileOutErr outErr)
       throws ExecException, IOException, InterruptedException {
     remoteCache.download(result, execRoot, outErr);
+    int exitCode = result.getExitCode();
     return new SpawnResult.Builder()
-        .setStatus(Status.SUCCESS)  // Even if the action failed with non-zero exit code.
-        .setExitCode(result.getExitCode())
+        .setStatus(exitCode == 0 ? Status.SUCCESS : Status.NON_ZERO_EXIT)
+        .setExitCode(exitCode)
         .build();
   }
 
@@ -217,34 +224,37 @@ class RemoteSpawnRunner implements SpawnRunner {
     return handleError(cause, policy.getFileOutErr());
   }
 
-  private SpawnResult handleError(IOException cause, FileOutErr outErr) throws IOException,
+  private SpawnResult handleError(IOException exception, FileOutErr outErr) throws IOException,
       ExecException {
-    final Status status;
-    if (cause instanceof TimeoutException) {
-      status = Status.TIMEOUT;
+    final Throwable cause = exception.getCause();
+    if (exception instanceof TimeoutException || cause instanceof TimeoutException) {
       // TODO(buchgr): provide stdout/stderr from the action that timed out.
       // Remove the unsuported message once remote execution tests no longer check for it.
       try (OutputStream out = outErr.getOutputStream()) {
         String msg = "Log output for timeouts is not yet supported in remote execution.\n";
         out.write(msg.getBytes(StandardCharsets.UTF_8));
       }
-      return new SpawnResult.Builder().setStatus(status).build();
-    } else if (cause instanceof RetryException
-        && ((RetryException) cause).causedByStatusCode(Code.UNAVAILABLE)) {
-      status = Status.CONNECTION_FAILED;
+      return new SpawnResult.Builder()
+          .setStatus(Status.TIMEOUT)
+          .setExitCode(POSIX_TIMEOUT_EXIT_CODE)
+          .build();
+    }
+    final Status status;
+    if (exception instanceof RetryException
+        && RemoteRetrierUtils.causedByStatus((RetryException) exception, Code.UNAVAILABLE)) {
+      status = Status.EXECUTION_FAILED_CATASTROPHICALLY;
     } else if (cause instanceof CacheNotFoundException) {
       status = Status.REMOTE_CACHE_FAILED;
     } else {
       status = Status.EXECUTION_FAILED;
     }
     throw new SpawnExecException(
-        Throwables.getStackTraceAsString(cause),
+        Throwables.getStackTraceAsString(exception),
         new SpawnResult.Builder()
-            .setExitCode(ExitCode.REMOTE_ERROR.getNumericExitCode())
             .setStatus(status)
+            .setExitCode(ExitCode.REMOTE_ERROR.getNumericExitCode())
             .build(),
-        /* forciblyRunRemotely= */ false,
-        /* catastrophe= */ true);
+        /* forciblyRunRemotely= */ false);
   }
 
   static Action buildAction(

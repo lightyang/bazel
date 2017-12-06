@@ -16,11 +16,11 @@ package com.google.devtools.build.lib.runtime;
 
 import static com.google.devtools.build.lib.profiler.AutoProfiler.profiled;
 
+import com.google.common.base.Preconditions;
 import com.google.common.eventbus.EventBus;
 import com.google.devtools.build.lib.actions.PackageRootResolver;
 import com.google.devtools.build.lib.actions.cache.ActionCache;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
-import com.google.devtools.build.lib.analysis.BuildView;
 import com.google.devtools.build.lib.analysis.SkyframePackageRootResolver;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.DefaultsPackage;
@@ -40,7 +40,6 @@ import com.google.devtools.build.lib.skyframe.SkyframeBuildView;
 import com.google.devtools.build.lib.skyframe.SkyframeExecutor;
 import com.google.devtools.build.lib.util.AbruptExitException;
 import com.google.devtools.build.lib.util.ExitCode;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.util.io.TimestampGranularityMonitor;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
@@ -146,7 +145,11 @@ public final class CommandEnvironment {
 
     workspace.getSkyframeExecutor().setEventBus(eventBus);
 
-    updateClientEnv(options.getOptions(CommonCommandOptions.class).clientEnv);
+    ClientOptions clientOptions =
+        Preconditions.checkNotNull(
+            options.getOptions(ClientOptions.class),
+            "CommandEnvironment needs its options provider to have ClientOptions loaded.");
+    updateClientEnv(clientOptions.clientEnv);
 
     // actionClientEnv contains the environment where values from actionEnvironment are overridden.
     actionClientEnv.putAll(clientEnv);
@@ -594,7 +597,7 @@ public final class CommandEnvironment {
     if (inWorkspace()) {
       workingDirectory = workspace.getRelative(commonOptions.clientCwd);
     } else {
-      workspace = FileSystemUtils.getWorkingDirectory(getDirectories().getFileSystem());
+      workspace = FileSystemUtils.getWorkingDirectory(getRuntime().getFileSystem());
       workingDirectory = workspace;
     }
     this.relativeWorkingDirectory = workingDirectory.relativeTo(workspace);
@@ -605,7 +608,8 @@ public final class CommandEnvironment {
     // Let skyframe figure out if it needs to store graph edges for this build.
     skyframeExecutor.decideKeepIncrementalState(
         runtime.getStartupOptionsProvider().getOptions(BlazeServerStartupOptions.class).batch,
-        options.getOptions(BuildView.Options.class));
+        options,
+        reporter);
 
     // Start the performance and memory profilers.
     runtime.beforeCommand(this, commonOptions, execStartTimeNanos);

@@ -48,6 +48,7 @@ import com.google.devtools.build.lib.syntax.ParserInputSource;
 import com.google.devtools.build.lib.syntax.Runtime;
 import com.google.devtools.build.lib.syntax.Runtime.NoneType;
 import com.google.devtools.build.lib.syntax.SkylarkList;
+import com.google.devtools.build.lib.syntax.SkylarkSemantics;
 import com.google.devtools.build.lib.syntax.SkylarkSignatureProcessor;
 import com.google.devtools.build.lib.vfs.Path;
 import java.io.File;
@@ -141,15 +142,19 @@ public class WorkspaceFactory {
   }
 
   /**
-   * Parses the given WORKSPACE file without resolving skylark imports.
+   * Parses the given WORKSPACE file without resolving Skylark imports, using the default Skylark
+   * semantics.
    */
   public void parse(ParserInputSource source)
       throws BuildFileContainsErrorsException, InterruptedException {
-    parse(source, null);
+    parse(source, SkylarkSemantics.DEFAULT_SEMANTICS, null);
   }
 
   @VisibleForTesting
-  public void parse(ParserInputSource source, @Nullable StoredEventHandler localReporter)
+  public void parse(
+      ParserInputSource source,
+      SkylarkSemantics skylarkSemantics,
+      @Nullable StoredEventHandler localReporter)
       throws BuildFileContainsErrorsException, InterruptedException {
     // This method is split in 2 so WorkspaceFileFunction can call the two parts separately and
     // do the Skylark load imports in between. We can't load skylark imports from
@@ -163,7 +168,7 @@ public class WorkspaceFactory {
       throw new BuildFileContainsErrorsException(
           Label.EXTERNAL_PACKAGE_IDENTIFIER, "Failed to parse " + source.getPath());
     }
-    execute(buildFileAST, null, localReporter);
+    execute(buildFileAST, null, skylarkSemantics, localReporter);
   }
 
 
@@ -171,15 +176,21 @@ public class WorkspaceFactory {
    * Actually runs through the AST, calling the functions in the WORKSPACE file and adding rules
    * to the //external package.
    */
-  public void execute(BuildFileAST ast, Map<String, Extension> importedExtensions)
+  public void execute(
+      BuildFileAST ast,
+      Map<String, Extension> importedExtensions,
+      SkylarkSemantics skylarkSemantics)
       throws InterruptedException {
     Preconditions.checkNotNull(ast);
     Preconditions.checkNotNull(importedExtensions);
-    execute(ast, importedExtensions, new StoredEventHandler());
+    execute(ast, importedExtensions, skylarkSemantics, new StoredEventHandler());
   }
 
 
-  private void execute(BuildFileAST ast, @Nullable Map<String, Extension> importedExtensions,
+  private void execute(
+      BuildFileAST ast,
+      @Nullable Map<String, Extension> importedExtensions,
+      SkylarkSemantics skylarkSemantics,
       StoredEventHandler localReporter)
       throws InterruptedException {
     if (importedExtensions != null) {
@@ -191,8 +202,7 @@ public class WorkspaceFactory {
     }
     Environment workspaceEnv =
         Environment.builder(mutability)
-            // Note that this Skylark environment ignores command line flags.
-            .useDefaultSemantics()
+            .setSemantics(skylarkSemantics)
             .setGlobals(BazelLibrary.GLOBALS)
             .setEventHandler(localReporter)
             .setImportedExtensions(importMap)
@@ -245,10 +255,10 @@ public class WorkspaceFactory {
   }
 
   /**
-   * Adds the various values returned by the parsing of the previous workspace file parts.
-   * {@code aPackage} is the package returned by the parent WorkspaceFileFunction, {@code importMap}
-   * is the list of load statements imports computed by the parent WorkspaceFileFunction and
-   * {@code variableBindings} the list of top level variable bindings of that same call.
+   * Adds the various values returned by the parsing of the previous workspace file parts. {@code
+   * aPackage} is the package returned by the parent WorkspaceFileFunction, {@code importMap} is the
+   * list of load statements imports computed by the parent WorkspaceFileFunction and {@code
+   * variableBindings} the list of top level variable bindings of that same call.
    */
   public void setParent(
       Package aPackage,
@@ -295,9 +305,7 @@ public class WorkspaceFactory {
             + "description of the project, using underscores as separators, e.g., "
             + "github.com/bazelbuild/bazel should use com_github_bazelbuild_bazel. Names must "
             + "start with a letter and can only contain letters, numbers, and underscores.",
-    parameters = {
-      @Param(name = "name", type = String.class, doc = "the name of the workspace.")
-    },
+    parameters = {@Param(name = "name", type = String.class, doc = "the name of the workspace.")},
     useAst = true,
     useEnvironment = true
   )
@@ -321,19 +329,13 @@ public class WorkspaceFactory {
                 Package.Builder builder = PackageFactory.getContext(env, ast).pkgBuilder;
                 RuleClass localRepositoryRuleClass = ruleFactory.getRuleClass("local_repository");
                 RuleClass bindRuleClass = ruleFactory.getRuleClass("bind");
-                Map<String, Object> kwargs = ImmutableMap.<String, Object>of(
-                    "name", name, "path", ".");
+                Map<String, Object> kwargs =
+                    ImmutableMap.<String, Object>of("name", name, "path", ".");
                 try {
                   // This effectively adds a "local_repository(name = "<ws>", path = ".")"
                   // definition to the WORKSPACE file.
-                  builder
-                      .externalPackageData()
-                      .createAndAddRepositoryRule(
-                          builder,
-                          localRepositoryRuleClass,
-                          bindRuleClass,
-                          kwargs,
-                          ast);
+                  WorkspaceFactoryHelper.createAndAddRepositoryRule(
+                      builder, localRepositoryRuleClass, bindRuleClass, kwargs, ast, allowOverride);
                 } catch (InvalidRuleException | NameConflictException | LabelSyntaxException e) {
                   throw new EvalException(ast.getLocation(), e.getMessage());
                 }
@@ -364,15 +366,13 @@ public class WorkspaceFactory {
           try {
             Package.Builder builder = PackageFactory.getContext(env, ast).pkgBuilder;
             RuleClass ruleClass = ruleFactory.getRuleClass("bind");
-            builder
-                .externalPackageData()
-                .addBindRule(
-                    builder,
-                    ruleClass,
-                    nameLabel,
-                    actual == null ? null : Label.parseAbsolute(actual),
-                    ast.getLocation(),
-                    ruleFactory.getAttributeContainer(ruleClass));
+            WorkspaceFactoryHelper.addBindRule(
+                builder,
+                ruleClass,
+                nameLabel,
+                actual == null ? null : Label.parseAbsolute(actual),
+                ast.getLocation(),
+                ruleFactory.getAttributeContainer(ruleClass));
           } catch (RuleFactory.InvalidRuleException
               | Package.NameConflictException
               | LabelSyntaxException e) {
@@ -451,29 +451,18 @@ public class WorkspaceFactory {
           throws EvalException, InterruptedException {
         try {
           Package.Builder builder = PackageFactory.getContext(env, ast).pkgBuilder;
-          if (!allowOverride
-              && kwargs.containsKey("name")
-              && builder.targets.containsKey(kwargs.get("name"))) {
-            throw new EvalException(
-                ast.getLocation(),
-                "Cannot redefine repository after any load statement in the WORKSPACE file"
-                    + " (for repository '"
-                    + kwargs.get("name")
-                    + "')");
-          }
           RuleClass ruleClass = ruleFactory.getRuleClass(ruleClassName);
           RuleClass bindRuleClass = ruleFactory.getRuleClass("bind");
           Rule rule =
-              builder
-                  .externalPackageData()
-                  .createAndAddRepositoryRule(builder, ruleClass, bindRuleClass, kwargs, ast);
+              WorkspaceFactoryHelper.createAndAddRepositoryRule(
+                  builder, ruleClass, bindRuleClass, kwargs, ast, allowOverride);
           if (!isLegalWorkspaceName(rule.getName())) {
             throw new EvalException(
                 ast.getLocation(), rule + "'s name field must be a legal workspace name");
           }
-        } catch (
-            RuleFactory.InvalidRuleException | Package.NameConflictException | LabelSyntaxException
-                e) {
+        } catch (RuleFactory.InvalidRuleException
+            | Package.NameConflictException
+            | LabelSyntaxException e) {
           throw new EvalException(ast.getLocation(), e.getMessage());
         }
         return NONE;
@@ -516,6 +505,7 @@ public class WorkspaceFactory {
       workspaceEnv.setupDynamic(
           PackageFactory.PKG_CONTEXT,
           new PackageFactory.PackageContext(builder, null, localReporter, AttributeContainer::new));
+      workspaceEnv.setupDynamic("$allow_override", allowOverride);
     } catch (EvalException e) {
       throw new AssertionError(e);
     }

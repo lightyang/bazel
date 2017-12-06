@@ -19,8 +19,8 @@ import static com.google.devtools.build.lib.actions.util.ActionsTestUtil.getFirs
 import static org.junit.Assert.fail;
 
 import com.google.common.base.Function;
+import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
-import com.google.common.base.Predicates;
 import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -33,6 +33,7 @@ import com.google.devtools.build.lib.actions.Action;
 import com.google.devtools.build.lib.actions.ActionAnalysisMetadata;
 import com.google.devtools.build.lib.actions.ActionGraph;
 import com.google.devtools.build.lib.actions.ActionInput;
+import com.google.devtools.build.lib.actions.ActionKeyContext;
 import com.google.devtools.build.lib.actions.ActionLookupValue;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.ArtifactOwner;
@@ -82,7 +83,7 @@ import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTa
 import com.google.devtools.build.lib.analysis.extra.ExtraAction;
 import com.google.devtools.build.lib.analysis.test.BaselineCoverageAction;
 import com.google.devtools.build.lib.analysis.test.InstrumentedFilesProvider;
-import com.google.devtools.build.lib.buildtool.BuildRequest;
+import com.google.devtools.build.lib.buildtool.BuildRequestOptions;
 import com.google.devtools.build.lib.clock.BlazeClock;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
@@ -136,7 +137,6 @@ import com.google.devtools.build.lib.testutil.BlazeTestUtils;
 import com.google.devtools.build.lib.testutil.FoundationTestCase;
 import com.google.devtools.build.lib.testutil.TestConstants;
 import com.google.devtools.build.lib.util.FileType;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.util.StringUtil;
 import com.google.devtools.build.lib.util.io.TimestampGranularityMonitor;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
@@ -178,6 +178,7 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
 
   protected TimestampGranularityMonitor tsgm;
   protected BlazeDirectories directories;
+  protected ActionKeyContext actionKeyContext;
   protected BinTools binTools;
 
   // Note that these configurations are virtual (they use only VFS)
@@ -205,6 +206,7 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
             new ServerDirectories(outputBase, outputBase),
             rootDirectory,
             analysisMock.getProductName());
+    actionKeyContext = new ActionKeyContext();
     binTools = BinTools.forUnitTesting(directories, analysisMock.getEmbeddedTools());
     mockToolsConfig = new MockToolsConfig(rootDirectory, false);
     analysisMock.setupMockClient(mockToolsConfig);
@@ -214,7 +216,7 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
     skylarkSemanticsOptions = parseSkylarkSemanticsOptions();
     workspaceStatusActionFactory =
         new AnalysisTestUtil.DummyWorkspaceStatusActionFactory(directories);
-    mutableActionGraph = new MapBasedActionGraph();
+    mutableActionGraph = new MapBasedActionGraph(actionKeyContext);
     ruleClassProvider = getRuleClassProvider();
 
     ImmutableList<PrecomputedValue.Injected> extraPrecomputedValues = ImmutableList.of(
@@ -232,14 +234,16 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
     skyframeExecutor =
         SequencedSkyframeExecutor.create(
             pkgFactory,
+            fileSystem,
             directories,
+            actionKeyContext,
             workspaceStatusActionFactory,
             ruleClassProvider.getBuildInfoFactories(),
             ImmutableList.<DiffAwareness.Factory>of(),
-            Predicates.<PathFragment>alwaysFalse(),
             analysisMock.getSkyFunctions(directories),
             ImmutableList.<SkyValueDirtinessChecker>of(),
-            PathFragment.EMPTY_FRAGMENT,
+            BazelSkyframeExecutorConstants.HARDCODED_BLACKLISTED_PACKAGE_PREFIXES,
+            BazelSkyframeExecutorConstants.ADDITIONAL_BLACKLISTED_PACKAGE_PREFIXES_FILE,
             BazelSkyframeExecutorConstants.CROSS_REPOSITORY_LABEL_VIOLATION_STRATEGY,
             BazelSkyframeExecutorConstants.BUILD_FILES_BY_PRIORITY,
             BazelSkyframeExecutorConstants.ACTION_ON_IO_EXCEPTION_READING_BUILD_FILE);
@@ -249,7 +253,10 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
     packageCacheOptions.showLoadingProgress = true;
     packageCacheOptions.globbingThreads = 7;
     skyframeExecutor.preparePackageLoading(
-        new PathPackageLocator(outputBase, ImmutableList.of(rootDirectory)),
+        new PathPackageLocator(
+            outputBase,
+            ImmutableList.of(rootDirectory),
+            BazelSkyframeExecutorConstants.BUILD_FILES_BY_PRIORITY),
         packageCacheOptions,
         skylarkSemanticsOptions,
         "",
@@ -295,10 +302,11 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
 
   protected final BuildConfigurationCollection createConfigurations(String... args)
       throws Exception {
-    optionsParser = OptionsParser.newOptionsParser(Iterables.concat(Arrays.asList(
-          ExecutionOptions.class,
-          BuildRequest.BuildRequestOptions.class),
-          ruleClassProvider.getConfigurationOptions()));
+    optionsParser =
+        OptionsParser.newOptionsParser(
+            Iterables.concat(
+                Arrays.asList(ExecutionOptions.class, BuildRequestOptions.class),
+                ruleClassProvider.getConfigurationOptions()));
     List<String> allArgs = new ArrayList<>();
     // TODO(dmarting): Add --stamp option only to test that requires it.
     allArgs.add("--stamp");  // Stamp is now defaulted to false.
@@ -351,8 +359,14 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
   }
 
   private void setUpSkyframe() {
-    PathPackageLocator pkgLocator = PathPackageLocator.create(
-        outputBase, packageCacheOptions.packagePath, reporter, rootDirectory, rootDirectory);
+    PathPackageLocator pkgLocator =
+        PathPackageLocator.create(
+            outputBase,
+            packageCacheOptions.packagePath,
+            reporter,
+            rootDirectory,
+            rootDirectory,
+            BazelSkyframeExecutorConstants.BUILD_FILES_BY_PRIORITY);
     packageCacheOptions.showLoadingProgress = true;
     packageCacheOptions.globbingThreads = 7;
     skyframeExecutor.preparePackageLoading(
@@ -484,6 +498,7 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
   protected CachingAnalysisEnvironment getTestAnalysisEnvironment() {
     return new CachingAnalysisEnvironment(
         view.getArtifactFactory(),
+        actionKeyContext,
         ArtifactOwner.NULL_OWNER,
         /*isSystemEnv=*/ true, /*extendedSanityChecks*/
         false,
@@ -989,9 +1004,8 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
   /**
    * Gets a derived Artifact for testing in the {@link BuildConfiguration#getBinDirectory}. This
    * method should only be used for tests that do no analysis, and so there is no ConfiguredTarget
-   * to own this artifact. If the test runs the analysis phase, {@link
-   * #getBinArtifact(String, ArtifactOwner)} or its convenience methods should be
-   * used instead.
+   * to own this artifact. If the test runs the analysis phase, {@link #getBinArtifact(String,
+   * ConfiguredTarget)} or its convenience methods should be used instead.
    */
   protected Artifact getBinArtifactWithNoOwner(String rootRelativePath) {
     return getDerivedArtifact(PathFragment.create(rootRelativePath),
@@ -1069,7 +1083,8 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
    * Gets a derived Artifact for testing in the {@link BuildConfiguration#getGenfilesDirectory}.
    * This method should only be used for tests that do no analysis, and so there is no
    * ConfiguredTarget to own this artifact. If the test runs the analysis phase, {@link
-   * #getGenfilesArtifact(String, ArtifactOwner)} or its convenience methods should be used instead.
+   * #getGenfilesArtifact(String, ConfiguredTarget)} or its convenience methods should be used
+   * instead.
    */
   protected Artifact getGenfilesArtifactWithNoOwner(String rootRelativePath) {
     return getDerivedArtifact(PathFragment.create(rootRelativePath),
@@ -1749,6 +1764,11 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
     public ImmutableSet<Artifact> getOrphanArtifacts() {
       throw new UnsupportedOperationException();
     }
+
+    @Override
+    public ActionKeyContext getActionKeyContext() {
+      return actionKeyContext;
+    }
   }
 
   protected Iterable<String> baselineCoverageArtifactBasenames(ConfiguredTarget target)
@@ -1898,7 +1918,7 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
 
     RawAttributeMapper attr = RawAttributeMapper.of(associatedRule);
 
-    String path = Iterables.getOnlyElement(outputFunction.getImplicitOutputs(attr));
+    String path = Iterables.getOnlyElement(outputFunction.getImplicitOutputs(eventCollector, attr));
 
     return view.getArtifactFactory()
         .getDerivedArtifact(

@@ -17,6 +17,7 @@ package com.google.devtools.build.lib.analysis;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
+import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
 import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableBiMap;
@@ -48,6 +49,7 @@ import com.google.devtools.build.lib.analysis.config.FragmentCollection;
 import com.google.devtools.build.lib.analysis.config.PatchTransition;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.fileset.FilesetProvider;
+import com.google.devtools.build.lib.analysis.stringtemplate.TemplateContext;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.RepositoryName;
 import com.google.devtools.build.lib.collect.ImmutableSortedKeyListMultimap;
@@ -72,7 +74,7 @@ import com.google.devtools.build.lib.packages.Info;
 import com.google.devtools.build.lib.packages.InputFile;
 import com.google.devtools.build.lib.packages.NativeProvider;
 import com.google.devtools.build.lib.packages.OutputFile;
-import com.google.devtools.build.lib.packages.PackageSpecification;
+import com.google.devtools.build.lib.packages.PackageSpecification.PackageGroupContents;
 import com.google.devtools.build.lib.packages.RawAttributeMapper;
 import com.google.devtools.build.lib.packages.RequiredProviders;
 import com.google.devtools.build.lib.packages.Rule;
@@ -86,7 +88,6 @@ import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.syntax.Type.LabelClass;
 import com.google.devtools.build.lib.util.FileTypeSet;
 import com.google.devtools.build.lib.util.OrderedSetMultimap;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.util.StringUtil;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.PathFragment;
@@ -954,8 +955,8 @@ public final class RuleContext extends TargetContext
     initConfigurationMakeVariableContext(ImmutableList.copyOf(makeVariableSuppliers));
   }
 
-  public Expander getExpander(ConfigurationMakeVariableContext makeVariableContext) {
-    return new Expander(this, makeVariableContext);
+  public Expander getExpander(TemplateContext templateContext) {
+    return new Expander(this, templateContext);
   }
 
   public Expander getExpander() {
@@ -963,20 +964,20 @@ public final class RuleContext extends TargetContext
   }
 
   public ImmutableMap<String, String> getMakeVariables(Iterable<String> attributeNames) {
-    ArrayList<MakeVariableInfo> makeVariableInfos = new ArrayList<>();
+    ArrayList<TemplateVariableInfo> templateVariableInfos = new ArrayList<>();
 
     for (String attributeName : attributeNames) {
       // TODO(b/37567440): Remove this continue statement.
       if (!attributes().has(attributeName)) {
         continue;
       }
-      Iterables.addAll(makeVariableInfos, getPrerequisites(
-          attributeName, Mode.DONT_CHECK, MakeVariableInfo.PROVIDER));
+      Iterables.addAll(templateVariableInfos, getPrerequisites(
+          attributeName, Mode.DONT_CHECK, TemplateVariableInfo.PROVIDER));
     }
 
     LinkedHashMap<String, String> makeVariables = new LinkedHashMap<>();
-    for (MakeVariableInfo makeVariableInfo : makeVariableInfos) {
-      makeVariables.putAll(makeVariableInfo.getMakeVariables());
+    for (TemplateVariableInfo templateVariableInfo : templateVariableInfos) {
+      makeVariables.putAll(templateVariableInfo.getVariables());
     }
 
     return ImmutableMap.copyOf(makeVariables);
@@ -1210,7 +1211,9 @@ public final class RuleContext extends TargetContext
       throws InterruptedException {
     Iterable<String> result;
     try {
-      result = function.getImplicitOutputs(RawAttributeMapper.of(rule));
+      result =
+          function.getImplicitOutputs(
+              getAnalysisEnvironment().getEventHandler(), RawAttributeMapper.of(rule));
     } catch (EvalException e) {
       // It's ok as long as we don't use this method from Skylark.
       throw new IllegalStateException(e);
@@ -1302,8 +1305,8 @@ public final class RuleContext extends TargetContext
    */
   public static boolean isVisible(Rule rule, TransitiveInfoCollection prerequisite) {
     // Check visibility attribute
-    for (PackageSpecification specification :
-      prerequisite.getProvider(VisibilityProvider.class).getVisibility()) {
+    for (PackageGroupContents specification :
+        prerequisite.getProvider(VisibilityProvider.class).getVisibility()) {
       if (specification.containsPackage(rule.getLabel().getPackageIdentifier())) {
         return true;
       }
@@ -1338,7 +1341,7 @@ public final class RuleContext extends TargetContext
     private final ErrorReporter reporter;
     private OrderedSetMultimap<Attribute, ConfiguredTarget> prerequisiteMap;
     private ImmutableMap<Label, ConfigMatchingProvider> configConditions;
-    private NestedSet<PackageSpecification> visibility;
+    private NestedSet<PackageGroupContents> visibility;
     private ImmutableMap<String, Attribute> aspectAttributes;
     private ImmutableList<AspectDescriptor> aspectDescriptors;
     private ToolchainContext toolchainContext;
@@ -1386,7 +1389,7 @@ public final class RuleContext extends TargetContext
       rule.getRuleClassObject().checkAttributesNonEmpty(rule, reporter, attributes);
     }
 
-    Builder setVisibility(NestedSet<PackageSpecification> visibility) {
+    Builder setVisibility(NestedSet<PackageGroupContents> visibility) {
       this.visibility = visibility;
       return this;
     }

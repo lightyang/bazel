@@ -13,6 +13,7 @@
 // limitations under the License.
 package com.google.devtools.build.lib.rules.android;
 
+import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.common.truth.Truth.assertThat;
 import static com.google.common.truth.Truth.assertWithMessage;
@@ -40,6 +41,8 @@ import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.cmdline.RepositoryName;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.packages.BuildType;
+import com.google.devtools.build.lib.packages.FileTarget;
+import com.google.devtools.build.lib.packages.Rule;
 import com.google.devtools.build.lib.packages.util.BazelMockAndroidSupport;
 import com.google.devtools.build.lib.rules.android.AndroidRuleClasses.MultidexMode;
 import com.google.devtools.build.lib.rules.android.deployinfo.AndroidDeployInfoOuterClass.AndroidDeployInfo;
@@ -52,6 +55,7 @@ import com.google.devtools.build.lib.testutil.MoreAsserts;
 import com.google.devtools.build.lib.util.FileType;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -101,7 +105,7 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
 
     scratch.file(
         "test/skylark/BUILD",
-        "load('/test/skylark/my_rule', 'my_rule')",
+        "load('//test/skylark:my_rule.bzl', 'my_rule')",
         "my_rule(name = 'test', deps = [':main'], dep = ':main')",
         "cc_binary(name = 'main', srcs = ['main.c'])");
     BazelMockAndroidSupport.setupNdk(mockToolsConfig);
@@ -114,7 +118,7 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
         expectThrows(AssertionError.class, () -> getConfiguredTarget("//test/skylark:test"));
     assertThat(noToolchainError)
         .hasMessageThat()
-        .contains("No toolchain found for cpu 'doesnotexist'");
+        .contains("No default_toolchain found for cpu 'doesnotexist'");
   }
 
   @Test
@@ -187,7 +191,7 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
 
     Artifact jarShard = artifactByPath(
         ImmutableList.of(getCompressedUnsignedApk(getConfiguredTarget("//java/a:a"))),
-        ".apk", "classes.dex.zip", "shard1.dex.zip", "shard1.jar");
+        ".apk", "classes.dex.zip", "shard1.dex.zip", "shard1.jar.dex.zip");
     Iterable<Artifact> shardInputs = getGeneratingAction(jarShard).getInputs();
     assertThat(getFirstArtifactEndingWith(shardInputs, ".txt")).isNull();
   }
@@ -405,7 +409,6 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
         "               srcs = ['A.java'],",
         "               deps = [':native', '//java/android/common:common'],",
         "               manifest = 'AndroidManifest.xml',",
-        "               legacy_native_support = 0,",
         "              )");
   }
 
@@ -530,8 +533,6 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
   @Test
   public void testIncrementalDexingUsesDexArchives_binaryDependingOnAliasTarget()
       throws Exception {
-    useConfiguration("--incremental_dexing", "--incremental_dexing_binary_types=all",
-        "--experimental_desugar_for_android");
     scratch.file(
         "java/com/google/android/BUILD",
         "android_library(",
@@ -581,8 +582,7 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
             "libtop.jar.dex.zip",
             "top_resources.jar.dex.zip",
             // dep's dex archives
-            "libdep.jar.dex.zip",
-            "dep_resources.jar.dex.zip");
+            "libdep.jar.dex.zip");
   }
 
   @Test
@@ -615,7 +615,6 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
 
   @Test
   public void testIncrementalDexingDisabledWithProguard() throws Exception {
-    useConfiguration("--incremental_dexing", "--incremental_dexing_binary_types=all");
     scratch.file(
         "java/com/google/android/BUILD",
         "android_binary(",
@@ -645,6 +644,150 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
         "  proguard_specs = ['proguard.cfg'],",
         "  incremental_dexing = 1,",
         ")");
+  }
+
+  @Test
+  public void testIncrementalDexingAfterProguard_unsharded() throws Exception {
+    useConfiguration("--experimental_incremental_dexing_after_proguard=1");
+    // Use "legacy" multidex mode so we get a main dex list file and can test that it's passed to
+    // the splitter action (similar to _withDexShards below), unlike without the dex splitter where
+    // the main dex list goes to the merging action.
+    scratch.file(
+        "java/com/google/android/BUILD",
+        "android_binary(",
+        "  name = 'top',",
+        "  srcs = ['foo.java', 'bar.srcjar'],",
+        "  manifest = 'AndroidManifest.xml',",
+        "  incremental_dexing = 1,",
+        "  multidex = 'legacy',",
+        "  dexopts = ['--minimal-main-dex', '--positions=none'],",
+        "  proguard_specs = ['b.pro'],",
+        ")");
+
+    ConfiguredTarget topTarget = getConfiguredTarget("//java/com/google/android:top");
+    assertNoEvents();
+
+    SpawnAction shardAction =
+        getGeneratingSpawnAction(getBinArtifact("_dx/top/classes.dex.zip", topTarget));
+    assertThat(shardAction.getArguments()).contains("--main-dex-list");
+    assertThat(shardAction.getArguments()).contains("--minimal-main-dex");
+    assertThat(ActionsTestUtil.baseArtifactNames(getNonToolInputs(shardAction)))
+        .containsExactly("classes.jar", "main_dex_list.txt");
+
+    // --positions dexopt is supported after Proguard, even though not normally otherwise
+    assertThat(
+            findParamsFileAction(
+                    getGeneratingSpawnAction(getBinArtifact("_dx/top/classes.jar", topTarget)))
+                .getContents())
+        .contains("--positions=none");
+  }
+
+  @Test
+  public void testIncrementalDexingAfterProguard_autoShardedMultidex() throws Exception {
+    useConfiguration("--experimental_incremental_dexing_after_proguard=3");
+    // Use "legacy" multidex mode so we get a main dex list file and can test that it's passed to
+    // the splitter action (similar to _withDexShards below), unlike without the dex splitter where
+    // the main dex list goes to the merging action.
+    scratch.file(
+        "java/com/google/android/BUILD",
+        "android_binary(",
+        "  name = 'top',",
+        "  srcs = ['foo.java', 'bar.srcjar'],",
+        "  manifest = 'AndroidManifest.xml',",
+        "  incremental_dexing = 1,",
+        "  multidex = 'legacy',",
+        "  dexopts = ['--minimal-main-dex', '--positions=none'],",
+        "  proguard_specs = ['b.pro'],",
+        ")");
+
+    ConfiguredTarget topTarget = getConfiguredTarget("//java/com/google/android:top");
+    assertNoEvents();
+
+    SpawnAction splitAction =
+        getGeneratingSpawnAction(getBinArtifact("dexsplits/top", topTarget));
+    assertThat(splitAction.getArguments()).contains("--main-dex-list");
+    assertThat(splitAction.getArguments()).contains("--minimal-main-dex");
+    assertThat(ActionsTestUtil.baseArtifactNames(getNonToolInputs(splitAction)))
+        .containsExactly("shard1.jar.dex.zip", "shard2.jar.dex.zip", "shard3.jar.dex.zip",
+              "main_dex_list.txt");
+
+    SpawnAction shuffleAction =
+        getGeneratingSpawnAction(getBinArtifact("_dx/top/shard1.jar", topTarget));
+    assertThat(shuffleAction.getArguments()).doesNotContain("--main-dex-list");
+    assertThat(ActionsTestUtil.baseArtifactNames(getNonToolInputs(shuffleAction)))
+        .containsExactly("top_proguard.jar");
+
+    // --positions dexopt is supported after Proguard, even though not normally otherwise
+    assertThat(
+            findParamsFileAction(
+                    getGeneratingSpawnAction(
+                        getBinArtifact("_dx/top/shard3.jar.dex.zip", topTarget)))
+                .getContents())
+        .contains("--positions=none");
+  }
+
+  @Test
+  public void testIncrementalDexingAfterProguard_explicitDexShards() throws Exception {
+    useConfiguration("--experimental_incremental_dexing_after_proguard=2");
+    // Use "legacy" multidex mode so we get a main dex list file and can test that it's passed to
+    // the shardAction, not to the subsequent dexMerger action.  Without dex_shards, main dex list
+    // file goes to the dexMerger instead (see _multidex test).
+    scratch.file(
+        "java/com/google/android/BUILD",
+        "android_binary(",
+        "  name = 'top',",
+        "  srcs = ['foo.java', 'bar.srcjar'],",
+        "  manifest = 'AndroidManifest.xml',",
+        "  dex_shards = 25,",
+        "  incremental_dexing = 1,",
+        "  multidex = 'legacy',",
+        "  proguard_specs = ['b.pro'],",
+        ")");
+
+    ConfiguredTarget topTarget = getConfiguredTarget("//java/com/google/android:top");
+    assertNoEvents();
+    SpawnAction shardAction =
+        getGeneratingSpawnAction(getBinArtifact("_dx/top/shard25.jar", topTarget));
+    assertThat(shardAction.getArguments()).contains("--main_dex_filter");
+    assertThat(ActionsTestUtil.baseArtifactNames(getNonToolInputs(shardAction)))
+        .containsExactly("top_proguard.jar", "main_dex_list.txt");
+    SpawnAction mergeAction =
+        getGeneratingSpawnAction(getBinArtifact("_dx/top/shard1.jar.dex.zip", topTarget));
+    assertThat(mergeAction.getArguments()).doesNotContain("--main-dex-list");
+    assertThat(ActionsTestUtil.baseArtifactNames(getNonToolInputs(mergeAction)))
+        .containsExactly("shard1.jar", "shard1.jar.dex.zip-2.params");
+  }
+
+  @Test
+  public void testIncrementalDexingAfterProguard_autoShardedMonodex()
+      throws Exception {
+    useConfiguration("--experimental_incremental_dexing_after_proguard=3");
+    // Use "legacy" multidex mode so we get a main dex list file and can test that it's passed to
+    // the splitter action (similar to _withDexShards below), unlike without the dex splitter where
+    // the main dex list goes to the merging action.
+    scratch.file(
+        "java/com/google/android/BUILD",
+        "android_binary(",
+        "  name = 'top',",
+        "  srcs = ['foo.java', 'bar.srcjar'],",
+        "  manifest = 'AndroidManifest.xml',",
+        "  incremental_dexing = 1,",
+        "  multidex = 'off',",
+        "  proguard_specs = ['b.pro'],",
+        ")");
+
+    ConfiguredTarget topTarget = getConfiguredTarget("//java/com/google/android:top");
+    assertNoEvents();
+    SpawnAction mergeAction =
+        getGeneratingSpawnAction(getBinArtifact("_dx/top/classes.dex.zip", topTarget));
+    assertThat(mergeAction.getArguments()).doesNotContain("--main-dex-list");
+    assertThat(ActionsTestUtil.baseArtifactNames(getNonToolInputs(mergeAction)))
+        .containsExactly("shard1.jar.dex.zip", "shard2.jar.dex.zip", "shard3.jar.dex.zip");
+    SpawnAction shuffleAction =
+        getGeneratingSpawnAction(getBinArtifact("_dx/top/shard1.jar", topTarget));
+    assertThat(shuffleAction.getArguments()).doesNotContain("--main-dex-list");
+    assertThat(ActionsTestUtil.baseArtifactNames(getNonToolInputs(shuffleAction)))
+        .containsExactly("top_proguard.jar");
   }
 
   @Test
@@ -742,6 +885,44 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
         .isEqualTo(flagValue("--rOutput", processingArgs));
     assertThat(flagValue("--primaryManifest", shrinkingArgs))
         .isEqualTo(flagValue("--manifestOutput", processingArgs));
+
+    List<String> packageArgs =
+        getGeneratingSpawnActionArgs(getFirstArtifactEndingWith(artifacts, "_hello_proguard.cfg"));
+
+    assertThat(flagValue("--tool", packageArgs)).isEqualTo("PACKAGE");
+    assertThat(packageArgs).doesNotContain("--conditionalKeepRules");
+  }
+
+  @Test
+  public void testResourceCycleShrinking() throws Exception {
+    useConfiguration("--experimental_android_resource_cycle_shrinking=true");
+    checkError(
+        "java/a",
+        "a",
+        "resource cycle shrinking can only be enabled for builds with aapt2",
+        "android_binary(",
+        "    name = 'a',",
+        "    srcs = ['A.java'],",
+        "    manifest = 'AndroidManifest.xml',",
+        "    resource_files = [ 'res/values/values.xml' ], ",
+        "    shrink_resources = 1,",
+        ")");
+  }
+
+  @Test
+  public void testResourceCycleShrinkingWithoutResourceShinking() throws Exception {
+    useConfiguration("--experimental_android_resource_cycle_shrinking=true");
+    checkError(
+        "java/a",
+        "a",
+        "resource cycle shrinking can only be enabled when resource shrinking is enabled",
+        "android_binary(",
+        "    name = 'a',",
+        "    srcs = ['A.java'],",
+        "    manifest = 'AndroidManifest.xml',",
+        "    resource_files = [ 'res/values/values.xml' ], ",
+        "    shrink_resources = 0,",
+        ")");
   }
 
   @Test
@@ -838,9 +1019,14 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
 
   @Test
   public void testNeverlinkTransitivity() throws Exception {
-    scratch.file("java/com/google/android/neversayneveragain/BUILD",
+    useConfiguration("--android_fixed_resource_neverlinking");
+
+    scratch.file(
+        "java/com/google/android/neversayneveragain/BUILD",
         "android_library(name = 'l1',",
-        "                srcs = ['l1.java'])",
+        "                srcs = ['l1.java'],",
+        "                manifest = 'AndroidManifest.xml',",
+        "                resource_files = ['res/values/resource.xml'])",
         "android_library(name = 'l2',",
         "                srcs = ['l2.java'],",
         "                deps = [':l1'],",
@@ -875,6 +1061,10 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
         "java/com/google/android/neversayneveragain/libl4.jar_desugared.jar");
     assertThat(b1Inputs).contains(
         "java/com/google/android/neversayneveragain/libb1.jar_desugared.jar");
+    assertThat(
+            resourceInputPaths(
+                "java/com/google/android/neversayneveragain", getResourceContainer(b1)))
+        .doesNotContain("res/values/resource.xml");
 
     ConfiguredTarget b2 = getConfiguredTarget("//java/com/google/android/neversayneveragain:b2");
     Action b2DeployAction = actionsTestUtil().getActionForArtifactEndingWith(
@@ -888,6 +1078,10 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
     assertThat(b2Inputs).containsAllOf(
         "java/com/google/android/neversayneveragain/_dx/l3/libl3.jar_desugared.jar",
         "java/com/google/android/neversayneveragain/libb2.jar_desugared.jar");
+    assertThat(
+        resourceInputPaths(
+            "java/com/google/android/neversayneveragain", getResourceContainer(b2)))
+        .doesNotContain("res/values/resource.xml");
 
     ConfiguredTarget b3 = getConfiguredTarget("//java/com/google/android/neversayneveragain:b3");
     Action b3DeployAction = actionsTestUtil().getActionForArtifactEndingWith(
@@ -901,6 +1095,10 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
         "java/com/google/android/neversayneveragain/libb3.jar_desugared.jar");
     assertThat(b3Inputs)
         .doesNotContain("java/com/google/android/neversayneveragain/libl2.jar_desugared.jar");
+    assertThat(
+        resourceInputPaths(
+            "java/com/google/android/neversayneveragain", getResourceContainer(b3)))
+        .contains("res/values/resource.xml");
   }
 
   @Test
@@ -1434,20 +1632,14 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
     assertThat(resourceInputPaths(dir, directResources)).containsAllIn(expectedResources);
     assertThat(resourceInputPaths(dir, directResources)).containsNoneIn(unexpectedResources);
 
-    if (expectedFiltered.isEmpty()) {
-      assertThat(resourceArguments(directResources)).doesNotContain("--prefilteredResources");
-    } else {
-      String[] flagValues =
-          flagValue("--prefilteredResources", resourceArguments(directResources)).split(",");
-      assertThat(flagValues).asList().containsAllIn(expectedFiltered);
-      assertThat(flagValues).hasLength(expectedFiltered.size());
-    }
+    // Only transitive resources need to be ignored when filtered,, and there aren't any here.
+    assertThat(resourceArguments(directResources)).doesNotContain("--prefilteredResources");
 
     // Validate resource filters are not passed to execution, since they were applied in analysis
     List<String> args = resourceArguments(directResources);
     assertThat(args)
-        .doesNotContain(ResourceFilter.RESOURCE_CONFIGURATION_FILTERS_NAME);
-    assertThat(args).doesNotContain(ResourceFilter.DENSITIES_NAME);
+        .doesNotContain(ResourceFilterFactory.RESOURCE_CONFIGURATION_FILTERS_NAME);
+    assertThat(args).doesNotContain(ResourceFilterFactory.DENSITIES_NAME);
     if (densities.isEmpty()) {
       assertThat(args).doesNotContain("--densitiesForManifest");
     } else {
@@ -1496,6 +1688,54 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
     String[] flagValues =
         flagValue("--prefilteredResources", resourceArguments(directResources)).split(",");
     assertThat(flagValues).asList().containsExactly("values-fr/foo.xml");
+  }
+
+  @Test
+  public void testFilteredTransitiveResourcesDifferentDensities() throws Exception {
+    String dir = "java/r/android";
+
+    useConfiguration("--experimental_android_resource_filtering_method", "filter_in_analysis");
+
+    ConfiguredTarget binary =
+        scratchConfiguredTarget(
+            dir,
+            "bin",
+            "android_binary(name = 'bin',",
+            "  manifest = 'AndroidManifest.xml',",
+            "  resource_configuration_filters = ['en'],",
+            "  densities = ['hdpi'],",
+            "  deps = [':invalid', ':best', ':other', ':multiple'],",
+            ")",
+            "android_library(name = 'invalid',",
+            "  manifest = 'AndroidManifest.xml',",
+            "  resource_files = ['invalid/res/drawable-fr-hdpi/foo.png'],",
+            ")",
+            "android_library(name = 'best',",
+            "  manifest = 'AndroidManifest.xml',",
+            "  resource_files = ['best/res/drawable-en-hdpi/foo.png'],",
+            ")",
+            "android_library(name = 'other',",
+            "  manifest = 'AndroidManifest.xml',",
+            "  resource_files = ['other/res/drawable-en-mdpi/foo.png'],",
+            ")",
+            "android_library(name = 'multiple',",
+            "  manifest = 'AndroidManifest.xml',",
+            "  resource_files = [",
+            "    'multiple/res/drawable-en-hdpi/foo.png',",
+            "    'multiple/res/drawable-en-mdpi/foo.png'],",
+            ")");
+
+    ResourceContainer directResources = getResourceContainer(binary, /* transitive= */ false);
+
+    // All of the resources are transitive
+    assertThat(resourceContentsPaths(dir, directResources)).isEmpty();
+
+    // Only the best matches should be used. This includes multiple best matches, even given a
+    // single density filter, since they are each from a different dependency. This duplication
+    // would be resolved during merging.
+    assertThat(resourceInputPaths(dir, directResources))
+        .containsExactly(
+            "best/res/drawable-en-hdpi/foo.png", "multiple/res/drawable-en-hdpi/foo.png");
   }
 
   @Test
@@ -1726,9 +1966,6 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
         "               srcs =['bin.java'],",
         "               )");
 
-    // TODO(b/37087277): Remove this once this behavior is the default
-    useConfiguration("--noexperimental_android_include_library_resource_jars");
-
     Action deployJarAction =
         getGeneratingAction(
             getFileConfiguredTarget("//java/r/android:bin_deploy.jar").getArtifact());
@@ -1742,46 +1979,6 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
             "bin_resources.jar_desugared.jar");
     assertThat(inputs)
         .containsNoneOf("lib_resources.jar_desugared.jar", "sublib_resources.jar_desugared.jar");
-  }
-
-  @Test
-  public void testInheritedRInRuntimeJarsWhenSpecified() throws Exception {
-    String dir = "java/r/android/";
-    scratch.file(
-        dir + "BUILD",
-        "android_library(name = 'sublib',",
-        "                manifest = 'AndroidManifest.xml',",
-        "                resource_files = glob(['res3/**']),",
-        "                srcs =['sublib.java'],",
-        "                )",
-        "android_library(name = 'lib',",
-        "                manifest = 'AndroidManifest.xml',",
-        "                resource_files = glob(['res2/**']),",
-        "                deps = [':sublib'],",
-        "                srcs =['lib.java'],",
-        "                )",
-        "android_binary(name = 'bin',",
-        "               manifest = 'AndroidManifest.xml',",
-        "               resource_files = glob(['res/**']),",
-        "               deps = [':lib'],",
-        "               srcs =['bin.java'],",
-        "               )");
-
-    useConfiguration("--experimental_android_include_library_resource_jars");
-
-    Action deployJarAction =
-        getGeneratingAction(
-            getFileConfiguredTarget("//java/r/android:bin_deploy.jar").getArtifact());
-    List<String> inputs = ActionsTestUtil.baseArtifactNames(deployJarAction.getInputs());
-
-    assertThat(inputs)
-        .containsAllOf(
-            "libsublib.jar_desugared.jar",
-            "liblib.jar_desugared.jar",
-            "libbin.jar_desugared.jar",
-            "bin_resources.jar_desugared.jar",
-            "lib_resources.jar_desugared.jar",
-            "sublib_resources.jar_desugared.jar");
   }
 
   @Test
@@ -1974,7 +2171,6 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
         "/AndroidManifest.xml");
     assertThat(deployInfo.getAdditionalMergedManifestsList()).isEmpty();
     assertThat(deployInfo.getApksToDeploy(0).getExecRootPath()).endsWith("/app.apk");
-    assertThat(deployInfo.getDataToDeployList()).isEmpty();
   }
 
   /**
@@ -2331,17 +2527,24 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
   // regression test for b/14288948
   @Test
   public void testEmptyListAsProguardSpec() throws Exception {
-    scratchConfiguredTarget("java/foo", "abin",
+    scratch.file(
+        "java/foo/BUILD",
         "android_binary(",
         "    name = 'abin',",
         "    srcs = ['a.java'],",
         "    proguard_specs = [],",
         "    manifest = 'AndroidManifest.xml')");
+    Rule rule = getTarget("//java/foo:abin").getAssociatedRule();
+    assertNoEvents();
+    ImmutableList<String> implicitOutputFilenames =
+        rule.getOutputFiles().stream().map(FileTarget::getName).collect(toImmutableList());
+    assertThat(implicitOutputFilenames).doesNotContain("abin_proguard.jar");
   }
 
   @Test
   public void testConfigurableProguardSpecsEmptyList() throws Exception {
-    scratchConfiguredTarget("java/foo", "abin",
+    scratch.file(
+        "java/foo/BUILD",
         "android_binary(",
         "    name = 'abin',",
         "    srcs = ['a.java'],",
@@ -2349,7 +2552,11 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
         "        '" + BuildType.Selector.DEFAULT_CONDITION_KEY + "': [],",
         "    }),",
         "    manifest = 'AndroidManifest.xml')");
+    Rule rule = getTarget("//java/foo:abin").getAssociatedRule();
     assertNoEvents();
+    ImmutableList<String> implicitOutputFilenames =
+        rule.getOutputFiles().stream().map(FileTarget::getName).collect(toImmutableList());
+    assertThat(implicitOutputFilenames).contains("abin_proguard.jar");
   }
 
   @Test
@@ -3167,8 +3374,7 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
         ")");
   }
 
-  @Test
-  public void testAapt2WithAndroidSdk() throws Exception {
+  private void mockAndroidSdkWithAapt2() throws IOException {
     scratch.file(
         "sdk/BUILD",
         "android_sdk(",
@@ -3187,7 +3393,11 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
         "    proguard = 'proguard',",
         "    shrinked_android_jar = 'shrinked_android_jar',",
         "    zipalign = 'zipalign')");
+  }
 
+  @Test
+  public void testAapt2WithAndroidSdk() throws Exception {
+    mockAndroidSdkWithAapt2();
     scratch.file(
         "java/a/BUILD",
         "android_binary(",
@@ -3208,25 +3418,7 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
 
   @Test
   public void testAapt2WithAndroidSdkAndDependencies() throws Exception {
-    scratch.file(
-        "sdk/BUILD",
-        "android_sdk(",
-        "    name = 'sdk',",
-        "    aapt = 'aapt',",
-        "    aapt2 = 'aapt2',",
-        "    adb = 'adb',",
-        "    aidl = 'aidl',",
-        "    android_jar = 'android.jar',",
-        "    annotations_jar = 'annotations_jar',",
-        "    apksigner = 'apksigner',",
-        "    dx = 'dx',",
-        "    framework_aidl = 'framework_aidl',",
-        "    main_dex_classes = 'main_dex_classes',",
-        "    main_dex_list_creator = 'main_dex_list_creator',",
-        "    proguard = 'proguard',",
-        "    shrinked_android_jar = 'shrinked_android_jar',",
-        "    zipalign = 'zipalign')");
-
+    mockAndroidSdkWithAapt2();
     scratch.file(
         "java/b/BUILD",
         "android_library(",
@@ -3272,25 +3464,7 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
 
   @Test
   public void testAapt2ResourceShrinkingAction() throws Exception {
-    scratch.file(
-        "sdk/BUILD",
-        "android_sdk(",
-        "    name = 'sdk',",
-        "    aapt = 'aapt',",
-        "    aapt2 = 'aapt2',",
-        "    adb = 'adb',",
-        "    aidl = 'aidl',",
-        "    android_jar = 'android.jar',",
-        "    annotations_jar = 'annotations_jar',",
-        "    apksigner = 'apksigner',",
-        "    dx = 'dx',",
-        "    framework_aidl = 'framework_aidl',",
-        "    main_dex_classes = 'main_dex_classes',",
-        "    main_dex_list_creator = 'main_dex_list_creator',",
-        "    proguard = 'proguard',",
-        "    shrinked_android_jar = 'shrinked_android_jar',",
-        "    zipalign = 'zipalign')");
-
+    mockAndroidSdkWithAapt2();
     scratch.file(
         "java/com/google/android/hello/BUILD",
         "android_binary(name = 'hello',",
@@ -3340,6 +3514,58 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
         .isEqualTo(flagValue("--rOutput", processingArgs));
     assertThat(flagValue("--primaryManifest", shrinkingArgs))
         .isEqualTo(flagValue("--manifestOutput", processingArgs));
+
+    List<String> packageArgs =
+        getGeneratingSpawnActionArgs(getFirstArtifactEndingWith(artifacts, "_hello_proguard.cfg"));
+
+    assertThat(flagValue("--tool", packageArgs)).isEqualTo("AAPT2_PACKAGE");
+    assertThat(packageArgs).doesNotContain("--conditionalKeepRules");
+  }
+
+  @Test
+  public void testAapt2ResourceCycleShrinking() throws Exception {
+    mockAndroidSdkWithAapt2();
+    useConfiguration(
+        "--android_sdk=//sdk:sdk", "--experimental_android_resource_cycle_shrinking=true");
+    scratch.file(
+        "java/com/google/android/hello/BUILD",
+        "android_binary(name = 'hello',",
+        "               srcs = ['Foo.java'],",
+        "               manifest = 'AndroidManifest.xml',",
+        "               inline_constants = 0,",
+        "               aapt_version='aapt2',",
+        "               resource_files = ['res/values/strings.xml'],",
+        "               shrink_resources = 1,",
+        "               proguard_specs = ['proguard-spec.pro'],)");
+
+    ConfiguredTarget binary = getConfiguredTarget("//java/com/google/android/hello:hello");
+
+    Set<Artifact> artifacts = actionsTestUtil().artifactClosureOf(getFilesToBuild(binary));
+
+    List<String> packageArgs =
+        getGeneratingSpawnActionArgs(getFirstArtifactEndingWith(artifacts, "_hello_proguard.cfg"));
+
+    assertThat(flagValue("--tool", packageArgs)).isEqualTo("AAPT2_PACKAGE");
+    assertThat(packageArgs).contains("--conditionalKeepRules");
+  }
+
+  @Test
+  public void testAapt2ResourceCycleShinkingWithoutResourceShrinking() throws Exception {
+    mockAndroidSdkWithAapt2();
+    useConfiguration(
+        "--android_sdk=//sdk:sdk", "--experimental_android_resource_cycle_shrinking=true");
+    checkError(
+        "java/a",
+        "a",
+        "resource cycle shrinking can only be enabled when resource shrinking is enabled",
+        "android_binary(",
+        "    name = 'a',",
+        "    srcs = ['A.java'],",
+        "    manifest = 'AndroidManifest.xml',",
+        "    resource_files = [ 'res/values/values.xml' ], ",
+        "    shrink_resources = 0,",
+        "    aapt_version = 'aapt2'",
+        ")");
   }
 
   @Test
@@ -3777,5 +4003,170 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
         getFilesToBuild(binary), "_proguard.jar");
 
     checkProguardLibJars(action, getAndroidJarPath());
+  }
+
+  @Test
+  public void testInstrumentationInfoProviderHasApks() throws Exception {
+    scratch.file(
+        "java/com/google/android/instr/BUILD",
+        "android_binary(name = 'b1',",
+        "               srcs = ['b1.java'],",
+        "               instruments = ':b2',",
+        "               manifest = 'AndroidManifest.xml')",
+        "android_binary(name = 'b2',",
+        "               srcs = ['b2.java'],",
+        "               manifest = 'AndroidManifest.xml')");
+    ConfiguredTarget b1 = getConfiguredTarget("//java/com/google/android/instr:b1");
+    AndroidInstrumentationInfo provider = b1.get(AndroidInstrumentationInfo.PROVIDER);
+    assertThat(provider.getTargetApk()).isNotNull();
+    assertThat(provider.getTargetApk().prettyPrint())
+        .isEqualTo("java/com/google/android/instr/b2.apk");
+    assertThat(provider.getInstrumentationApk()).isNotNull();
+    assertThat(provider.getInstrumentationApk().prettyPrint())
+        .isEqualTo("java/com/google/android/instr/b1.apk");
+  }
+
+  @Test
+  public void testNoInstrumentationInfoProviderIfNotInstrumenting() throws Exception {
+    scratch.file(
+        "java/com/google/android/instr/BUILD",
+        "android_binary(name = 'b1',",
+        "               srcs = ['b1.java'],",
+        "               manifest = 'AndroidManifest.xml')");
+    ConfiguredTarget b1 = getConfiguredTarget("//java/com/google/android/instr:b1");
+    AndroidInstrumentationInfo provider = b1.get(AndroidInstrumentationInfo.PROVIDER);
+    assertThat(provider).isNull();
+  }
+
+  /**
+   * 'proguard_specs' attribute gets read by an implicit outputs function: the
+   * current heuristic is that if this attribute is configurable, we assume its
+   * contents are non-empty and thus create the mybinary_proguard.jar output.
+   * Test that here.
+   */
+  @Test
+  public void testConfigurableProguardSpecs() throws Exception {
+    scratch.file("conditions/BUILD",
+        "config_setting(",
+        "    name = 'a',",
+        "    values = {'test_arg': 'a'})",
+        "config_setting(",
+        "    name = 'b',",
+        "    values = {'test_arg': 'b'})");
+    scratchConfiguredTarget("java/foo", "abin",
+        "android_binary(",
+        "    name = 'abin',",
+        "    srcs = ['a.java'],",
+        "    proguard_specs = select({",
+        "        '//conditions:a': [':file1.pro'],",
+        "        '//conditions:b': [],",
+        "        '//conditions:default': [':file3.pro'],",
+        "    }) + [",
+        // Add a long list here as a regression test for b/68238721
+        "        'file4.pro',",
+        "        'file5.pro',",
+        "        'file6.pro',",
+        "        'file7.pro',",
+        "        'file8.pro',",
+        "    ],",
+        "    manifest = 'AndroidManifest.xml')");
+    checkProguardUse(
+        "//java/foo:abin",
+        "abin_proguard.jar",
+        /*expectMapping=*/ false,
+        /*passes=*/ null,
+        getAndroidJarPath());
+  }
+
+  @Test
+  public void testSkipParsingActionFlagGetsPropagated() throws Exception {
+    mockAndroidSdkWithAapt2();
+    scratch.file(
+        "java/b/BUILD",
+        "android_library(",
+        "    name = 'b',",
+        "    srcs = ['B.java'],",
+        "    manifest = 'AndroidManifest.xml',",
+        "    resource_files = [ 'res/values/values.xml' ], ",
+        ")");
+
+    scratch.file(
+        "java/a/BUILD",
+        "android_binary(",
+        "    name = 'a',",
+        "    srcs = ['A.java'],",
+        "    manifest = 'AndroidManifest.xml',",
+        "    deps = [ '//java/b:b' ],",
+        "    resource_files = [ 'res/values/values.xml' ], ",
+        "    aapt_version = 'aapt2'",
+        ")");
+
+    useConfiguration("--android_sdk=//sdk:sdk", "--experimental_skip_parsing_action");
+    ConfiguredTarget a = getConfiguredTarget("//java/a:a");
+    ConfiguredTarget b = getDirectPrerequisite(a, "//java/b:b");
+
+    List<String> resourceProcessingArgs =
+        getGeneratingSpawnActionArgs(getResourceContainer(a).getRTxt());
+
+    assertThat(resourceProcessingArgs).contains("AAPT2_PACKAGE");
+    String directData =
+        resourceProcessingArgs.get(
+            resourceProcessingArgs.indexOf("--directData") + 1);
+    assertThat(directData).contains("symbols.zip");
+    assertThat(directData).doesNotContain("merged.bin");
+    assertThat(resourceProcessingArgs).contains("--useCompiledResourcesForMerge");
+
+    List<String> resourceMergingArgs =
+        getGeneratingSpawnActionArgs(getResourceContainer(b).getJavaClassJar());
+
+    assertThat(resourceMergingArgs).contains("MERGE_COMPILED");
+  }
+
+  @Test
+  public void testAapt1BuildsWithAapt2Sdk() throws Exception {
+    mockAndroidSdkWithAapt2();
+    scratch.file(
+        "java/b/BUILD",
+        "android_library(",
+        "    name = 'b',",
+        "    srcs = ['B.java'],",
+        "    manifest = 'AndroidManifest.xml',",
+        "    resource_files = [ 'res/values/values.xml' ], ",
+        ")");
+
+    scratch.file(
+        "java/a/BUILD",
+        "android_binary(",
+        "    name = 'a',",
+        "    srcs = ['A.java'],",
+        "    manifest = 'AndroidManifest.xml',",
+        "    deps = [ '//java/b:b' ],",
+        "    resource_files = [ 'res/values/values.xml' ], ",
+        "    aapt_version = 'aapt'",
+        ")");
+
+    useConfiguration("--android_sdk=//sdk:sdk", "--experimental_skip_parsing_action");
+    ConfiguredTarget a = getConfiguredTarget("//java/a:a");
+    ConfiguredTarget b = getDirectPrerequisite(a, "//java/b:b");
+
+    List<String> resourceProcessingArgs =
+        getGeneratingSpawnActionArgs(getResourceContainer(a).getRTxt());
+
+    assertThat(resourceProcessingArgs).contains("PACKAGE");
+    String directData =
+        resourceProcessingArgs.get(
+            resourceProcessingArgs.indexOf("--directData") + 1);
+    assertThat(directData).doesNotContain("symbols.zip");
+    assertThat(directData).contains("merged.bin");
+
+    List<String> compiledResourceMergingArgs =
+        getGeneratingSpawnActionArgs(getResourceContainer(b).getJavaClassJar());
+
+    assertThat(compiledResourceMergingArgs).contains("MERGE_COMPILED");
+
+    Set<Artifact> artifacts = actionsTestUtil().artifactClosureOf(getFilesToBuild(b));
+    List<String> parsedResourceMergingArgs =
+        getGeneratingSpawnActionArgs(getFirstArtifactEndingWith(artifacts, "resource_files.zip"));
+    assertThat(parsedResourceMergingArgs).contains("MERGE");
   }
 }

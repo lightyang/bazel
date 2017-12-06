@@ -14,8 +14,8 @@
 
 package com.google.devtools.build.lib.rules.java;
 
+import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
-import static com.google.devtools.build.lib.util.Preconditions.checkNotNull;
 import static java.nio.charset.StandardCharsets.ISO_8859_1;
 
 import com.google.common.annotations.VisibleForTesting;
@@ -26,6 +26,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.actions.Action;
 import com.google.devtools.build.lib.actions.ActionExecutionContext;
 import com.google.devtools.build.lib.actions.ActionInput;
+import com.google.devtools.build.lib.actions.ActionKeyContext;
 import com.google.devtools.build.lib.actions.ActionOwner;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.BaseSpawn;
@@ -55,7 +56,6 @@ import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
-import java.util.Set;
 import javax.annotation.Nullable;
 
 /**
@@ -125,10 +125,10 @@ public class JavaHeaderCompileAction extends SpawnAction {
   }
 
   @Override
-  protected String computeKey() {
+  protected String computeKey(ActionKeyContext actionKeyContext) {
     Fingerprint f = new Fingerprint().addString(GUID);
     try {
-      f.addString(super.computeKey());
+      f.addString(super.computeKey(actionKeyContext));
       f.addStrings(directCommandLine.arguments());
     } catch (CommandLineExpansionException e) {
       throw new AssertionError("JavaHeaderCompileAction command line expansion cannot fail");
@@ -137,7 +137,7 @@ public class JavaHeaderCompileAction extends SpawnAction {
   }
 
   @Override
-  protected Set<SpawnResult> internalExecute(ActionExecutionContext actionExecutionContext)
+  protected List<SpawnResult> internalExecute(ActionExecutionContext actionExecutionContext)
       throws ExecException, InterruptedException {
     SpawnActionContext context = getContext(actionExecutionContext);
     try {

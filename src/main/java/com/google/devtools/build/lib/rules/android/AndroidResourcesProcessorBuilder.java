@@ -48,6 +48,15 @@ public class AndroidResourcesProcessorBuilder {
           .withSeparator(SeparatorType.COLON_COMMA)
           .toArgConverter();
 
+  private static final ResourceContainerConverter.ToArg AAPT2_RESOURCE_DEP_TO_ARG_NO_PARSE =
+      ResourceContainerConverter.builder()
+          .includeResourceRoots()
+          .includeManifest()
+          .includeAapt2RTxt()
+          .includeCompiledSymbols()
+          .withSeparator(SeparatorType.COLON_COMMA)
+          .toArgConverter();
+
   private static final ResourceContainerConverter.ToArg RESOURCE_CONTAINER_TO_ARG =
       ResourceContainerConverter.builder()
           .includeResourceRoots()
@@ -68,10 +77,11 @@ public class AndroidResourcesProcessorBuilder {
   private ResourceDependencies dependencies;
   private Artifact proguardOut;
   private Artifact mainDexProguardOut;
+  private boolean conditionalKeepRules;
   private Artifact rTxtOut;
   private Artifact sourceJarOut;
   private boolean debug = false;
-  private ResourceFilter resourceFilter;
+  private ResourceFilterFactory resourceFilterFactory;
   private List<String> uncompressedExtensions = Collections.emptyList();
   private Artifact apkOut;
   private final AndroidSdkProvider sdk;
@@ -93,6 +103,7 @@ public class AndroidResourcesProcessorBuilder {
   private AndroidAaptVersion aaptVersion;
   private boolean throwOnResourceConflict;
   private String packageUnderTest;
+  private boolean useCompiledResourcesForMerge;
 
   /**
    * @param ruleContext The RuleContext that was used to create the SpawnAction.Builder.
@@ -101,7 +112,7 @@ public class AndroidResourcesProcessorBuilder {
     this.sdk = AndroidSdkProvider.fromRuleContext(ruleContext);
     this.ruleContext = ruleContext;
     this.spawnActionBuilder = new SpawnAction.Builder();
-    this.resourceFilter = ResourceFilter.empty(ruleContext);
+    this.resourceFilterFactory = ResourceFilterFactory.empty(ruleContext);
   }
 
   /**
@@ -139,9 +150,9 @@ public class AndroidResourcesProcessorBuilder {
     return this;
   }
 
-  public AndroidResourcesProcessorBuilder setResourceFilter(
-      ResourceFilter resourceFilter) {
-    this.resourceFilter = resourceFilter;
+  public AndroidResourcesProcessorBuilder setResourceFilterFactory(
+      ResourceFilterFactory resourceFilterFactory) {
+    this.resourceFilterFactory = resourceFilterFactory;
     return this;
   }
 
@@ -152,6 +163,11 @@ public class AndroidResourcesProcessorBuilder {
 
   public AndroidResourcesProcessorBuilder setProguardOut(Artifact proguardCfg) {
     this.proguardOut = proguardCfg;
+    return this;
+  }
+
+  public AndroidResourcesProcessorBuilder conditionalKeepRules(boolean conditionalKeepRules) {
+    this.conditionalKeepRules = conditionalKeepRules;
     return this;
   }
 
@@ -250,6 +266,13 @@ public class AndroidResourcesProcessorBuilder {
     return this;
   }
 
+  public AndroidResourcesProcessorBuilder setUseCompiledResourcesForMerge(
+      boolean useCompiledResourcesForMerge) {
+    this.useCompiledResourcesForMerge = useCompiledResourcesForMerge;
+    return this;
+  }
+
+
   private ResourceContainer createAapt2ApkAction(ActionConstructionContext context) {
     List<Artifact> outs = new ArrayList<>();
     // TODO(corysmith): Convert to an immutable list builder, as there is no benefit to a NestedSet
@@ -262,14 +285,30 @@ public class AndroidResourcesProcessorBuilder {
 
     builder.addExecPath("--aapt2", sdk.getAapt2().getExecutable());
     if (dependencies != null) {
-      ResourceContainerConverter.addToCommandLine(dependencies, builder, AAPT2_RESOURCE_DEP_TO_ARG);
+      ResourceContainerConverter.addToCommandLine(
+          dependencies,
+          builder,
+          useCompiledResourcesForMerge
+              ? AAPT2_RESOURCE_DEP_TO_ARG_NO_PARSE
+              : AAPT2_RESOURCE_DEP_TO_ARG);
       inputs
           .addTransitive(dependencies.getTransitiveResources())
           .addTransitive(dependencies.getTransitiveAssets())
           .addTransitive(dependencies.getTransitiveManifests())
           .addTransitive(dependencies.getTransitiveAapt2RTxt())
-          .addTransitive(dependencies.getTransitiveSymbolsBin())
           .addTransitive(dependencies.getTransitiveCompiledSymbols());
+
+      if (!useCompiledResourcesForMerge) {
+        inputs.addTransitive(dependencies.getTransitiveSymbolsBin());
+      }
+    }
+
+    if (useCompiledResourcesForMerge) {
+      builder.add("--useCompiledResourcesForMerge");
+    }
+
+    if (conditionalKeepRules) {
+      builder.add("--conditionalKeepRules");
     }
 
     configureCommonFlags(outs, inputs, builder);
@@ -439,21 +478,22 @@ public class AndroidResourcesProcessorBuilder {
       builder.addExecPath("--packagePath", apkOut);
       outs.add(apkOut);
     }
-    if (resourceFilter.hasConfigurationFilters()) {
+    if (resourceFilterFactory.hasConfigurationFilters()) {
       // Always pass filters to aapt, even if we filtered in analysis, since aapt is stricter and
       // might remove resources that we previously accepted.
-      builder.add("--resourceConfigs", resourceFilter.getConfigurationFilterString());
+      builder.add("--resourceConfigs", resourceFilterFactory.getConfigurationFilterString());
     }
-    if (resourceFilter.hasDensities()) {
+    if (resourceFilterFactory.hasDensities()) {
       // If we did not filter by density in analysis, filter in execution. Otherwise, don't filter
       // in execution, but still pass the densities so they can be added to the manifest.
-      if (resourceFilter.isPrefiltering()) {
-        builder.add("--densitiesForManifest", resourceFilter.getDensityString());
+      if (resourceFilterFactory.isPrefiltering()) {
+        builder.add("--densitiesForManifest", resourceFilterFactory.getDensityString());
       } else {
-        builder.add("--densities", resourceFilter.getDensityString());
+        builder.add("--densities", resourceFilterFactory.getDensityString());
       }
     }
-    ImmutableList<String> filteredResources = resourceFilter.getResourcesToIgnoreInExecution();
+    ImmutableList<String> filteredResources =
+        resourceFilterFactory.getResourcesToIgnoreInExecution();
     if (!filteredResources.isEmpty()) {
       builder.addAll("--prefilteredResources", VectorArg.join(",").each(filteredResources));
     }

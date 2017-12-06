@@ -701,7 +701,7 @@ public class SkylarkRuleClassFunctionsTest extends SkylarkTestCase {
         "r1 = rule(impl, outputs = {'a': 'a.txt'})");
     RuleClass c = ((SkylarkRuleFunction) lookup("r1")).getRuleClass();
     ImplicitOutputsFunction function = c.getDefaultImplicitOutputsFunction();
-    assertThat(function.getImplicitOutputs(null)).containsExactly("a.txt");
+    assertThat(function.getImplicitOutputs(ev.getEventHandler(), null)).containsExactly("a.txt");
   }
 
   @Test
@@ -951,7 +951,7 @@ public class SkylarkRuleClassFunctionsTest extends SkylarkTestCase {
         "  }",
         ")");
     scratch.file("third_party/foo/BUILD",
-        "load('/test/rule', 'some_rule')",
+        "load('//test:rule.bzl', 'some_rule')",
         "some_rule(",
         "    name='r',",
         "    licenses = ['unencumbered']",
@@ -1265,6 +1265,39 @@ public class SkylarkRuleClassFunctionsTest extends SkylarkTestCase {
   }
 
   @Test
+  public void declaredProvidersWithFieldsConcatSuccess() throws Exception {
+    evalAndExport(
+        "data = provider(fields=['f1', 'f2'])",
+        "d1 = data(f1 = 4)",
+        "d2 = data(f2 = 5)",
+        "d3 = d1 + d2",
+        "f1 = d3.f1",
+        "f2 = d3.f2");
+    assertThat(lookup("f1")).isEqualTo(4);
+    assertThat(lookup("f2")).isEqualTo(5);
+  }
+
+  @Test
+  public void declaredProvidersWithFieldsConcatError() throws Exception {
+    evalAndExport("data1 = provider(fields=['f1', 'f2'])", "data2 = provider(fields=['f3'])");
+    checkEvalError(
+        "Cannot concat data1 with data2",
+        "d1 = data1(f1=1, f2=2)",
+        "d2 = data2(f3=3)",
+        "d = d1 + d2");
+  }
+
+  @Test
+  public void declaredProvidersWithOverlappingFieldsConcatError() throws Exception {
+    evalAndExport("data = provider(fields=['f1', 'f2'])");
+    checkEvalError(
+        "Cannot concat structs with common field(s): f1",
+        "d1 = data(f1 = 4)",
+        "d2 = data(f1 = 5)",
+        "d1 + d2");
+  }
+
+  @Test
   public void structsAsDeclaredProvidersTest() throws Exception {
     evalAndExport(
         "data = struct(x = 1)"
@@ -1571,7 +1604,7 @@ public class SkylarkRuleClassFunctionsTest extends SkylarkTestCase {
       ")"
     );
     scratch.file("third_party/foo/BUILD",
-      "load('extension',  'my_rule')",
+      "load(':extension.bzl', 'my_rule')",
       "my_rule(name = 'main', exe = ':tool.sh')"
     );
 

@@ -73,7 +73,10 @@ alias(
 # contains the appropriate platform-dependent file.
 filegroup(
     name = "ijar",
-    srcs = glob(["ijar/*"]),
+    srcs = select({
+        "//src/conditions:remote": ["//third_party/ijar:ijar"],
+        "//conditions:default": glob(["ijar/*"]),
+    }),
 )
 
 # On Windows, Java implementation of singlejar is used. We create a little
@@ -84,7 +87,10 @@ filegroup(
 # must be platform-independent.
 filegroup(
     name = "singlejar",
-    srcs = glob(["singlejar/*"]),
+    srcs = select({
+        "//src/conditions:remote": ["//src/tools/singlejar:singlejar"],
+        "//conditions:default": glob(["singlejar/*"]),
+    }),
 )
 
 filegroup(
@@ -149,6 +155,11 @@ alias(
 
 alias(
     name = "jdk",
+    actual = "@local_jdk//:jdk",
+)
+
+alias(
+    name = "host_jdk",
     actual = "@local_jdk//:jdk",
 )
 

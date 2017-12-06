@@ -14,6 +14,7 @@
 package com.google.devtools.build.lib.rules.cpp;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
@@ -25,6 +26,7 @@ import com.google.devtools.build.lib.actions.AbstractAction;
 import com.google.devtools.build.lib.actions.ActionEnvironment;
 import com.google.devtools.build.lib.actions.ActionExecutionContext;
 import com.google.devtools.build.lib.actions.ActionExecutionException;
+import com.google.devtools.build.lib.actions.ActionKeyContext;
 import com.google.devtools.build.lib.actions.ActionLookupValue;
 import com.google.devtools.build.lib.actions.ActionLookupValue.ActionLookupKey;
 import com.google.devtools.build.lib.actions.ActionOwner;
@@ -60,7 +62,6 @@ import com.google.devtools.build.lib.rules.cpp.CppConfiguration.Tool;
 import com.google.devtools.build.lib.util.DependencySet;
 import com.google.devtools.build.lib.util.Fingerprint;
 import com.google.devtools.build.lib.util.Pair;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.util.ShellEscaper;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
@@ -87,33 +88,6 @@ import javax.annotation.Nullable;
 @ThreadCompatible
 public class CppCompileAction extends AbstractAction
     implements IncludeScannable, ExecutionInfoSpecifier, CommandAction {
-
-  /**
-   * Represents logic that determines if an artifact is a special input, meaning that it may require
-   * additional inputs when it is compiled or may not be available to other actions.
-   */
-  public interface SpecialInputsHandler {
-    /** Returns if {@code includedFile} is special, so may not be available to other actions. */
-    boolean isSpecialFile(Artifact includedFile);
-
-    /** Returns the set of files to be added for an included file (as returned in the .d file). */
-    Collection<Artifact> getInputsForIncludedFile(
-        Artifact includedFile, ArtifactResolver artifactResolver);
-  }
-
-  static final SpecialInputsHandler VOID_SPECIAL_INPUTS_HANDLER =
-      new SpecialInputsHandler() {
-        @Override
-        public boolean isSpecialFile(Artifact includedFile) {
-          return false;
-        }
-
-        @Override
-        public Collection<Artifact> getInputsForIncludedFile(
-            Artifact includedFile, ArtifactResolver artifactResolver) {
-          return ImmutableList.of();
-        }
-      };
 
   private static final PathFragment BUILD_PATH_FRAGMENT = PathFragment.create("BUILD");
 
@@ -217,7 +191,6 @@ public class CppCompileAction extends AbstractAction
   @VisibleForTesting final CppConfiguration cppConfiguration;
   private final FeatureConfiguration featureConfiguration;
   protected final Class<? extends CppCompileActionContext> actionContext;
-  protected final SpecialInputsHandler specialInputsHandler;
   protected final CppSemantics cppSemantics;
 
   /**
@@ -247,8 +220,6 @@ public class CppCompileAction extends AbstractAction
 
   private CcToolchainFeatures.Variables overwrittenVariables = null;
 
-  private ImmutableList<Artifact> resolvedInputs = ImmutableList.<Artifact>of();
-
   private PathFragment gccToolPath;
 
   /**
@@ -276,7 +247,6 @@ public class CppCompileAction extends AbstractAction
    * @param context the compilation context
    * @param actionContext TODO(bazel-team): Add parameter description.
    * @param coptsFilter regular expression to remove options from {@code copts}
-   * @param specialInputsHandler TODO(bazel-team): Add parameter description.
    * @param lipoScannables List of artifacts to include-scan when this action is a lipo action
    * @param additionalIncludeScannables list of additional artifacts to include-scan
    * @param actionClassId TODO(bazel-team): Add parameter description
@@ -309,7 +279,6 @@ public class CppCompileAction extends AbstractAction
       CppCompilationContext context,
       Class<? extends CppCompileActionContext> actionContext,
       Predicate<String> coptsFilter,
-      SpecialInputsHandler specialInputsHandler,
       Iterable<IncludeScannable> lipoScannables,
       ImmutableList<Artifact> additionalIncludeScannables,
       UUID actionClassId,
@@ -334,7 +303,6 @@ public class CppCompileAction extends AbstractAction
     this.outputFile = Preconditions.checkNotNull(outputFile);
     this.optionalSourceFile = optionalSourceFile;
     this.context = context;
-    this.specialInputsHandler = specialInputsHandler;
     this.cppConfiguration = cppConfiguration;
     this.featureConfiguration = featureConfiguration;
     // inputsKnown begins as the logical negation of shouldScanIncludes.
@@ -423,18 +391,13 @@ public class CppCompileAction extends AbstractAction
 
   /**
    * Returns the list of additional inputs found by dependency discovery, during action preparation,
-   * and clears the stored list. {@link #prepare} must be called before this method is called, on
-   * each action execution.
+   * and clears the stored list. {@link Action#prepare} must be called before this method is called,
+   * on each action execution.
    */
   public Iterable<Artifact> getAdditionalInputs() {
     Iterable<Artifact> result = Preconditions.checkNotNull(additionalInputs);
     additionalInputs = null;
     return result;
-  }
-
-  @VisibleForTesting
-  public void setResolvedInputsForTesting(ImmutableList<Artifact> resolvedInputs) {
-    this.resolvedInputs = resolvedInputs;
   }
 
   @Override
@@ -481,12 +444,11 @@ public class CppCompileAction extends AbstractAction
       }
       result.addTransitive(prunableInputs);
       additionalInputs = result.build();
-      return result.build();
+      return additionalInputs;
     }
 
-    Set<Artifact> initialResultSet = Sets.newLinkedHashSet(initialResult);
-
     if (shouldPruneModules) {
+      Set<Artifact> initialResultSet = Sets.newLinkedHashSet(initialResult);
       if (CppFileTypes.CPP_MODULE.matches(sourceFile.getFilename())) {
         usedModules = ImmutableSet.of(sourceFile);
         initialResultSet.add(sourceFile);
@@ -499,26 +461,11 @@ public class CppCompileAction extends AbstractAction
         }
         initialResultSet.addAll(usedModules);
       }
+      initialResult = initialResultSet;
     }
 
-    initialResult = initialResultSet;
-    this.additionalInputs = initialResult;
-    // In some cases, execution backends need extra files for each included file. Add them
-    // to the set of inputs the caller may need to be aware of.
-    Collection<Artifact> result = new HashSet<>();
-    ArtifactResolver artifactResolver =
-        actionExecutionContext.getContext(IncludeScanningContext.class).getArtifactResolver();
-    for (Artifact artifact : initialResult) {
-      result.addAll(specialInputsHandler.getInputsForIncludedFile(artifact, artifactResolver));
-    }
-    for (Artifact artifact : getInputs()) {
-      result.addAll(specialInputsHandler.getInputsForIncludedFile(artifact, artifactResolver));
-    }
-    // TODO(ulfjack): This only works if include scanning is enabled; the cleanup is in progress,
-    // and this needs to be fixed before we can even consider disabling it.
-    resolvedInputs = ImmutableList.copyOf(result);
-    Iterables.addAll(result, initialResult);
-    return Preconditions.checkNotNull(result);
+    additionalInputs = initialResult;
+    return additionalInputs;
   }
 
   @Override
@@ -767,13 +714,7 @@ public class CppCompileAction extends AbstractAction
   }
 
   @Override
-  public boolean extraActionCanAttach() {
-    return cppConfiguration.alwaysAttachExtraActions()
-        || !specialInputsHandler.isSpecialFile(getPrimaryInput());
-  }
-
-  @Override
-  public ExtraActionInfo.Builder getExtraActionInfo() {
+  public ExtraActionInfo.Builder getExtraActionInfo(ActionKeyContext actionKeyContext) {
     CppCompileInfo.Builder info = CppCompileInfo.newBuilder();
     info.setTool(gccToolPath.getPathString());
     for (String option : getCompilerOptions()) {
@@ -797,7 +738,8 @@ public class CppCompileAction extends AbstractAction
     }
 
     try {
-      return super.getExtraActionInfo().setExtension(CppCompileInfo.cppCompileInfo, info.build());
+      return super.getExtraActionInfo(actionKeyContext)
+          .setExtension(CppCompileInfo.cppCompileInfo, info.build());
     } catch (CommandLineExpansionException e) {
       throw new AssertionError("CppCompileAction command line expansion cannot fail.");
     }
@@ -850,7 +792,6 @@ public class CppCompileAction extends AbstractAction
       }
       allowedIncludes.add(input);
     }
-    allowedIncludes.addAll(resolvedInputs);
 
     if (optionalSourceFile != null) {
       allowedIncludes.add(optionalSourceFile);
@@ -1121,7 +1062,7 @@ public class CppCompileAction extends AbstractAction
   }
 
   @Override
-  public String computeKey() {
+  public String computeKey(ActionKeyContext actionKeyContext) {
     Fingerprint f = new Fingerprint();
     f.addUUID(actionClassId);
     f.addStringMap(getEnvironment());
@@ -1146,17 +1087,11 @@ public class CppCompileAction extends AbstractAction
      */
     f.addPaths(context.getDeclaredIncludeDirs());
     f.addPaths(context.getDeclaredIncludeWarnDirs());
-    for (Artifact declaredIncludeSrc : context.getDeclaredIncludeSrcs()) {
-      f.addPath(declaredIncludeSrc.getExecPath());
-    }
+    actionKeyContext.addArtifactsToFingerprint(f, context.getDeclaredIncludeSrcs());
     f.addInt(0);  // mark the boundary between input types
-    for (Artifact input : getMandatoryInputs()) {
-      f.addPath(input.getExecPath());
-    }
+    actionKeyContext.addArtifactsToFingerprint(f, getMandatoryInputs());
     f.addInt(0);
-    for (Artifact input : prunableInputs) {
-      f.addPath(input.getExecPath());
-    }
+    actionKeyContext.addArtifactsToFingerprint(f, prunableInputs);
     return f.hexDigestAndReset();
   }
 
@@ -1177,7 +1112,7 @@ public class CppCompileAction extends AbstractAction
       actionExecutionContext.getFileOutErr().setErrorFilter(showIncludesFilterForStderr);
     }
 
-    Set<SpawnResult> spawnResults;
+    List<SpawnResult> spawnResults;
     try {
       CppCompileActionResult cppCompileActionResult =
           actionExecutionContext
@@ -1245,7 +1180,6 @@ public class CppCompileAction extends AbstractAction
         new HeaderDiscovery.Builder()
             .setAction(this)
             .setSourceFile(getSourceFile())
-            .setSpecialInputsHandler(specialInputsHandler)
             .setDependencies(dependencies.build())
             .setPermittedSystemIncludePrefixes(getPermittedSystemIncludePrefixes(execRoot))
             .setAllowedDerivedinputsMap(getAllowedDerivedInputsMap());
@@ -1268,7 +1202,6 @@ public class CppCompileAction extends AbstractAction
         new HeaderDiscovery.Builder()
             .setAction(this)
             .setSourceFile(getSourceFile())
-            .setSpecialInputsHandler(specialInputsHandler)
             .setDependencies(processDepset(execRoot, reply).getDependencies())
             .setPermittedSystemIncludePrefixes(getPermittedSystemIncludePrefixes(execRoot))
             .setAllowedDerivedinputsMap(getAllowedDerivedInputsMap());

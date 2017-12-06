@@ -14,10 +14,10 @@
 
 package com.google.devtools.build.lib.syntax;
 
+import com.google.common.base.Preconditions;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.EventHandler;
 import com.google.devtools.build.lib.events.Location;
-import com.google.devtools.build.lib.util.Preconditions;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -68,6 +68,12 @@ public final class ValidationEnvironment extends SyntaxTreeVisitor {
     block.variables.addAll(builtinVariables);
     block.readOnlyVariables.addAll(builtinVariables);
     semantics = env.getSemantics();
+
+    // If the flag is set to false, it should be allowed to have `set`
+    // in non-executable parts of the code.
+    if (!env.getSemantics().incompatibleDisallowUncalledSetConstructor()) {
+      block.variables.add("set");
+    }
   }
 
   @Override

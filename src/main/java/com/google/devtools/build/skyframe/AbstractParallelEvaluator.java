@@ -13,6 +13,7 @@
 // limitations under the License.
 package com.google.devtools.build.skyframe;
 
+import com.google.common.base.Preconditions;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
@@ -23,7 +24,6 @@ import com.google.devtools.build.lib.events.ExtendedEventHandler;
 import com.google.devtools.build.lib.profiler.Profiler;
 import com.google.devtools.build.lib.profiler.ProfilerTask;
 import com.google.devtools.build.lib.util.GroupedList.GroupedListHelper;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.skyframe.EvaluationProgressReceiver.EvaluationState;
 import com.google.devtools.build.skyframe.MemoizingEvaluator.EmittedEventState;
 import com.google.devtools.build.skyframe.NodeEntry.DependencyState;
@@ -267,12 +267,11 @@ public abstract class AbstractParallelEvaluator {
             graph.getBatch(skyKey, Reason.ENQUEUING_CHILD, unknownStatusDeps);
         Preconditions.checkState(
             oldChildren.size() == unknownStatusDeps.size(),
-            "Not all old children were present: %s %s %s %s %s",
+            "Not all old children were present: %s %s %s %s",
             skyKey,
             state,
             unknownStatusDeps,
-            oldChildren,
-            directDepsToCheck);
+            oldChildren);
         for (Map.Entry<SkyKey, ? extends NodeEntry> e : oldChildren.entrySet()) {
           SkyKey directDep = e.getKey();
           NodeEntry directDepEntry = e.getValue();
@@ -565,8 +564,9 @@ public abstract class AbstractParallelEvaluator {
   }
 
   void propagateInterruption(SchedulerException e) throws InterruptedException {
+    boolean mustThrowInterrupt = Thread.interrupted();
     Throwables.propagateIfPossible(e.getCause(), InterruptedException.class);
-    if (Thread.interrupted()) {
+    if (mustThrowInterrupt) {
       // As per the contract of AbstractQueueVisitor#work, if an unchecked exception is thrown and
       // the build is interrupted, the thrown exception is what will be rethrown. Since the user
       // presumably wanted to interrupt the build, we ignore the thrown SchedulerException (which

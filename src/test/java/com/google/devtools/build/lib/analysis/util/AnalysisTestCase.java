@@ -13,6 +13,7 @@
 // limitations under the License.
 package com.google.devtools.build.lib.analysis.util;
 
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSortedSet;
@@ -21,6 +22,7 @@ import com.google.common.eventbus.EventBus;
 import com.google.devtools.build.lib.actions.Action;
 import com.google.devtools.build.lib.actions.ActionAnalysisMetadata;
 import com.google.devtools.build.lib.actions.ActionGraph;
+import com.google.devtools.build.lib.actions.ActionKeyContext;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.analysis.BuildView;
@@ -35,7 +37,7 @@ import com.google.devtools.build.lib.analysis.config.BuildConfigurationCollectio
 import com.google.devtools.build.lib.analysis.config.BuildOptions;
 import com.google.devtools.build.lib.analysis.config.ConfigurationFragmentFactory;
 import com.google.devtools.build.lib.analysis.configuredtargets.InputFileConfiguredTarget;
-import com.google.devtools.build.lib.buildtool.BuildRequest.BuildRequestOptions;
+import com.google.devtools.build.lib.buildtool.BuildRequestOptions;
 import com.google.devtools.build.lib.clock.BlazeClock;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
@@ -63,7 +65,6 @@ import com.google.devtools.build.lib.testutil.FoundationTestCase;
 import com.google.devtools.build.lib.testutil.TestConstants;
 import com.google.devtools.build.lib.testutil.TestConstants.InternalTestExecutionMode;
 import com.google.devtools.build.lib.testutil.TestRuleClassProvider;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.util.io.TimestampGranularityMonitor;
 import com.google.devtools.build.lib.vfs.ModifiedFileSet;
 import com.google.devtools.build.lib.vfs.PathFragment;
@@ -127,6 +128,7 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
   protected PackageManager packageManager;
   private LoadingPhaseRunner loadingPhaseRunner;
   private BuildView buildView;
+  protected final ActionKeyContext actionKeyContext = new ActionKeyContext();
 
   // Note that these configurations are virtual (they use only VFS)
   private BuildConfigurationCollection masterConfig;
@@ -141,7 +143,11 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
   @Before
   public final void createMocks() throws Exception {
     analysisMock = getAnalysisMock();
-    pkgLocator = new PathPackageLocator(outputBase, ImmutableList.of(rootDirectory));
+    pkgLocator =
+        new PathPackageLocator(
+            outputBase,
+            ImmutableList.of(rootDirectory),
+            BazelSkyframeExecutorConstants.BUILD_FILES_BY_PRIORITY);
     directories =
         new BlazeDirectories(
             new ServerDirectories(outputBase, outputBase),
@@ -161,14 +167,16 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
       PackageFactory pkgFactory, ImmutableList<BuildInfoFactory> buildInfoFactories) {
     return SequencedSkyframeExecutor.create(
         pkgFactory,
+        fileSystem,
         directories,
+        actionKeyContext,
         workspaceStatusActionFactory,
         buildInfoFactories,
         ImmutableList.of(),
-        input -> false,
         analysisMock.getSkyFunctions(directories),
         ImmutableList.of(),
-        PathFragment.EMPTY_FRAGMENT,
+        BazelSkyframeExecutorConstants.HARDCODED_BLACKLISTED_PACKAGE_PREFIXES,
+        BazelSkyframeExecutorConstants.ADDITIONAL_BLACKLISTED_PACKAGE_PREFIXES_FILE,
         BazelSkyframeExecutorConstants.CROSS_REPOSITORY_LABEL_VIOLATION_STRATEGY,
         BazelSkyframeExecutorConstants.BUILD_FILES_BY_PRIORITY,
         BazelSkyframeExecutorConstants.ACTION_ON_IO_EXCEPTION_READING_BUILD_FILE);
@@ -296,8 +304,14 @@ public abstract class AnalysisTestCase extends FoundationTestCase {
     viewOptions.loadingPhaseThreads = LOADING_PHASE_THREADS;
 
     PackageCacheOptions packageCacheOptions = optionsParser.getOptions(PackageCacheOptions.class);
-    PathPackageLocator pathPackageLocator = PathPackageLocator.create(
-        outputBase, packageCacheOptions.packagePath, reporter, rootDirectory, rootDirectory);
+    PathPackageLocator pathPackageLocator =
+        PathPackageLocator.create(
+            outputBase,
+            packageCacheOptions.packagePath,
+            reporter,
+            rootDirectory,
+            rootDirectory,
+            BazelSkyframeExecutorConstants.BUILD_FILES_BY_PRIORITY);
     packageCacheOptions.showLoadingProgress = true;
     packageCacheOptions.globbingThreads = 7;
 

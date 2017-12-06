@@ -175,9 +175,7 @@ public abstract class AndroidLibrary implements RuleConfiguredTargetFactory {
     validateRuleContext(ruleContext);
     JavaSemantics javaSemantics = createJavaSemantics();
     AndroidSemantics androidSemantics = createAndroidSemantics();
-    if (!AndroidSdkProvider.verifyPresence(ruleContext)) {
-      return null;
-    }
+    AndroidSdkProvider.verifyPresence(ruleContext);
     checkResourceInlining(ruleContext);
     NestedSetBuilder<Aar> transitiveAars = NestedSetBuilder.naiveLinkOrder();
     NestedSetBuilder<Artifact> transitiveAarArtifacts = NestedSetBuilder.stableOrder();
@@ -218,10 +216,13 @@ public abstract class AndroidLibrary implements RuleConfiguredTargetFactory {
         return null;
       }
     } else {
-      resourceApk = ResourceApk.fromTransitiveResources(
-          ResourceDependencies.fromRuleResourceAndDeps(ruleContext, false /* neverlink */));
+      resourceApk =
+          ResourceApk.fromTransitiveResources(
+              ResourceDependencies.fromRuleResourceAndDeps(
+                  ruleContext,
+                  ruleContext.getFragment(AndroidConfiguration.class).fixedResourceNeverlinking()
+                      && JavaCommon.isNeverLink(ruleContext)));
     }
-
 
     JavaTargetAttributes javaTargetAttributes = androidCommon.init(
         javaSemantics,
@@ -246,9 +247,7 @@ public abstract class AndroidLibrary implements RuleConfiguredTargetFactory {
       primaryResources = resourceApk.getPrimaryResource();
       // applicationManifest has already been checked for nullness above in this method
       ApplicationManifest applicationManifest =
-          ruleContext.getFragment(AndroidConfiguration.class).useManifestFromResourceApk()
-            ? ApplicationManifest.fromExplicitManifest(ruleContext, resourceApk.getManifest())
-            : androidSemantics.getManifestForRule(ruleContext);
+          ApplicationManifest.fromExplicitManifest(ruleContext, resourceApk.getManifest());
 
       aar = Aar.create(aarOut, applicationManifest.getManifest());
       addAarToProvider(aar, transitiveAars, transitiveAarArtifacts);

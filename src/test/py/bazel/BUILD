@@ -57,21 +57,21 @@ py_test(
     name = "bazel_windows_test",
     size = "medium",
     srcs = select({
-        "//src:windows": ["bazel_windows_test.py"],
-        "//src:windows_msvc": ["bazel_windows_test.py"],
-        "//src:windows_msys": ["bazel_windows_test.py"],
+        "//src/conditions:windows": ["bazel_windows_test.py"],
+        "//src/conditions:windows_msvc": ["bazel_windows_test.py"],
+        "//src/conditions:windows_msys": ["bazel_windows_test.py"],
         "//conditions:default": ["empty_test.py"],
     }),
     main = select({
-        "//src:windows": "bazel_windows_test.py",
-        "//src:windows_msvc": "bazel_windows_test.py",
-        "//src:windows_msys": "bazel_windows_test.py",
+        "//src/conditions:windows": "bazel_windows_test.py",
+        "//src/conditions:windows_msvc": "bazel_windows_test.py",
+        "//src/conditions:windows_msys": "bazel_windows_test.py",
         "//conditions:default": "empty_test.py",
     }),
     deps = select({
-        "//src:windows": [":test_base"],
-        "//src:windows_msvc": [":test_base"],
-        "//src:windows_msys": [":test_base"],
+        "//src/conditions:windows": [":test_base"],
+        "//src/conditions:windows_msvc": [":test_base"],
+        "//src/conditions:windows_msys": [":test_base"],
         "//conditions:default": [],
     }),
 )
@@ -84,24 +84,30 @@ py_test(
 )
 
 py_test(
-    name = "bazel_windows_dynamic_link_test",
-    size = "medium",
+    name = "runfiles_test",
+    srcs = ["runfiles_test.py"],
+    deps = [":test_base"],
+)
+
+py_test(
+    name = "bazel_windows_cpp_test",
+    size = "large",
     srcs = select({
-        "//src:windows": ["bazel_windows_dynamic_link_test.py"],
-        "//src:windows_msvc": ["bazel_windows_dynamic_link_test.py"],
-        "//src:windows_msys": ["bazel_windows_dynamic_link_test.py"],
+        "//src/conditions:windows": ["bazel_windows_cpp_test.py"],
+        "//src/conditions:windows_msvc": ["bazel_windows_cpp_test.py"],
+        "//src/conditions:windows_msys": ["bazel_windows_cpp_test.py"],
         "//conditions:default": ["empty_test.py"],
     }),
     main = select({
-        "//src:windows": "bazel_windows_dynamic_link_test.py",
-        "//src:windows_msvc": "bazel_windows_dynamic_link_test.py",
-        "//src:windows_msys": "bazel_windows_dynamic_link_test.py",
+        "//src/conditions:windows": "bazel_windows_cpp_test.py",
+        "//src/conditions:windows_msvc": "bazel_windows_cpp_test.py",
+        "//src/conditions:windows_msys": "bazel_windows_cpp_test.py",
         "//conditions:default": "empty_test.py",
     }),
     deps = select({
-        "//src:windows": [":test_base"],
-        "//src:windows_msvc": [":test_base"],
-        "//src:windows_msys": [":test_base"],
+        "//src/conditions:windows": [":test_base"],
+        "//src/conditions:windows_msvc": [":test_base"],
+        "//src/conditions:windows_msys": [":test_base"],
         "//conditions:default": [],
     }),
 )

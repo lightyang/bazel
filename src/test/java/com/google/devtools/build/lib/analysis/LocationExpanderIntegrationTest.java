@@ -43,7 +43,7 @@ public class LocationExpanderIntegrationTest extends BuildViewTestCase {
   private LocationExpander makeExpander(String label) throws Exception {
     ConfiguredTarget target = getConfiguredTarget(label);
     RuleContext ruleContext = getRuleContext(target);
-    return new LocationExpander(ruleContext);
+    return LocationExpander.withRunfilesPaths(ruleContext);
   }
 
   @Test
@@ -62,5 +62,37 @@ public class LocationExpanderIntegrationTest extends BuildViewTestCase {
     String result = expander.expand(input);
 
     assertThat(result).isEqualTo("foo 'spaces/file with space A' 'spaces/file with space B' bar");
+  }
+
+  @Test
+  public void otherPathExpansion() throws Exception {
+    scratch.file(
+        "expansion/BUILD",
+        "genrule(name='foo', outs=['foo.txt'], cmd='never executed')",
+        "sh_library(name='lib', srcs=[':foo'])");
+
+    LocationExpander expander = makeExpander("//expansion:lib");
+    assertThat(expander.expand("foo $(execpath :foo) bar"))
+        .matches("foo .*-out/.*/expansion/foo\\.txt bar");
+    assertThat(expander.expand("foo $(execpaths :foo) bar"))
+        .matches("foo .*-out/.*/expansion/foo\\.txt bar");
+    assertThat(expander.expand("foo $(rootpath :foo) bar"))
+        .matches("foo expansion/foo.txt bar");
+    assertThat(expander.expand("foo $(rootpaths :foo) bar"))
+        .matches("foo expansion/foo.txt bar");
+  }
+
+  @Test
+  public void otherPathMultiExpansion() throws Exception {
+    scratch.file(
+        "expansion/BUILD",
+        "genrule(name='foo', outs=['foo.txt', 'bar.txt'], cmd='never executed')",
+        "sh_library(name='lib', srcs=[':foo'])");
+
+    LocationExpander expander = makeExpander("//expansion:lib");
+    assertThat(expander.expand("foo $(execpaths :foo) bar"))
+        .matches("foo .*-out/.*/expansion/bar\\.txt .*-out/.*/expansion/foo\\.txt bar");
+    assertThat(expander.expand("foo $(rootpaths :foo) bar"))
+        .matches("foo expansion/bar.txt expansion/foo.txt bar");
   }
 }

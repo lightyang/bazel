@@ -19,6 +19,7 @@ import static com.google.devtools.build.lib.actions.FilesetTraversalParams.Packa
 import static com.google.devtools.build.lib.actions.FilesetTraversalParams.PackageBoundaryMode.DONT_CROSS;
 import static com.google.devtools.build.lib.actions.FilesetTraversalParams.PackageBoundaryMode.REPORT_ERROR;
 
+import com.google.common.base.Preconditions;
 import com.google.common.collect.Collections2;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -38,11 +39,9 @@ import com.google.devtools.build.lib.packages.FilesetEntry.SymlinkBehavior;
 import com.google.devtools.build.lib.pkgcache.PathPackageLocator;
 import com.google.devtools.build.lib.skyframe.ExternalFilesHelper.ExternalFileAction;
 import com.google.devtools.build.lib.skyframe.PackageLookupFunction.CrossRepositoryLabelViolationStrategy;
-import com.google.devtools.build.lib.skyframe.PackageLookupValue.BuildFileName;
 import com.google.devtools.build.lib.testutil.FoundationTestCase;
 import com.google.devtools.build.lib.testutil.TestConstants;
 import com.google.devtools.build.lib.util.Fingerprint;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.util.io.TimestampGranularityMonitor;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
@@ -81,8 +80,12 @@ public final class FilesetEntryFunctionTest extends FoundationTestCase {
 
   @Before
   public final void setUp() throws Exception  {
-    pkgLocator = new AtomicReference<>(
-        new PathPackageLocator(outputBase, ImmutableList.of(rootDirectory)));
+    pkgLocator =
+        new AtomicReference<>(
+            new PathPackageLocator(
+                outputBase,
+                ImmutableList.of(rootDirectory),
+                BazelSkyframeExecutorConstants.BUILD_FILES_BY_PRIORITY));
     AtomicReference<ImmutableSet<PackageIdentifier>> deletedPackages =
         new AtomicReference<>(ImmutableSet.<PackageIdentifier>of());
     ExternalFilesHelper externalFilesHelper =
@@ -110,9 +113,11 @@ public final class FilesetEntryFunctionTest extends FoundationTestCase {
         new PackageLookupFunction(
             deletedPackages,
             CrossRepositoryLabelViolationStrategy.ERROR,
-            ImmutableList.of(BuildFileName.BUILD_DOT_BAZEL, BuildFileName.BUILD)));
+            BazelSkyframeExecutorConstants.BUILD_FILES_BY_PRIORITY));
     skyFunctions.put(SkyFunctions.BLACKLISTED_PACKAGE_PREFIXES,
-        new BlacklistedPackagePrefixesFunction());
+        new BlacklistedPackagePrefixesFunction(
+            /*hardcodedBlacklistedPackagePrefixes=*/ ImmutableSet.of(),
+            /*additionalBlacklistedPackagePrefixesFile=*/ PathFragment.EMPTY_FRAGMENT));
     skyFunctions.put(SkyFunctions.FILESET_ENTRY, new FilesetEntryFunction());
     skyFunctions.put(SkyFunctions.LOCAL_REPOSITORY_LOOKUP, new LocalRepositoryLookupFunction());
 
@@ -121,8 +126,6 @@ public final class FilesetEntryFunctionTest extends FoundationTestCase {
     driver = new SequentialBuildDriver(evaluator);
     PrecomputedValue.BUILD_ID.set(differencer, UUID.randomUUID());
     PrecomputedValue.PATH_PACKAGE_LOCATOR.set(differencer, pkgLocator.get());
-    PrecomputedValue.BLACKLISTED_PACKAGE_PREFIXES_FILE.set(differencer,
-        PathFragment.EMPTY_FRAGMENT);
   }
 
   private Artifact getSourceArtifact(String path) throws Exception {

@@ -14,6 +14,7 @@
 
 package com.google.devtools.build.lib.analysis.configuredtargets;
 
+import com.google.common.base.Preconditions;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.FileProvider;
 import com.google.devtools.build.lib.analysis.PackageSpecificationProvider;
@@ -27,9 +28,8 @@ import com.google.devtools.build.lib.collect.nestedset.Order;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.packages.Info;
 import com.google.devtools.build.lib.packages.PackageGroup;
-import com.google.devtools.build.lib.packages.PackageSpecification;
+import com.google.devtools.build.lib.packages.PackageSpecification.PackageGroupContents;
 import com.google.devtools.build.lib.packages.Provider;
-import com.google.devtools.build.lib.util.Preconditions;
 
 /**
  * Dummy ConfiguredTarget for package groups. Contains no functionality, since
@@ -40,14 +40,13 @@ public final class PackageGroupConfiguredTarget extends AbstractConfiguredTarget
   private static final FileProvider NO_FILES = new FileProvider(
       NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER));
 
-  private final NestedSet<PackageSpecification> packageSpecifications;
+  private final NestedSet<PackageGroupContents> packageSpecifications;
 
   public PackageGroupConfiguredTarget(TargetContext targetContext, PackageGroup packageGroup) {
     super(targetContext);
     Preconditions.checkArgument(targetContext.getConfiguration() == null);
 
-    NestedSetBuilder<PackageSpecification> builder =
-        NestedSetBuilder.stableOrder();
+    NestedSetBuilder<PackageGroupContents> builder = NestedSetBuilder.stableOrder();
     for (Label label : packageGroup.getIncludes()) {
       TransitiveInfoCollection include = targetContext.maybeFindDirectPrerequisite(
           label, targetContext.getConfiguration());
@@ -62,7 +61,7 @@ public final class PackageGroupConfiguredTarget extends AbstractConfiguredTarget
       builder.addTransitive(provider.getPackageSpecifications());
     }
 
-    builder.addAll(packageGroup.getPackageSpecifications());
+    builder.add(packageGroup.getPackageSpecifications());
     packageSpecifications = builder.build();
   }
 
@@ -72,7 +71,7 @@ public final class PackageGroupConfiguredTarget extends AbstractConfiguredTarget
   }
 
   @Override
-  public NestedSet<PackageSpecification> getPackageSpecifications() {
+  public NestedSet<PackageGroupContents> getPackageSpecifications() {
     return packageSpecifications;
   }
 

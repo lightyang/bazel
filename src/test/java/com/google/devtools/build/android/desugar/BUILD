@@ -61,14 +61,28 @@ java_test(
     ],
 )
 
+# Test for b/62060793. Verifies constant lambda arguments that were pushed using *CONST_0
+# instructions.
+java_test(
+    name = "DesugarFunctionalTestForConstantArgumentsInLambdas",
+    size = "small",
+    srcs = ["DesugarLambdaTest.java"],
+    tags = ["no_windows"],
+    test_class = "com.google.devtools.build.android.desugar.DesugarLambdaTest",
+    deps = [
+        ":desugar_lambda_with_constant_arguments_lib",
+        "//third_party:guava",
+        "//third_party:junit4",
+        "//third_party:truth",
+    ],
+)
+
 # Test for b/62456849. If a synthetic method is named "lambda$XXX", but not used in invokedynamic,
 # then Desugar should keep it in the class, rather than renaming it.
 java_test(
     name = "DesugarFunctionalTestForSyntheticMethodsWithLambdaNames",
     size = "small",
-    srcs = [
-        "DesugarFunctionalTest.java",
-    ],
+    srcs = ["DesugarFunctionalTest.java"],
     tags = ["no_windows"],
     test_class = "com.google.devtools.build.android.desugar.DesugarFunctionalTest",
     deps = [
@@ -530,6 +544,9 @@ sh_test(
         "@bazel_tools//tools/jdk",
     ],
     tags = ["no_windows"],
+    # This should be current_host_java_runtime, but the last Bazel release
+    # (0.7.0) doesn't support it
+    toolchains = ["@bazel_tools//tools/jdk:current_java_runtime"],
 )
 
 # Make sure desugaring twice doesn't add any files
@@ -548,6 +565,9 @@ sh_test(
         "@bazel_tools//tools/jdk",
     ],
     tags = ["no_windows"],
+    # This should be current_host_java_runtime, but the last Bazel release
+    # (0.7.0) doesn't support it
+    toolchains = ["@bazel_tools//tools/jdk:current_java_runtime"],
 )
 
 sh_test(
@@ -565,6 +585,9 @@ sh_test(
         "@bazel_tools//tools/jdk",
     ],
     tags = ["no_windows"],
+    # This should be current_host_java_runtime, but the last Bazel release
+    # (0.7.0) doesn't support it
+    toolchains = ["@bazel_tools//tools/jdk:current_java_runtime"],
 )
 
 # TODO(b/37110951): Add jar content test for desugared default methods that works with coverage on
@@ -584,6 +607,9 @@ sh_test(
         "@bazel_tools//tools/jdk",
     ],
     tags = ["no_windows"],
+    # This should be current_host_java_runtime, but the last Bazel release
+    # (0.7.0) doesn't support it
+    toolchains = ["@bazel_tools//tools/jdk:current_java_runtime"],
 )
 
 sh_test(
@@ -601,6 +627,9 @@ sh_test(
         "@bazel_tools//tools/jdk",
     ],
     tags = ["no_windows"],
+    # This should be current_host_java_runtime, but the last Bazel release
+    # (0.7.0) doesn't support it
+    toolchains = ["@bazel_tools//tools/jdk:current_java_runtime"],
 )
 
 sh_test(
@@ -618,6 +647,9 @@ sh_test(
         "@bazel_tools//tools/jdk",
     ],
     tags = ["no_windows"],
+    # This should be current_host_java_runtime, but the last Bazel release
+    # (0.7.0) doesn't support it
+    toolchains = ["@bazel_tools//tools/jdk:current_java_runtime"],
 )
 
 # Test for b/63900665
@@ -636,6 +668,9 @@ sh_test(
         "@bazel_tools//tools/jdk",
     ],
     tags = ["no_windows"],
+    # This should be current_host_java_runtime, but the last Bazel release
+    # (0.7.0) doesn't support it
+    toolchains = ["@bazel_tools//tools/jdk:current_java_runtime"],
 )
 
 # Test for b/62047432
@@ -738,6 +773,9 @@ sh_test(
         "@bazel_tools//tools/jdk",
     ],
     tags = ["no_windows"],
+    # This should be current_host_java_runtime, but the last Bazel release
+    # (0.7.0) doesn't support it
+    toolchains = ["@bazel_tools//tools/jdk:current_java_runtime"],
 )
 
 # The following genrules run the code tested here as a build tool.  While that's
@@ -768,6 +806,39 @@ genrule(
     tools = ["//src/tools/android/java/com/google/devtools/build/android/desugar:Desugar"],
 )
 
+# Generates special lambda invocation so we can test for b/62060793.
+genrule(
+    name = "generate_lambda_with_constant_arguments_in_test_data",
+    outs = ["testdata_generate_lambda_with_constant_arguments.jar"],
+    cmd = "$(location :generate_lambda_with_constant_arguments) $@",
+    tags = ["no_windows"],
+    tools = [":generate_lambda_with_constant_arguments"],
+)
+
+# Desugar the test data for b/62456849
+genrule(
+    name = "desugar_lambda_with_constant_arguments",
+    srcs = [
+        ":generate_lambda_with_constant_arguments_in_test_data",
+        # Depend on Jacoco runtime in case testdata was built with coverage instrumentation
+        "//third_party/java/jacoco:blaze-agent",
+        "//tools/defaults:android_jar",
+    ],
+    outs = ["testdata_desugar_generate_lambda_with_constant_arguments.jar"],
+    cmd = "$(location //src/tools/android/java/com/google/devtools/build/android/desugar:Desugar) " +
+          "-i $(location :generate_lambda_with_constant_arguments_in_test_data) -o $@ " +
+          "--classpath_entry $(location //third_party/java/jacoco:blaze-agent) " +
+          "--bootclasspath_entry $(location //tools/defaults:android_jar)",
+    tags = ["no_windows"],
+    tools = ["//src/tools/android/java/com/google/devtools/build/android/desugar:Desugar"],
+)
+
+java_import(
+    name = "desugar_lambda_with_constant_arguments_lib",
+    jars = [":desugar_lambda_with_constant_arguments"],
+    tags = ["no_windows"],
+)
+
 # Convert human-written methods whose names start with "lambda$XXX" to synthetic methods, so we can
 # test for b/62456849.
 genrule(
@@ -788,8 +859,7 @@ genrule(
         "//third_party:guava-jars",
         ":separate",
         ":generate_synthetic_methods_with_lambda_names_in_test_data",
-        # Depend on Jacoco runtime in case testdata was built with coverage
-        # instrumentation
+        # Depend on Jacoco runtime in case testdata was built with coverage instrumentation
         "//third_party/java/jacoco:blaze-agent",
         "//tools/defaults:android_jar",
     ],
@@ -1556,6 +1626,9 @@ sh_test(
         ":capture_lambda_disassembled.txt",
     ],
     tags = ["no_windows"],
+    # This should be current_host_java_runtime, but the last Bazel release
+    # (0.7.0) doesn't support it
+    toolchains = ["@bazel_tools//tools/jdk:current_java_runtime"],
 )
 
 genrule(
@@ -1566,6 +1639,9 @@ genrule(
 $(JAVABASE)/bin/javap -c -p -cp $< 'com.google.devtools.build.android.desugar.testdata.CaptureLambda$$$$Lambda$$0' > $@
 """,
     tags = ["no_windows"],
+    # This should be current_host_java_runtime, but the last Bazel release
+    # (0.7.0) doesn't support it
+    toolchains = ["@bazel_tools//tools/jdk:current_java_runtime"],
     tools = ["@bazel_tools//tools/jdk"],
 )
 
@@ -1592,6 +1668,9 @@ genrule(
 $(JAVABASE)/bin/javap -c -p -cp $< 'com.google.devtools.build.android.desugar.testdata.MethodReferenceSuperclass$$$$Lambda$$0' > $@
 """,
     tags = ["no_windows"],
+    # This should be current_host_java_runtime, but the last Bazel release
+    # (0.7.0) doesn't support it
+    toolchains = ["@bazel_tools//tools/jdk:current_java_runtime"],
     tools = ["@bazel_tools//tools/jdk"],
 )
 
@@ -1620,6 +1699,9 @@ genrule(
 $(JAVABASE)/bin/javap -p -cp $< 'com.google.devtools.build.android.desugar.testdata.java8.InterfaceMethod' | grep -v 'jacoco' | grep -v 'static {}' > $@
 """,
     tags = ["no_windows"],
+    # This should be current_host_java_runtime, but the last Bazel release
+    # (0.7.0) doesn't support it
+    toolchains = ["@bazel_tools//tools/jdk:current_java_runtime"],
     tools = ["@bazel_tools//tools/jdk"],
 )
 
@@ -1648,6 +1730,9 @@ genrule(
 $(JAVABASE)/bin/javap -p -cp $< 'com.google.devtools.build.android.desugar.testdata.java8.Named$$AbstractName' | grep -v 'jacoco' | grep -v 'static {}' > $@
 """,
     tags = ["no_windows"],
+    # This should be current_host_java_runtime, but the last Bazel release
+    # (0.7.0) doesn't support it
+    toolchains = ["@bazel_tools//tools/jdk:current_java_runtime"],
     tools = ["@bazel_tools//tools/jdk"],
 )
 
@@ -1676,6 +1761,9 @@ genrule(
 $(JAVABASE)/bin/javap -p -cp $< 'com.google.devtools.build.android.desugar.testdata.java8.InterfaceMethod$$Concrete' | grep -v 'jacoco' | grep -v 'static {}' > $@
 """,
     tags = ["no_windows"],
+    # This should be current_host_java_runtime, but the last Bazel release
+    # (0.7.0) doesn't support it
+    toolchains = ["@bazel_tools//tools/jdk:current_java_runtime"],
     tools = ["@bazel_tools//tools/jdk"],
 )
 
@@ -1764,6 +1852,9 @@ genrule(
 $(JAVABASE)/bin/javap  -p -cp $< com.google.devtools.build.android.desugar.testdata.OuterReferenceLambda > $(location baseclass_disassembled.txt)
 grep lambda $(location baseclass_disassembled.txt) > $(location baseclass_lambda_signature.txt)""",
     tags = ["no_windows"],
+    # This should be current_host_java_runtime, but the last Bazel release
+    # (0.7.0) doesn't support it
+    toolchains = ["@bazel_tools//tools/jdk:current_java_runtime"],
     tools = ["@bazel_tools//tools/jdk"],
 )
 
@@ -1778,6 +1869,9 @@ genrule(
 $(JAVABASE)/bin/javap -p -cp $< com.google.devtools.build.android.desugar.testdata.LambdaInOverride > $(location subclass_disassembled.txt)
 grep lambda $(location subclass_disassembled.txt) > $(location subclass_lambda_signature.txt)""",
     tags = ["no_windows"],
+    # This should be current_host_java_runtime, but the last Bazel release
+    # (0.7.0) doesn't support it
+    toolchains = ["@bazel_tools//tools/jdk:current_java_runtime"],
     tools = [
         "@bazel_tools//tools/jdk",
     ],
@@ -1807,8 +1901,21 @@ genrule(
     outs = ["jacoco_legacy_default_method_companion_disassembled.txt"],
     cmd = """$(JAVABASE)/bin/javap -c -p -cp $< 'com/example/gavra/java8coverage/Defaults$$$$CC' > $@""",
     tags = ["no_windows"],
+    # This should be current_host_java_runtime, but the last Bazel release
+    # (0.7.0) doesn't support it
+    toolchains = ["@bazel_tools//tools/jdk:current_java_runtime"],
     tools = [
         "@bazel_tools//tools/jdk",
+    ],
+)
+
+java_binary(
+    name = "generate_lambda_with_constant_arguments",
+    srcs = ["Bug62060793TestDataGenerator.java"],
+    main_class = "com.google.devtools.build.android.desugar.Bug62060793TestDataGenerator",
+    deps = [
+        "//third_party:asm",
+        "//third_party:guava",
     ],
 )
 

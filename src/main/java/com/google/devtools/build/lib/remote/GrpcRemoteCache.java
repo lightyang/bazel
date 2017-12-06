@@ -29,7 +29,8 @@ import com.google.devtools.build.lib.actions.EnvironmentalExecException;
 import com.google.devtools.build.lib.actions.ExecException;
 import com.google.devtools.build.lib.actions.MetadataProvider;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadSafe;
-import com.google.devtools.build.lib.remote.Digests.ActionKey;
+import com.google.devtools.build.lib.remote.DigestUtil.ActionKey;
+import com.google.devtools.build.lib.remote.Retrier.RetryException;
 import com.google.devtools.build.lib.remote.TreeNodeRepository.TreeNode;
 import com.google.devtools.build.lib.util.io.FileOutErr;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
@@ -70,20 +71,24 @@ public class GrpcRemoteCache implements RemoteActionCache {
   private final RemoteOptions options;
   private final CallCredentials credentials;
   private final Channel channel;
-  private final Retrier retrier;
-
+  private final RemoteRetrier retrier;
   private final ByteStreamUploader uploader;
-
+  private final DigestUtil digestUtil;
   private final ListeningScheduledExecutorService retryScheduler =
       MoreExecutors.listeningDecorator(Executors.newScheduledThreadPool(1));
 
   @VisibleForTesting
-  public GrpcRemoteCache(Channel channel, CallCredentials credentials, RemoteOptions options,
-      Retrier retrier) {
+  public GrpcRemoteCache(
+      Channel channel,
+      CallCredentials credentials,
+      RemoteOptions options,
+      RemoteRetrier retrier,
+      DigestUtil digestUtil) {
     this.options = options;
     this.credentials = credentials;
     this.channel = channel;
     this.retrier = retrier;
+    this.digestUtil = digestUtil;
 
     uploader = new ByteStreamUploader(options.remoteInstanceName, channel, credentials,
         options.remoteTimeout, retrier, retryScheduler);
@@ -143,7 +148,7 @@ public class GrpcRemoteCache implements RemoteActionCache {
       TreeNodeRepository repository, Path execRoot, TreeNode root, Command command)
       throws IOException, InterruptedException {
     repository.computeMerkleDigests(root);
-    Digest commandDigest = Digests.computeDigest(command);
+    Digest commandDigest = digestUtil.compute(command);
     // TODO(olaola): avoid querying all the digests, only ask for novel subtrees.
     ImmutableSet<Digest> missingDigests =
         getMissingDigests(
@@ -158,17 +163,17 @@ public class GrpcRemoteCache implements RemoteActionCache {
     repository.getDataFromDigests(missingTreeDigests, missingActionInputs, missingTreeNodes);
 
     if (missingDigests.contains(commandDigest)) {
-      toUpload.add(new Chunker(command.toByteArray()));
+      toUpload.add(new Chunker(command.toByteArray(), digestUtil));
     }
     if (!missingTreeNodes.isEmpty()) {
       for (Directory d : missingTreeNodes) {
-        toUpload.add(new Chunker(d.toByteArray()));
+        toUpload.add(new Chunker(d.toByteArray(), digestUtil));
       }
     }
     if (!missingActionInputs.isEmpty()) {
       MetadataProvider inputFileCache = repository.getInputFileCache();
       for (ActionInput actionInput : missingActionInputs) {
-        toUpload.add(new Chunker(actionInput, inputFileCache, execRoot));
+        toUpload.add(new Chunker(actionInput, inputFileCache, execRoot, digestUtil));
       }
     }
     uploader.uploadBlobs(toUpload);
@@ -202,7 +207,7 @@ public class GrpcRemoteCache implements RemoteActionCache {
                   }
                   return null;
                 });
-            Digest receivedDigest = Digests.computeDigest(path);
+            Digest receivedDigest = digestUtil.compute(path);
             if (!receivedDigest.equals(digest)) {
               throw new IOException(
                   "Digest does not match " + receivedDigest + " != " + digest);
@@ -262,7 +267,7 @@ public class GrpcRemoteCache implements RemoteActionCache {
    * This method can throw {@link StatusRuntimeException}, but the RemoteCache interface does not
    * allow throwing such an exception. Any caller must make sure to catch the
    * {@link StatusRuntimeException}. Note that the retrier implicitly catches it, so if this is used
-   * in the context of {@link Retrier#execute}, that's perfectly safe.
+   * in the context of {@link RemoteRetrier#execute}, that's perfectly safe.
    *
    * <p>This method also converts any NOT_FOUND code returned from the server into a
    * {@link CacheNotFoundException}. TODO(olaola): this is not enough. NOT_FOUND can also be raised
@@ -314,7 +319,7 @@ public class GrpcRemoteCache implements RemoteActionCache {
                           .setActionResult(result)
                           .build()));
     } catch (RetryException e) {
-      if (e.causedByStatusCode(Status.Code.UNIMPLEMENTED)) {
+      if (RemoteRetrierUtils.causedByStatus(e, Status.Code.UNIMPLEMENTED)) {
         // Silently return without upload.
         return;
       }
@@ -336,7 +341,7 @@ public class GrpcRemoteCache implements RemoteActionCache {
         throw new UnsupportedOperationException("Storing a directory is not yet supported.");
       }
 
-      Digest digest = Digests.computeDigest(file);
+      Digest digest = digestUtil.compute(file);
       // TODO(olaola): inline small results here.
       result
           .addOutputFilesBuilder()
@@ -378,7 +383,7 @@ public class GrpcRemoteCache implements RemoteActionCache {
    * @return The key for fetching the file contents blob from cache.
    */
   private Digest uploadFileContents(Path file) throws IOException, InterruptedException {
-    Digest digest = Digests.computeDigest(file);
+    Digest digest = digestUtil.compute(file);
     ImmutableSet<Digest> missing = getMissingDigests(ImmutableList.of(digest));
     if (!missing.isEmpty()) {
       uploader.uploadBlob(new Chunker(file));
@@ -394,19 +399,19 @@ public class GrpcRemoteCache implements RemoteActionCache {
    */
   Digest uploadFileContents(ActionInput input, Path execRoot, MetadataProvider inputCache)
       throws IOException, InterruptedException {
-    Digest digest = Digests.getDigestFromInputCache(input, inputCache);
+    Digest digest = DigestUtil.getFromInputCache(input, inputCache);
     ImmutableSet<Digest> missing = getMissingDigests(ImmutableList.of(digest));
     if (!missing.isEmpty()) {
-      uploader.uploadBlob(new Chunker(input, inputCache, execRoot));
+      uploader.uploadBlob(new Chunker(input, inputCache, execRoot, digestUtil));
     }
     return digest;
   }
 
   Digest uploadBlob(byte[] blob) throws IOException, InterruptedException {
-    Digest digest = Digests.computeDigest(blob);
+    Digest digest = digestUtil.compute(blob);
     ImmutableSet<Digest> missing = getMissingDigests(ImmutableList.of(digest));
     if (!missing.isEmpty()) {
-      uploader.uploadBlob(new Chunker(blob));
+      uploader.uploadBlob(new Chunker(blob, digestUtil));
     }
     return digest;
   }
@@ -439,7 +444,7 @@ public class GrpcRemoteCache implements RemoteActionCache {
                           .setActionDigest(actionKey.getDigest())
                           .build()));
     } catch (RetryException e) {
-      if (e.causedByStatusCode(Status.Code.NOT_FOUND)) {
+      if (RemoteRetrierUtils.causedByStatus(e, Status.Code.NOT_FOUND)) {
         // Return null to indicate that it was a cache miss.
         return null;
       }

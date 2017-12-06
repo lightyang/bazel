@@ -165,9 +165,16 @@ public class ParamFileWriteActionTest extends BuildViewTestCase {
       }
     };
 
-    Executor executor = new TestExecutorBuilder(directories, binTools).build();
-    return new ActionExecutionContext(executor, null, ActionInputPrefetcher.NONE, null,
-        new FileOutErr(), ImmutableMap.<String, String>of(), artifactExpander);
+    Executor executor = new TestExecutorBuilder(fileSystem, directories, binTools).build();
+    return new ActionExecutionContext(
+        executor,
+        null,
+        ActionInputPrefetcher.NONE,
+        actionKeyContext,
+        null,
+        new FileOutErr(),
+        ImmutableMap.<String, String>of(),
+        artifactExpander);
   }
 
   private enum KeyAttributes {
@@ -198,6 +205,7 @@ public class ParamFileWriteActionTest extends BuildViewTestCase {
               commandLine,
               parameterFileType,
               charset);
-        });
+        },
+        actionKeyContext);
   }
 }

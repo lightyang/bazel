@@ -60,7 +60,7 @@ abstract class AbstractSandboxSpawnRunner implements SpawnRunner {
     this.sandboxOptions = cmdEnv.getOptions().getOptions(SandboxOptions.class);
     this.verboseFailures = cmdEnv.getOptions().getOptions(ExecutionOptions.class).verboseFailures;
     this.inaccessiblePaths =
-        sandboxOptions.getInaccessiblePaths(cmdEnv.getDirectories().getFileSystem());
+        sandboxOptions.getInaccessiblePaths(cmdEnv.getRuntime().getFileSystem());
   }
 
   @Override
@@ -139,12 +139,12 @@ abstract class AbstractSandboxSpawnRunner implements SpawnRunner {
         sandbox.getSandboxExecRoot().getPathFile());
 
     long startTime = System.currentTimeMillis();
-    CommandResult result;
+    CommandResult commandResult;
     try {
       if (!tmpDir.exists() && !tmpDir.createDirectory()) {
         throw new IOException(String.format("Could not create temp directory '%s'", tmpDir));
       }
-      result = cmd.execute(outErr.getOutputStream(), outErr.getErrorStream());
+      commandResult = cmd.execute(outErr.getOutputStream(), outErr.getErrorStream());
       if (Thread.currentThread().isInterrupted()) {
         throw new InterruptedException();
       }
@@ -152,7 +152,7 @@ abstract class AbstractSandboxSpawnRunner implements SpawnRunner {
       if (Thread.currentThread().isInterrupted()) {
         throw new InterruptedException();
       }
-      result = e.getResult();
+      commandResult = e.getResult();
     } catch (CommandException e) {
       // At the time this comment was written, this must be a ExecFailedException encapsulating an
       // IOException from the underlying Subprocess.Factory.
@@ -165,21 +165,28 @@ abstract class AbstractSandboxSpawnRunner implements SpawnRunner {
           .build();
     }
 
-    long wallTime = System.currentTimeMillis() - startTime;
+    // TODO(b/62588075): Calculate wall time inside commands instead?
+    Duration wallTime = Duration.ofMillis(System.currentTimeMillis() - startTime);
     boolean wasTimeout = wasTimeout(timeout, wallTime);
-    Status status = wasTimeout ? Status.TIMEOUT : Status.SUCCESS;
-    int exitCode = status == Status.TIMEOUT
-        ? POSIX_TIMEOUT_EXIT_CODE
-        : result.getTerminationStatus().getRawExitCode();
+    int exitCode =
+        wasTimeout
+            ? POSIX_TIMEOUT_EXIT_CODE
+            : commandResult.getTerminationStatus().getRawExitCode();
+    Status status =
+        wasTimeout
+            ? Status.TIMEOUT
+            : (exitCode == 0) ? Status.SUCCESS : Status.NON_ZERO_EXIT;
     return new SpawnResult.Builder()
         .setStatus(status)
         .setExitCode(exitCode)
-        .setWallTimeMillis(wallTime)
+        .setWallTime(wallTime)
+        .setUserTime(commandResult.getUserExecutionTime())
+        .setSystemTime(commandResult.getSystemExecutionTime())
         .build();
   }
 
-  private boolean wasTimeout(Duration timeout, long wallTimeMillis) {
-    return !timeout.isZero() && wallTimeMillis > timeout.toMillis();
+  private boolean wasTimeout(Duration timeout, Duration wallTime) {
+    return !timeout.isZero() && wallTime.compareTo(timeout) > 0;
   }
 
   /**

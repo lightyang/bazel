@@ -14,40 +14,110 @@
 
 package com.google.devtools.build.lib.actions;
 
+import static com.google.common.base.Preconditions.checkState;
+
 import com.google.auto.value.AutoValue;
-import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.ImmutableList;
 import java.time.Duration;
-import java.util.Set;
+import java.util.List;
+import java.util.Optional;
+import java.util.function.Function;
 
 /** Holds the result(s) of an action's execution. */
 @AutoValue
 public abstract class ActionResult {
 
   /** An empty ActionResult used by Actions that don't have any metadata to return. */
-  public static final ActionResult EMPTY = ActionResult.create(ImmutableSet.of());
+  public static final ActionResult EMPTY = ActionResult.create(ImmutableList.of());
 
   /** Returns the SpawnResults for the action. */
-  public abstract Set<SpawnResult> spawnResults();
+  public abstract List<SpawnResult> spawnResults();
 
   /** Returns a builder that can be used to construct a {@link ActionResult} object. */
   public static Builder builder() {
     return new AutoValue_ActionResult.Builder();
   }
 
-  /** Returns the cumulative command execution wall time for the {@link Action}. */
-  public Duration cumulativeCommandExecutionWallTime() {
-    long totalMillis = 0;
+  /**
+   * Returns the cumulative time taken by a series of {@link SpawnResult}s.
+   *
+   * @param getSpawnResultExecutionTime a selector that returns either the wall, user or system time
+   *     for each {@link SpawnResult} being considered
+   */
+  private Optional<Duration> getCumulativeTime(
+      Function<SpawnResult, Optional<Duration>> getSpawnResultExecutionTime) {
+    Long totalMillis = null;
     for (SpawnResult spawnResult : spawnResults()) {
-      // TODO(b/62588075): getWallTimeMillis() stores wall time of a Spawn from the JVM's
-      // perspective. But instead we should really record a Spawn's wall time (and system time, user
-      // time, etc.) from outside of the JVM.
-      totalMillis += spawnResult.getWallTimeMillis();
+      Optional<Duration> executionTime = getSpawnResultExecutionTime.apply(spawnResult);
+      if (executionTime.isPresent()) {
+        if (totalMillis == null) {
+          totalMillis = executionTime.get().toMillis();
+        } else {
+          totalMillis += executionTime.get().toMillis();
+        }
+      }
     }
-    return Duration.ofMillis(totalMillis);
+    if (totalMillis == null) {
+      return Optional.empty();
+    } else {
+      return Optional.of(Duration.ofMillis(totalMillis));
+    }
   }
 
-  /** Creates an ActionResult given a set of SpawnResults. */
-  public static ActionResult create(Set<SpawnResult> spawnResults) {
+  /**
+   * Returns the cumulative command execution wall time for the {@link Action}.
+   *
+   * @return the cumulative measurement, or empty in case of execution errors or when the
+   *     measurement is not implemented for the current platform
+   */
+  public Optional<Duration> cumulativeCommandExecutionWallTime() {
+    return getCumulativeTime(spawnResult -> spawnResult.getWallTime());
+  }
+
+  /**
+   * Returns the cumulative command execution user time for the {@link Action}.
+   *
+   * @return the cumulative measurement, or empty in case of execution errors or when the
+   *     measurement is not implemented for the current platform
+   */
+  public Optional<Duration> cumulativeCommandExecutionUserTime() {
+    return getCumulativeTime(spawnResult -> spawnResult.getUserTime());
+  }
+
+  /**
+   * Returns the cumulative command execution system time for the {@link Action}.
+   *
+   * @return the cumulative measurement, or empty in case of execution errors or when the
+   *     measurement is not implemented for the current platform
+   */
+  public Optional<Duration> cumulativeCommandExecutionSystemTime() {
+    return getCumulativeTime(spawnResult -> spawnResult.getSystemTime());
+  }
+
+  /**
+   * Returns the cumulative command execution CPU time for the {@link Action}.
+   *
+   * @return the cumulative measurement, or empty in case of execution errors or when the
+   *     measurement is not implemented for the current platform
+   */
+  public Optional<Duration> cumulativeCommandExecutionCpuTime() {
+    Optional<Duration> userTime = cumulativeCommandExecutionUserTime();
+    Optional<Duration> systemTime = cumulativeCommandExecutionSystemTime();
+
+    if (!userTime.isPresent() && !systemTime.isPresent()) {
+      return Optional.empty();
+    } else if (userTime.isPresent() && !systemTime.isPresent()) {
+      return userTime;
+    } else if (!userTime.isPresent() && systemTime.isPresent()) {
+      return systemTime;
+    } else {
+      checkState(userTime.isPresent() && systemTime.isPresent());
+      return Optional.of(userTime.get().plus(systemTime.get()));
+    }
+  }
+
+  /** Creates an ActionResult given a list of SpawnResults. */
+  public static ActionResult create(List<SpawnResult> spawnResults) {
     if (spawnResults == null) {
       return EMPTY;
     } else {
@@ -60,7 +130,7 @@ public abstract class ActionResult {
   public abstract static class Builder {
 
     /** Sets the SpawnResults for the action. */
-    public abstract Builder setSpawnResults(Set<SpawnResult> spawnResults);
+    public abstract Builder setSpawnResults(List<SpawnResult> spawnResults);
 
     /** Builds and returns an ActionResult object. */
     public abstract ActionResult build();

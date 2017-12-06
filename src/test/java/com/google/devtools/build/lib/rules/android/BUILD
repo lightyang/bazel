@@ -11,13 +11,16 @@ filegroup(
 )
 
 java_test(
-    name = "AndroidSkylarkSplitTransitionTest",
-    srcs = ["AndroidSkylarkSplitTransitionTest.java"],
+    name = "AarImportTest",
+    srcs = ["AarImportTest.java"],
     deps = [
+        "//src/main/java/com/google/devtools/build/lib:android-rules",
         "//src/main/java/com/google/devtools/build/lib:build-base",
-        "//src/main/java/com/google/devtools/build/lib:syntax",
+        "//src/main/java/com/google/devtools/build/lib:java-compilation",
+        "//src/main/java/com/google/devtools/build/lib/actions",
+        "//src/main/java/com/google/devtools/build/lib/collect/nestedset",
+        "//src/test/java/com/google/devtools/build/lib:actions_testutil",
         "//src/test/java/com/google/devtools/build/lib:analysis_testutil",
-        "//src/test/java/com/google/devtools/build/lib:packages_testutil",
         "//third_party:guava",
         "//third_party:junit4",
         "//third_party:truth",
@@ -25,18 +28,13 @@ java_test(
 )
 
 java_test(
-    name = "ApkManifestActionTest",
-    srcs = ["ApkManifestActionTest.java"],
+    name = "AndroidSkylarkSplitTransitionTest",
+    srcs = ["AndroidSkylarkSplitTransitionTest.java"],
     deps = [
-        "//src/main/java/com/google/devtools/build/lib:android-rules",
         "//src/main/java/com/google/devtools/build/lib:build-base",
-        "//src/main/java/com/google/devtools/build/lib/actions",
-        "//src/main/java/com/google/devtools/build/lib/cmdline",
-        "//src/main/java/com/google/devtools/build/lib/collect",
-        "//src/main/java/com/google/devtools/build/lib/collect/nestedset",
-        "//src/main/java/com/google/devtools/build/lib/vfs",
-        "//src/test/java/com/google/devtools/build/lib:actions_testutil",
-        "//src/test/java/com/google/devtools/build/lib:foundations_testutil",
+        "//src/main/java/com/google/devtools/build/lib:syntax",
+        "//src/test/java/com/google/devtools/build/lib:analysis_testutil",
+        "//src/test/java/com/google/devtools/build/lib:packages_testutil",
         "//third_party:guava",
         "//third_party:junit4",
         "//third_party:truth",
@@ -65,7 +63,6 @@ java_test(
         "//src/main/java/com/google/devtools/build/lib:build-base",
         "//src/main/java/com/google/devtools/build/lib:java-compilation",
         "//src/main/java/com/google/devtools/build/lib:packages-internal",
-        "//src/main/java/com/google/devtools/build/lib:preconditions",
         "//src/main/java/com/google/devtools/build/lib:syntax",
         "//src/main/java/com/google/devtools/build/lib:util",
         "//src/main/java/com/google/devtools/build/lib/actions",
@@ -86,8 +83,8 @@ java_test(
 )
 
 java_test(
-    name = "ResourceFilterTest",
-    srcs = ["ResourceFilterTest.java"],
+    name = "ResourceFilterFactoryTest",
+    srcs = ["ResourceFilterFactoryTest.java"],
     deps = [
         ":ResourceTestBase",
         "//src/main/java/com/google/devtools/build/lib:android-rules",
@@ -168,24 +165,6 @@ java_test(
 )
 
 java_test(
-    name = "AndroidInstrumentationRuleImplTest",
-    srcs = ["AndroidInstrumentationRuleImplTest.java"],
-    deps = [
-        ":AndroidBuildViewTestCase",
-        "//src/main/java/com/google/devtools/build/lib:android-rules",
-        "//src/main/java/com/google/devtools/build/lib:build-base",
-        "//src/main/java/com/google/devtools/build/lib:packages-internal",
-        "//src/main/java/com/google/devtools/build/lib/actions",
-        "//src/main/java/com/google/devtools/build/lib/vfs",
-        "//src/test/java/com/google/devtools/build/lib:analysis_testutil",
-        "//src/test/java/com/google/devtools/build/lib:testutil",
-        "//third_party:guava",
-        "//third_party:junit4",
-        "//third_party:truth",
-    ],
-)
-
-java_test(
     name = "AndroidInstrumentationTestTest",
     srcs = ["AndroidInstrumentationTestTest.java"],
     tags = ["no_windows"],
@@ -236,7 +215,6 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib:android-rules",
         "//src/main/java/com/google/devtools/build/lib:build-base",
         "//src/main/java/com/google/devtools/build/lib:java-compilation",
-        "//src/main/java/com/google/devtools/build/lib:preconditions",
         "//src/main/java/com/google/devtools/build/lib/actions",
         "//src/main/java/com/google/devtools/build/lib/cmdline",
         "//src/main/protobuf:android_deploy_info_java_proto",
@@ -298,6 +276,18 @@ java_test(
         "//src/test/java/com/google/devtools/build/lib:actions_testutil",
         "//src/test/java/com/google/devtools/build/lib:testutil",
         "//third_party:guava",
+        "//third_party:junit4",
+        "//third_party:truth",
+    ],
+)
+
+java_test(
+    name = "AndroidSdkTest",
+    srcs = ["AndroidSdkTest.java"],
+    runtime_deps = ["//src/test/java/com/google/devtools/build/lib:testutil"],
+    deps = [
+        "//src/main/java/com/google/devtools/build/lib:android-rules",
+        "//src/test/java/com/google/devtools/build/lib:analysis_testutil",
         "//third_party:junit4",
         "//third_party:truth",
     ],

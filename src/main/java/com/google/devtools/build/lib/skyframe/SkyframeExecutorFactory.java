@@ -13,15 +13,15 @@
 // limitations under the License.
 package com.google.devtools.build.lib.skyframe;
 
-import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.devtools.build.lib.actions.ActionKeyContext;
 import com.google.devtools.build.lib.analysis.BlazeDirectories;
 import com.google.devtools.build.lib.analysis.WorkspaceStatusAction.Factory;
 import com.google.devtools.build.lib.analysis.buildinfo.BuildInfoFactory;
 import com.google.devtools.build.lib.packages.PackageFactory;
 import com.google.devtools.build.lib.util.AbruptExitException;
-import com.google.devtools.build.lib.vfs.PathFragment;
+import com.google.devtools.build.lib.vfs.FileSystem;
 import com.google.devtools.build.skyframe.SkyFunction;
 import com.google.devtools.build.skyframe.SkyFunctionName;
 
@@ -35,11 +35,11 @@ public interface SkyframeExecutorFactory {
    *
    * @param tsgm timestamp granularity monitor
    * @param pkgFactory the package factory
+   * @param fileSystem the Blaze file system
    * @param directories Blaze directories
    * @param workspaceStatusActionFactory a factory for creating WorkspaceStatusAction objects
    * @param buildInfoFactories list of BuildInfoFactories
    * @param diffAwarenessFactories
-   * @param allowedMissingInputs
    * @param extraSkyFunctions
    * @param customDirtinessCheckers
    * @return an instance of the SkyframeExecutor
@@ -47,11 +47,12 @@ public interface SkyframeExecutorFactory {
    */
   SkyframeExecutor create(
       PackageFactory pkgFactory,
+      FileSystem fileSystem,
       BlazeDirectories directories,
+      ActionKeyContext actionKeyContext,
       Factory workspaceStatusActionFactory,
       ImmutableList<BuildInfoFactory> buildInfoFactories,
       Iterable<? extends DiffAwareness.Factory> diffAwarenessFactories,
-      Predicate<PathFragment> allowedMissingInputs,
       ImmutableMap<SkyFunctionName, SkyFunction> extraSkyFunctions,
       Iterable<SkyValueDirtinessChecker> customDirtinessCheckers)
       throws AbruptExitException;

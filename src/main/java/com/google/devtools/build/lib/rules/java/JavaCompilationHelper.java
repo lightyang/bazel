@@ -18,6 +18,7 @@ import static com.google.devtools.build.lib.analysis.config.BuildConfiguration.S
 import static com.google.devtools.build.lib.rules.java.JavaHelper.getHostJavabaseInputs;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
@@ -40,12 +41,10 @@ import com.google.devtools.build.lib.packages.AttributeMap;
 import com.google.devtools.build.lib.rules.java.JavaConfiguration.JavaClasspathMode;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.FileType;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.LinkedList;
 import java.util.List;
 import javax.annotation.Nullable;
 
@@ -169,14 +168,15 @@ public final class JavaCompilationHelper {
    *        (null if no sources will be generated).
    * @param outputDepsProto the compiler-generated jdeps file to create with the Action
    *        (null if not requested)
-   * @param outputMetadata metadata file (null if no instrumentation is needed).
+   * @param instrumentationMetadataJar metadata file (null if no instrumentation is needed or if
+   * --experimental_java_coverage is true).
    */
   public void createCompileAction(
       Artifact outputJar,
       Artifact manifestProtoOutput,
       @Nullable Artifact gensrcOutputJar,
       @Nullable Artifact outputDepsProto,
-      @Nullable Artifact outputMetadata) {
+      @Nullable Artifact instrumentationMetadataJar) {
 
     JavaTargetAttributes attributes = getAttributes();
 
@@ -197,19 +197,20 @@ public final class JavaCompilationHelper {
     }
 
     JavaCompileAction.Builder builder = createJavaCompileActionBuilder(semantics);
+    builder.setArtifactForExperimentalCoverage(maybeCreateExperimentalCoverageArtifact(outputJar));
     builder.setClasspathEntries(attributes.getCompileTimeClassPath());
     builder.setBootclasspathEntries(getBootclasspathOrDefault());
     builder.setSourcePathEntries(attributes.getSourcePath());
     builder.setExtdirInputs(getExtdirInputs());
     builder.setLangtoolsJar(javaToolchain.getJavac());
     builder.setToolsJars(javaToolchain.getTools());
-    builder.setJavaBuilderJar(javaToolchain.getJavaBuilder());
+    builder.setJavaBuilder(javaToolchain.getJavaBuilder());
     builder.setOutputJar(classJar);
     builder.setManifestProtoOutput(manifestProtoOutput);
     builder.setGensrcOutputJar(gensrcOutputJar);
     builder.setOutputDepsProto(outputDepsProto);
     builder.setAdditionalOutputs(attributes.getAdditionalOutputs());
-    builder.setMetadata(outputMetadata);
+    builder.setMetadata(instrumentationMetadataJar);
     builder.setInstrumentationJars(jacocoInstrumentation);
     builder.setSourceFiles(attributes.getSourceFiles());
     builder.addSourceJars(attributes.getSourceJars());
@@ -251,6 +252,26 @@ public final class JavaCompilationHelper {
     } else {
       return getBootClasspath();
     }
+  }
+
+  /**
+   * Creates an {@link Artifact} needed by {@code JacocoCoverageRunner} when
+   * {@code --experimental_java_coverage} is true.
+   *
+   * <p> The {@link Artifact} is created in the same directory as the given {@code compileJar} and
+   * has the suffix {@code -paths-for-coverage.txt}.
+   *
+   * <p> Returns {@code null} if {@code compileJar} should not be instrumented.
+   */
+  private Artifact maybeCreateExperimentalCoverageArtifact(Artifact compileJar) {
+    if (!shouldInstrumentJar() || !getConfiguration().isExperimentalJavaCoverage()) {
+      return null;
+    }
+    PathFragment packageRelativePath =
+        compileJar.getRootRelativePath().relativeTo(ruleContext.getPackageDirectory());
+    PathFragment path =
+        FileSystemUtils.replaceExtension(packageRelativePath, "-paths-for-coverage.txt");
+    return ruleContext.getPackageRelativeArtifact(path, compileJar.getRoot());
   }
 
   /**
@@ -300,6 +321,10 @@ public final class JavaCompilationHelper {
   @Nullable
   public Artifact createInstrumentationMetadata(Artifact outputJar,
       JavaCompilationArtifacts.Builder javaArtifactsBuilder) {
+    // In the experimental java coverage we don't create the .em jar for instrumentation.
+    if (getConfiguration().isExperimentalJavaCoverage()) {
+      return null;
+    }
     // If we need to instrument the jar, add additional output (the coverage metadata file) to the
     // JavaCompileAction.
     Artifact instrumentationMetadata = null;
@@ -583,7 +608,28 @@ public final class JavaCompilationHelper {
    * @param outputJar the Artifact to create with the Action
    * @param gensrcJar the generated sources jar Artifact that should be included with the
    *        sources in the output Artifact.  May be null.
+   * @param javaToolchainProvider is used by SingleJarActionBuilder to retrieve jvm options
+   * @param hostJavabaseInputs Artifacts required to invoke java executable in the SingleJar action
+   * @param hostJavaExecutable the jar executable of the SingleJar action
    */
+  public void createSourceJarAction(
+      Artifact outputJar,
+      @Nullable Artifact gensrcJar,
+      JavaToolchainProvider javaToolchainProvider,
+      NestedSet<Artifact> hostJavabaseInputs,
+      PathFragment hostJavaExecutable) {
+    JavaTargetAttributes attributes = getAttributes();
+    NestedSetBuilder<Artifact> resourceJars = NestedSetBuilder.stableOrder();
+    resourceJars.addAll(attributes.getSourceJars());
+    if (gensrcJar != null) {
+      resourceJars.add(gensrcJar);
+    }
+    SingleJarActionBuilder.createSourceJarAction(
+        ruleContext, semantics, attributes.getSourceFiles(),
+        resourceJars.build(), outputJar, javaToolchainProvider,
+        hostJavabaseInputs, hostJavaExecutable);
+  }
+
   public void createSourceJarAction(Artifact outputJar, @Nullable Artifact gensrcJar) {
     JavaTargetAttributes attributes = getAttributes();
     NestedSetBuilder<Artifact> resourceJars = NestedSetBuilder.stableOrder();
@@ -678,7 +724,7 @@ public final class JavaCompilationHelper {
 
     JavaClasspathMode classpathMode = getJavaConfiguration().getReduceJavaClasspath();
     if (isStrict() && classpathMode != JavaClasspathMode.OFF) {
-      List<JavaCompilationArgsProvider> compilationArgsProviders = new LinkedList<>();
+      List<JavaCompilationArgsProvider> compilationArgsProviders = new ArrayList<>();
       for (TransitiveInfoCollection dep : deps) {
         JavaCompilationArgsProvider provider =
             JavaInfo.getProvider(JavaCompilationArgsProvider.class, dep);
@@ -720,7 +766,7 @@ public final class JavaCompilationHelper {
   private static ImmutableList<String> getDefaultJavacOptsFromRule(RuleContext ruleContext) {
     return ImmutableList.copyOf(
         Iterables.concat(
-            JavaToolchainProvider.fromRuleContext(ruleContext).getJavacOptions(),
+            JavaToolchainProvider.from(ruleContext).getJavacOptions(),
             ruleContext.getExpander().withDataLocations().tokenized("javacopts")));
   }
 
@@ -736,8 +782,7 @@ public final class JavaCompilationHelper {
 
   public static JavaToolchainProvider getJavaToolchainProvider(
       RuleContext ruleContext, String implicitAttributesSuffix) {
-    return ruleContext.getPrerequisite(
-        ":java_toolchain" + implicitAttributesSuffix, Mode.TARGET, JavaToolchainProvider.class);
+    return JavaToolchainProvider.from(ruleContext, ":java_toolchain" + implicitAttributesSuffix);
   }
 
   public static JavaToolchainProvider getJavaToolchainProvider(RuleContext ruleContext) {

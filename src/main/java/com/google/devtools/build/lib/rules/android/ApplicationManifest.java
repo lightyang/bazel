@@ -23,7 +23,6 @@ import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.devtools.build.lib.actions.Artifact;
-import com.google.devtools.build.lib.analysis.FileProvider;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
@@ -241,7 +240,8 @@ public final class ApplicationManifest {
 
   public ApplicationManifest mergeWith(
       RuleContext ruleContext, ResourceDependencies resourceDeps, boolean legacy) {
-    Map<Artifact, Label> mergeeManifests = getMergeeManifests(resourceDeps.getResourceContainers());
+    Map<Artifact, Label> mergeeManifests =
+        getMergeeManifests(resourceDeps.getResourceContainers());
 
     if (legacy) {
       if (!mergeeManifests.isEmpty()) {
@@ -339,35 +339,22 @@ public final class ApplicationManifest {
       RuleContext ruleContext,
       Artifact resourceApk,
       ResourceDependencies resourceDeps,
+      @Nullable Artifact rTxt,
       boolean incremental,
       Artifact proguardCfg,
       @Nullable String packageUnderTest)
       throws InterruptedException, RuleErrorException {
-    // Filter the resources during analysis to prevent processing of dependencies on unwanted
-    // resources during execution.
-    ResourceFilter resourceFilter = ResourceFilter.fromRuleContext(ruleContext);
-    resourceDeps = resourceDeps.filter(ruleContext, resourceFilter);
-
     LocalResourceContainer data =
-        new LocalResourceContainer.Builder(ruleContext)
-            .withAssets(
-                AndroidCommon.getAssetDir(ruleContext),
-                ruleContext.getPrerequisitesIf(
-                    // TODO(bazel-team): Remove the ResourceType construct.
-                    ResourceType.ASSETS.getAttribute(), Mode.TARGET, FileProvider.class))
-            .withResources(
-                ruleContext.getPrerequisites(
-                    "local_resource_files", Mode.TARGET, FileProvider.class))
-            .build().filter(ruleContext, resourceFilter);
+        LocalResourceContainer.forAssetsAndResources(
+            ruleContext, "assets", AndroidCommon.getAssetDir(ruleContext), "local_resource_files");
 
-    // Now that the LocalResourceContainer has been filtered, we can build a filtered resource
-    // container from it.
     ResourceContainer resourceContainer =
         checkForInlinedResources(
             ResourceContainer.builderFromRule(ruleContext)
                 .setAssetsAndResourcesFrom(data)
                 .setManifest(getManifest())
                 .setApk(resourceApk)
+                .setRTxt(rTxt)
                 .build(),
             resourceDeps
                 .getResourceContainers(), // TODO(bazel-team): Figure out if we really need to check
@@ -380,7 +367,6 @@ public final class ApplicationManifest {
         new AndroidResourcesProcessorBuilder(ruleContext)
             .setLibrary(false)
             .setApkOut(resourceContainer.getApk())
-            .setResourceFilter(resourceFilter)
             .setUncompressedExtensions(ImmutableList.of())
             .setCrunchPng(true)
             .setJavaPackage(resourceContainer.getJavaPackage())
@@ -430,9 +416,11 @@ public final class ApplicationManifest {
       throws InterruptedException, RuleErrorException {
     // Filter the resources during analysis to prevent processing of dependencies on unwanted
     // resources during execution.
-    ResourceFilter resourceFilter = ResourceFilter.fromRuleContext(ruleContext);
+    ResourceFilter resourceFilter =
+        ResourceFilterFactory.fromRuleContext(ruleContext)
+            .getResourceFilter(ruleContext, resourceDeps, data);
     data = data.filter(ruleContext, resourceFilter);
-    resourceDeps = resourceDeps.filter(ruleContext, resourceFilter);
+    resourceDeps = resourceDeps.filter(resourceFilter);
 
     // Now that the LocalResourceContainer has been filtered, we can build a filtered resource
     // container from it.
@@ -522,21 +510,17 @@ public final class ApplicationManifest {
       Artifact proguardCfg)
       throws InterruptedException, RuleErrorException {
     LocalResourceContainer data =
-        new LocalResourceContainer.Builder(ruleContext)
-            .withAssets(
-                AndroidCommon.getAssetDir(ruleContext),
-                ruleContext.getPrerequisitesIf(
-                    // TODO(bazel-team): Remove the ResourceType construct.
-                    ResourceType.ASSETS.getAttribute(), Mode.TARGET, FileProvider.class))
-            .withResources(
-                ruleContext.getPrerequisites("resource_files", Mode.TARGET, FileProvider.class))
-            .build();
+        LocalResourceContainer.forAssetsAndResources(
+            ruleContext, "assets", AndroidCommon.getAssetDir(ruleContext), "resource_files");
 
     // Filter the resources during analysis to prevent processing of dependencies on unwanted
     // resources during execution.
-    ResourceFilter resourceFilter = ResourceFilter.fromRuleContext(ruleContext);
+    ResourceFilterFactory resourceFilterFactory =
+        ResourceFilterFactory.fromRuleContext(ruleContext);
+    ResourceFilter resourceFilter =
+        resourceFilterFactory.getResourceFilter(ruleContext, resourceDeps, data);
     data = data.filter(ruleContext, resourceFilter);
-    resourceDeps = resourceDeps.filter(ruleContext, resourceFilter);
+    resourceDeps = resourceDeps.filter(resourceFilter);
 
     // Now that the LocalResourceContainer has been filtered, we can build a filtered resource
     // container from it.
@@ -558,7 +542,7 @@ public final class ApplicationManifest {
         new AndroidResourcesProcessorBuilder(ruleContext)
             .setLibrary(false)
             .setApkOut(resourceContainer.getApk())
-            .setResourceFilter(resourceFilter)
+            .setResourceFilterFactory(resourceFilterFactory)
             .setUncompressedExtensions(uncompressedExtensions)
             .setCrunchPng(crunchPng)
             .setJavaPackage(resourceContainer.getJavaPackage())
@@ -596,11 +580,12 @@ public final class ApplicationManifest {
       Artifact resourceApk,
       ResourceDependencies resourceDeps,
       @Nullable Artifact rTxt,
-      ResourceFilter resourceFilter,
+      ResourceFilterFactory resourceFilterFactory,
       List<String> uncompressedExtensions,
       boolean crunchPng,
       Artifact proguardCfg,
       @Nullable Artifact mainDexProguardCfg,
+      boolean conditionalKeepRules,
       Artifact manifestOut,
       Artifact mergedResources,
       @Nullable Artifact dataBindingInfoZip,
@@ -608,18 +593,13 @@ public final class ApplicationManifest {
       @Nullable Artifact featureAfter)
       throws InterruptedException, RuleErrorException {
     LocalResourceContainer data =
-        new LocalResourceContainer.Builder(ruleContext)
-            .withAssets(
-                AndroidCommon.getAssetDir(ruleContext),
-                ruleContext.getPrerequisitesIf(
-                    // TODO(bazel-team): Remove the ResourceType construct.
-                    ResourceType.ASSETS.getAttribute(), Mode.TARGET, FileProvider.class))
-            .withResources(
-                ruleContext.getPrerequisites("resource_files", Mode.TARGET, FileProvider.class))
-            .build()
-            .filter(ruleContext, resourceFilter);
+        LocalResourceContainer.forAssetsAndResources(
+            ruleContext, "assets", AndroidCommon.getAssetDir(ruleContext), "resource_files");
 
-    resourceDeps = resourceDeps.filter(ruleContext, resourceFilter);
+    ResourceFilter resourceFilter =
+        resourceFilterFactory.getResourceFilter(ruleContext, resourceDeps, data);
+    data = data.filter(ruleContext, resourceFilter);
+    resourceDeps = resourceDeps.filter(resourceFilter);
 
     // Now that the LocalResourceContainer has been filtered, we can build a filtered resource
     // container from it.
@@ -638,11 +618,22 @@ public final class ApplicationManifest {
             // have checked its dependencies.
             ruleContext);
 
+    AndroidConfiguration androidConfiguration = ruleContext.getConfiguration()
+        .getFragment(AndroidConfiguration.class);
+
+    boolean skipParsingAction =
+        targetAaptVersion == AndroidAaptVersion.AAPT2 && androidConfiguration.skipParsingAction();
+
+    if (conditionalKeepRules && targetAaptVersion != AndroidAaptVersion.AAPT2) {
+      throw ruleContext.throwWithRuleError(
+          "resource cycle shrinking can only be enabled for builds with aapt2");
+    }
+
     ResourceContainer processed =
         new AndroidResourcesProcessorBuilder(ruleContext)
             .setLibrary(false)
             .setApkOut(resourceContainer.getApk())
-            .setResourceFilter(resourceFilter)
+            .setResourceFilterFactory(resourceFilterFactory)
             .setUncompressedExtensions(uncompressedExtensions)
             .setCrunchPng(crunchPng)
             .setJavaPackage(resourceContainer.getJavaPackage())
@@ -653,17 +644,15 @@ public final class ApplicationManifest {
             .withDependencies(resourceDeps)
             .setProguardOut(proguardCfg)
             .setMainDexProguardOut(mainDexProguardCfg)
+            .conditionalKeepRules(conditionalKeepRules)
             .setDataBindingInfoZip(dataBindingInfoZip)
             .setApplicationId(manifestValues.get("applicationId"))
             .setVersionCode(manifestValues.get("versionCode"))
             .setVersionName(manifestValues.get("versionName"))
             .setFeatureOf(featureOf)
             .setFeatureAfter(featureAfter)
-            .setThrowOnResourceConflict(
-                ruleContext
-                    .getConfiguration()
-                    .getFragment(AndroidConfiguration.class)
-                    .throwOnResourceConflict())
+            .setThrowOnResourceConflict(androidConfiguration.throwOnResourceConflict())
+            .setUseCompiledResourcesForMerge(skipParsingAction)
             .targetAaptVersion(targetAaptVersion)
             .setRTxtOut(resourceContainer.getRTxt())
             .setSymbols(resourceContainer.getSymbols())
@@ -693,19 +682,15 @@ public final class ApplicationManifest {
       throws InterruptedException, RuleErrorException {
     // Filter the resources during analysis to prevent processing of dependencies on unwanted
     // resources during execution.
-    ResourceFilter resourceFilter = ResourceFilter.fromRuleContext(ruleContext);
     LocalResourceContainer data =
-        new LocalResourceContainer.Builder(ruleContext)
-            .withAssets(
-                AndroidCommon.getAssetDir(ruleContext),
-                ruleContext.getPrerequisitesIf(
-                    // TODO(bazel-team): Remove the ResourceType construct.
-                    ResourceType.ASSETS.getAttribute(), Mode.TARGET, FileProvider.class))
-            .withResources(
-                ruleContext.getPrerequisites("resource_files", Mode.TARGET, FileProvider.class))
-            .build()
-            .filter(ruleContext, resourceFilter);
-    resourceDeps = resourceDeps.filter(ruleContext, resourceFilter);
+        LocalResourceContainer.forAssetsAndResources(
+            ruleContext, "assets", AndroidCommon.getAssetDir(ruleContext), "resource_files");
+    ResourceFilter resourceFilter =
+        ResourceFilterFactory.fromRuleContext(ruleContext)
+            .getResourceFilter(ruleContext, resourceDeps, data);
+    data = data.filter(ruleContext, resourceFilter);
+    resourceDeps = resourceDeps.filter(resourceFilter);
+
     ResourceContainer.Builder builder =
         ResourceContainer.builderFromRule(ruleContext)
             .setAssetsAndResourcesFrom(data)
@@ -747,6 +732,12 @@ public final class ApplicationManifest {
     Artifact rJavaClassJar =
         ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_RESOURCES_CLASS_JAR);
 
+    AndroidConfiguration androidConfiguration = ruleContext.getConfiguration()
+        .getFragment(AndroidConfiguration.class);
+
+    boolean skipParsingAction =
+        targetAaptVersion == AndroidAaptVersion.AAPT2 && androidConfiguration.skipParsingAction();
+
     if (resourceContainer.getSymbols() != null) {
       AndroidResourceParsingActionBuilder parsingBuilder =
           new AndroidResourceParsingActionBuilder(ruleContext)
@@ -773,16 +764,13 @@ public final class ApplicationManifest {
             .setJavaPackage(resourceContainer.getJavaPackage())
             .withPrimary(resourceContainer)
             .withDependencies(resourceDeps)
+            .setThrowOnResourceConflict(androidConfiguration.throwOnResourceConflict())
+            .setUseCompiledMerge(skipParsingAction)
             .setDataBindingInfoZip(dataBindingInfoZip)
             .setMergedResourcesOut(mergedResources)
             .setManifestOut(manifestOut)
             .setClassJarOut(rJavaClassJar)
             .setDataBindingInfoZip(dataBindingInfoZip)
-            .setThrowOnResourceConflict(
-                ruleContext
-                    .getConfiguration()
-                    .getFragment(AndroidConfiguration.class)
-                    .throwOnResourceConflict())
             .build(ruleContext);
 
     ResourceContainer processed =
@@ -908,7 +896,8 @@ public final class ApplicationManifest {
         new AndroidAaptActionHelper(
             ruleContext, getManifest(), Lists.newArrayList(resourceContainers));
 
-    ResourceFilter resourceFilter = ResourceFilter.fromRuleContext(ruleContext);
+    ResourceFilterFactory resourceFilterFactory =
+        ResourceFilterFactory.fromRuleContext(ruleContext);
 
     List<String> uncompressedExtensions;
     if (ruleContext.getRule().isAttrDefined(
@@ -928,8 +917,9 @@ public final class ApplicationManifest {
     for (String extension : uncompressedExtensions) {
       additionalAaptOpts.add("-0").add(extension);
     }
-    if (resourceFilter.hasConfigurationFilters() && !resourceFilter.isPrefiltering()) {
-      additionalAaptOpts.add("-c").add(resourceFilter.getConfigurationFilterString());
+    if (resourceFilterFactory.hasConfigurationFilters()
+        && !resourceFilterFactory.isPrefiltering()) {
+      additionalAaptOpts.add("-c").add(resourceFilterFactory.getConfigurationFilterString());
     }
 
     Artifact javaSourcesJar = null;
@@ -945,7 +935,7 @@ public final class ApplicationManifest {
         resourceApk,
         resourceContainer.getRenameManifestPackage(),
         additionalAaptOpts.build(),
-        resourceFilter.getDensities());
+        resourceFilterFactory.getDensities());
 
     ResourceContainer updatedResources =
         resourceContainer

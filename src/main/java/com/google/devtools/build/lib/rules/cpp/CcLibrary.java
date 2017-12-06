@@ -15,10 +15,12 @@
 package com.google.devtools.build.lib.rules.cpp;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.FailAction;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
+import com.google.devtools.build.lib.analysis.MakeVariableSupplier.MapBackedMakeVariableSupplier;
 import com.google.devtools.build.lib.analysis.OutputGroupProvider;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetBuilder;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetFactory;
@@ -105,10 +107,20 @@ public abstract class CcLibrary implements RuleConfiguredTargetFactory {
       boolean linkStatic,
       boolean addDynamicRuntimeInputArtifactsToRunfiles)
       throws RuleErrorException, InterruptedException {
-    ruleContext.initConfigurationMakeVariableContext(new CcFlagsSupplier(ruleContext));
-
     final CcCommon common = new CcCommon(ruleContext);
+
     CcToolchainProvider ccToolchain = common.getToolchain();
+
+    if (CppHelper.shouldUseToolchainForMakeVariables(ruleContext)) {
+      ImmutableMap.Builder<String, String> toolchainMakeVariables = ImmutableMap.builder();
+      ccToolchain.addGlobalMakeVariables(toolchainMakeVariables);
+      ruleContext.initConfigurationMakeVariableContext(
+          new MapBackedMakeVariableSupplier(toolchainMakeVariables.build()),
+          new CcFlagsSupplier(ruleContext));
+    } else {
+      ruleContext.initConfigurationMakeVariableContext(new CcFlagsSupplier(ruleContext));
+    }
+
     FdoSupportProvider fdoSupport = common.getFdoSupport();
     FeatureConfiguration featureConfiguration =
         CcCommon.configureFeatures(ruleContext, ccToolchain);
@@ -139,8 +151,7 @@ public abstract class CcLibrary implements RuleConfiguredTargetFactory {
             .addLinkstamps(ruleContext.getPrerequisites("linkstamp", Mode.TARGET));
 
     Artifact soImplArtifact = null;
-    boolean supportsDynamicLinker =
-        ruleContext.getFragment(CppConfiguration.class).supportsDynamicLinker();
+    boolean supportsDynamicLinker = ccToolchain.supportsDynamicLinker();
     // TODO(djasper): This is hacky. We should actually try to figure out whether we generate
     // ccOutputs.
     boolean createDynamicLibrary =
@@ -189,7 +200,7 @@ public abstract class CcLibrary implements RuleConfiguredTargetFactory {
       dynamicLibraries.add(
         CppHelper.getLinuxLinkedArtifact(
           ruleContext, ruleContext.getConfiguration(), LinkTargetType.DYNAMIC_LIBRARY));
-      if (ccToolchain.getCppConfiguration().useInterfaceSharedObjects()) {
+      if (CppHelper.useInterfaceSharedObjects(ccToolchain.getCppConfiguration(), ccToolchain)) {
         dynamicLibraries.add(
           CppHelper.getLinuxLinkedArtifact(
             ruleContext, ruleContext.getConfiguration(), LinkTargetType.INTERFACE_DYNAMIC_LIBRARY));
@@ -207,7 +218,7 @@ public abstract class CcLibrary implements RuleConfiguredTargetFactory {
       dynamicLibraries.add(
         CppHelper.getLinuxLinkedArtifact(
           ruleContext, ruleContext.getConfiguration(), LinkTargetType.DYNAMIC_LIBRARY));
-      if (ccToolchain.getCppConfiguration().useInterfaceSharedObjects()) {
+      if (CppHelper.useInterfaceSharedObjects(ccToolchain.getCppConfiguration(), ccToolchain)) {
         dynamicLibraries.add(
           CppHelper.getLinuxLinkedArtifact(
             ruleContext, ruleContext.getConfiguration(), LinkTargetType.INTERFACE_DYNAMIC_LIBRARY));
@@ -306,7 +317,8 @@ public abstract class CcLibrary implements RuleConfiguredTargetFactory {
             CppRunfilesProvider.class, new CppRunfilesProvider(staticRunfiles, sharedRunfiles))
         .addOutputGroup(
             OutputGroupProvider.HIDDEN_TOP_LEVEL,
-            collectHiddenTopLevelArtifacts(ruleContext, info.getCcCompilationOutputs()))
+            collectHiddenTopLevelArtifacts(
+                ruleContext, ccToolchain, info.getCcCompilationOutputs()))
         .addOutputGroup(
             CcLibraryHelper.HIDDEN_HEADER_TOKENS,
             CcLibraryHelper.collectHeaderTokens(ruleContext, info.getCcCompilationOutputs()));
@@ -314,13 +326,14 @@ public abstract class CcLibrary implements RuleConfiguredTargetFactory {
 
   private static NestedSet<Artifact> collectHiddenTopLevelArtifacts(
       RuleContext ruleContext,
+      CcToolchainProvider toolchain,
       CcCompilationOutputs ccCompilationOutputs) {
     // Ensure that we build all the dependencies, otherwise users may get confused.
     NestedSetBuilder<Artifact> artifactsToForceBuilder = NestedSetBuilder.stableOrder();
     CppConfiguration cppConfiguration = ruleContext.getFragment(CppConfiguration.class);
     boolean isLipoCollector = cppConfiguration.isLipoContextCollector();
     boolean processHeadersInDependencies = cppConfiguration.processHeadersInDependencies();
-    boolean usePic = CppHelper.usePic(ruleContext, false);
+    boolean usePic = CppHelper.usePic(ruleContext, toolchain, false);
     artifactsToForceBuilder.addTransitive(
         ccCompilationOutputs.getFilesToCompile(
             isLipoCollector, processHeadersInDependencies, usePic));

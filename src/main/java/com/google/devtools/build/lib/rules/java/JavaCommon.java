@@ -15,6 +15,7 @@ package com.google.devtools.build.lib.rules.java;
 
 import static com.google.common.collect.ImmutableList.toImmutableList;
 
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableList.Builder;
 import com.google.common.collect.ImmutableMap;
@@ -54,7 +55,6 @@ import com.google.devtools.build.lib.rules.java.JavaCompilationArgs.ClasspathTyp
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.FileTypeSet;
 import com.google.devtools.build.lib.util.Pair;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.ArrayList;
@@ -460,7 +460,7 @@ public class JavaCommon {
 
   private ImmutableList<String> computeJavacOpts(Iterable<String> extraJavacOpts) {
     return Streams.concat(
-            JavaToolchainProvider.fromRuleContext(ruleContext).getJavacOptions().stream(),
+            JavaToolchainProvider.from(ruleContext).getJavacOptions().stream(),
             Streams.stream(extraJavacOpts),
             ruleContext.getExpander().withDataLocations().tokenized("javacopts").stream())
         .collect(toImmutableList());
@@ -468,6 +468,24 @@ public class JavaCommon {
 
   public static PathFragment getHostJavaExecutable(RuleContext ruleContext) {
     JavaRuntimeInfo javaRuntime = JavaHelper.getHostJavaRuntime(ruleContext);
+    return javaRuntime != null
+        ? javaRuntime.javaBinaryExecPath()
+        : ruleContext.getHostConfiguration().getFragment(Jvm.class).getJavaExecutable();
+  }
+
+  /**
+   * Returns the host java executable.
+   *
+   * <p>The method looks for the executable in the following
+   * locations (in the specified order) and returns it immediately after it's found:
+   * <ol>
+   * <li> The JavaRuntimeInfo in the given hostJavabase target
+   * <li> The JVM fragment of the host configuration, retrieved from the given rule context
+   * </ol>
+   */
+  public static PathFragment getHostJavaExecutable(
+      RuleContext ruleContext, TransitiveInfoCollection hostJavabase) {
+    JavaRuntimeInfo javaRuntime = hostJavabase.get(JavaRuntimeInfo.PROVIDER);
     return javaRuntime != null
         ? javaRuntime.javaBinaryExecPath()
         : ruleContext.getHostConfiguration().getFragment(Jvm.class).getJavaExecutable();
@@ -719,20 +737,22 @@ public class JavaCommon {
         /*withBaselineCoverage*/!TargetUtils.isTestRule(ruleContext.getTarget()));
   }
 
-  public void addGenJarsProvider(
+  public JavaGenJarsProvider createJavaGenJarsProvider(
+      @Nullable Artifact genClassJar, @Nullable Artifact genSourceJar) {
+    return collectTransitiveGenJars(
+        javaCompilationHelper.usesAnnotationProcessing(), genClassJar, genSourceJar);
+  }
+
+  public void addJavaGenJarsProvider(
       RuleConfiguredTargetBuilder builder,
-      @Nullable Artifact genClassJar,
-      @Nullable Artifact genSourceJar) {
-    JavaGenJarsProvider genJarsProvider = collectTransitiveGenJars(
-        javaCompilationHelper.usesAnnotationProcessing(),
-        genClassJar, genSourceJar);
+      JavaGenJarsProvider javaGenJarsProvider) {
 
     NestedSetBuilder<Artifact> genJarsBuilder = NestedSetBuilder.stableOrder();
-    genJarsBuilder.addTransitive(genJarsProvider.getTransitiveGenClassJars());
-    genJarsBuilder.addTransitive(genJarsProvider.getTransitiveGenSourceJars());
+    genJarsBuilder.addTransitive(javaGenJarsProvider.getTransitiveGenClassJars());
+    genJarsBuilder.addTransitive(javaGenJarsProvider.getTransitiveGenSourceJars());
 
     builder
-        .add(JavaGenJarsProvider.class, genJarsProvider)
+        .addProvider(javaGenJarsProvider)
         .addOutputGroup(JavaSemantics.GENERATED_JARS_OUTPUT_GROUP, genJarsBuilder.build());
   }
 
@@ -798,6 +818,13 @@ public class JavaCommon {
         getPluginInfoProvidersForAttribute(ruleContext, ":java_plugins", Mode.HOST));
     Iterables.addAll(result, getPluginInfoProvidersForAttribute(ruleContext, "plugins", Mode.HOST));
     Iterables.addAll(result, getPluginInfoProvidersForAttribute(ruleContext, "deps", Mode.TARGET));
+    // Enable any plugins from java_toolchain.plugins that are configured for the current package.
+    JavaToolchainProvider.from(ruleContext)
+        .pluginConfiguration()
+        .stream()
+        .filter(p -> p.matches(ruleContext.getLabel()))
+        .map(JavaPluginConfigurationProvider::plugin)
+        .forEachOrdered(result::add);
     return ImmutableList.copyOf(result);
   }
 

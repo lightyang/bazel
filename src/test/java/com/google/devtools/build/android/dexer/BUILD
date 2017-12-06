@@ -40,16 +40,23 @@ java_library(
     }),
 )
 
+java_library(
+    name = "testdata",
+    srcs = glob(["testdata/**/*.java"]),
+)
+
 java_test(
     name = "AllTests",
     size = "small",
     data = [
         "test_main_dex_list.txt",
+        ":testdata",
         ":tests",
     ],
     jvm_flags = [
         "-Dtestmaindexlist=$(location :test_main_dex_list.txt)",
         "-Dtestinputjar=$(location :tests)",
+        "-Dtestinputjar2=$(location :testdata)",
     ],
     runtime_deps = [
         ":tests",

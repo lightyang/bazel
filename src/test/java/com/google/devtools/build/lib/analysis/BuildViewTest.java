@@ -39,6 +39,7 @@ import com.google.devtools.build.lib.analysis.util.BuildViewTestBase;
 import com.google.devtools.build.lib.analysis.util.ExpectedTrimmedConfigurationErrors;
 import com.google.devtools.build.lib.analysis.util.MockRule;
 import com.google.devtools.build.lib.cmdline.Label;
+import com.google.devtools.build.lib.events.OutputFilter.RegexOutputFilter;
 import com.google.devtools.build.lib.packages.Attribute;
 import com.google.devtools.build.lib.packages.BuildType;
 import com.google.devtools.build.lib.packages.Rule;
@@ -453,6 +454,62 @@ public class BuildViewTest extends BuildViewTestBase {
   }
 
   @Test
+  public void testOutputFilterWithDebug() throws Exception {
+    scratch.file(
+        "java/a/BUILD",
+        "java_library(name = 'a',",
+        "  srcs = ['A.java'],",
+        "  deps = ['//java/b'])");
+    scratch.file(
+        "java/b/rules.bzl",
+        "def _impl(ctx):",
+        "  print('debug in b')",
+        "  ctx.file_action(",
+        "    output = ctx.outputs.my_output,",
+        "    content = 'foo',",
+        "  )",
+        "gen = rule(implementation = _impl, outputs = {'my_output': 'B.java'})");
+    scratch.file(
+        "java/b/BUILD",
+        "load(':rules.bzl', 'gen')",
+        "gen(name='src')",
+        "java_library(name = 'b', srcs = [':src'])");
+    reporter.setOutputFilter(RegexOutputFilter.forPattern(Pattern.compile("^//java/a")));
+
+    useConfiguration("--incompatible_show_all_print_messages=true");
+    update("//java/a:a");
+    assertContainsEvent("DEBUG /workspace/java/b/rules.bzl:2:3: debug in b");
+  }
+
+  @Test
+  public void testOutputFilterWithWarning() throws Exception {
+    scratch.file(
+        "java/a/BUILD",
+        "java_library(name = 'a',",
+        "  srcs = ['A.java'],",
+        "  deps = ['//java/b'])");
+    scratch.file(
+        "java/b/rules.bzl",
+        "def _impl(ctx):",
+        "  print('debug in b')",
+        "  ctx.file_action(",
+        "    output = ctx.outputs.my_output,",
+        "    content = 'foo',",
+        "  )",
+        "gen = rule(implementation = _impl, outputs = {'my_output': 'B.java'})");
+    scratch.file(
+        "java/b/BUILD",
+        "load(':rules.bzl', 'gen')",
+        "gen(name='src')",
+        "java_library(name = 'b', srcs = [':src'])");
+    reporter.setOutputFilter(RegexOutputFilter.forPattern(Pattern.compile("^//java/a")));
+
+    useConfiguration("--incompatible_show_all_print_messages=false");
+    update("//java/a:a");
+    assertDoesNotContainEvent("rules.bzl:2:3: debug in b");
+  }
+
+  @Test
   public void testAnalysisErrorMessageWithKeepGoing() throws Exception {
     scratch.file("a/BUILD", "sh_binary(name='a', srcs=['a1.sh', 'a2.sh'])");
     reporter.removeHandler(failFastHandler);
@@ -595,7 +652,7 @@ public class BuildViewTest extends BuildViewTestBase {
         "        outs=['a.out'])");
     update("//pkg:a.out");
     assertWithMessage("Actions should not be compatible")
-        .that(Actions.canBeShared(action, getGeneratingAction(outputArtifact)))
+        .that(Actions.canBeShared(actionKeyContext, action, getGeneratingAction(outputArtifact)))
         .isFalse();
   }
 
@@ -1106,23 +1163,6 @@ public class BuildViewTest extends BuildViewTestBase {
       // Expected
     }
   }
-
-  @Test
-  public void testMissingXcodeVersion() throws Exception {
-    // The xcode_version flag uses yet another code path on top of the redirect chaser.
-    // Note that the redirect chaser throws if it can't find a package, but doesn't throw if it
-    // can't find a label in a package - that's why we use an empty package here.
-    scratch.file("xcode/BUILD");
-    useConfiguration("--xcode_version=1.2", "--xcode_version_config=//xcode:does_not_exist");
-    reporter.removeHandler(failFastHandler);
-    try {
-      update(defaultFlags().with(Flag.KEEP_GOING));
-      fail();
-    } catch (InvalidConfigurationException e) {
-      assertThat(e).hasMessageThat().contains("//xcode:does_not_exist");
-    }
-  }
-
 
   @Test
   public void testVisibilityReferencesNonexistentPackage() throws Exception {

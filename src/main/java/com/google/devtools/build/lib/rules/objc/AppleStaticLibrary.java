@@ -40,6 +40,7 @@ import com.google.devtools.build.lib.rules.objc.ObjcProvider.Key;
 import com.google.devtools.build.lib.rules.proto.ProtoSourcesProvider;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.TreeMap;
 
 /**
@@ -84,7 +85,7 @@ public class AppleStaticLibrary implements RuleConfiguredTargetFactory {
             Mode.SPLIT, CcLinkParamsInfo.PROVIDER);
     Iterable<ObjcProtoProvider> avoidProtoProviders =
         ruleContext.getPrerequisites(AppleStaticLibraryRule.AVOID_DEPS_ATTR_NAME, Mode.TARGET,
-            ObjcProtoProvider.class);
+            ObjcProtoProvider.SKYLARK_CONSTRUCTOR);
     NestedSet<Artifact> protosToAvoid = protoArtifactsToAvoid(avoidProtoProviders);
 
     Map<BuildConfiguration, CcToolchainProvider> childConfigurationsAndToolchains =
@@ -102,10 +103,14 @@ public class AppleStaticLibrary implements RuleConfiguredTargetFactory {
     ObjcProvider.Builder objcProviderBuilder = new ObjcProvider.Builder();
 
     ImmutableListMultimap<BuildConfiguration, ObjcProtoProvider> objcProtoProvidersMap =
-        ruleContext.getPrerequisitesByConfiguration("deps", Mode.SPLIT, ObjcProtoProvider.class);
+        ruleContext.getPrerequisitesByConfiguration("deps", Mode.SPLIT,
+            ObjcProtoProvider.SKYLARK_CONSTRUCTOR);
 
     Map<String, NestedSet<Artifact>> outputGroupCollector = new TreeMap<>();
-    for (BuildConfiguration childConfig : childConfigurationsAndToolchains.keySet()) {
+    for (Entry<BuildConfiguration, CcToolchainProvider> childConfigAndToolchain :
+        childConfigurationsAndToolchains.entrySet()) {
+      BuildConfiguration childConfig = childConfigAndToolchain.getKey();
+      CcToolchainProvider childToolchain = childConfigAndToolchain.getValue();
       Iterable<ObjcProtoProvider> objcProtoProviders = objcProtoProvidersMap.get(childConfig);
       ProtobufSupport protoSupport =
           new ProtobufSupport(
@@ -141,6 +146,7 @@ public class AppleStaticLibrary implements RuleConfiguredTargetFactory {
           new CompilationSupport.Builder()
               .setRuleContext(ruleContext)
               .setConfig(childConfig)
+              .setToolchainProvider(childToolchain)
               .setOutputGroupCollector(outputGroupCollector)
               .build();
 

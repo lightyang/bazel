@@ -49,8 +49,40 @@ struct AutoHandle {
   HANDLE handle_;
 };
 
-wstring GetLastErrorString(const wstring& cause);
-wstring GetLastErrorString(const wstring& cause, DWORD error_code);
+struct AutoAttributeList {
+  AutoAttributeList(DWORD dwAttributeCount) {
+    SIZE_T size = 0;
+    InitializeProcThreadAttributeList(NULL, dwAttributeCount, 0, &size);
+    lpAttributeList =
+        reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(malloc(size));
+    InitializeProcThreadAttributeList(lpAttributeList, dwAttributeCount, 0,
+                                      &size);
+  }
+
+  ~AutoAttributeList() {
+    if (lpAttributeList) {
+      DeleteProcThreadAttributeList(lpAttributeList);
+      free(lpAttributeList);
+    }
+    lpAttributeList = NULL;
+  }
+
+  operator LPPROC_THREAD_ATTRIBUTE_LIST() const { return lpAttributeList; }
+
+ private:
+  LPPROC_THREAD_ATTRIBUTE_LIST lpAttributeList;
+};
+
+#define WSTR1(x) L##x
+#define WSTR(x) WSTR1(x)
+
+wstring MakeErrorMessage(const wchar_t* file, int line,
+                         const wchar_t* failed_func, const wstring& func_arg,
+                         const wstring& message);
+wstring MakeErrorMessage(const wchar_t* file, int line,
+                         const wchar_t* failed_func, const wstring& func_arg,
+                         DWORD error_code);
+wstring GetLastErrorString(DWORD error_code);
 
 // Same as `AsExecutablePathForCreateProcess` except it won't quote the result.
 wstring AsShortPath(wstring path, wstring* result);

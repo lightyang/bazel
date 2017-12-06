@@ -25,22 +25,17 @@ import com.google.devtools.build.lib.actions.Action;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.util.ActionsTestUtil;
 import com.google.devtools.build.lib.analysis.AnalysisUtils;
-import com.google.devtools.build.lib.analysis.BaseRuleClasses;
 import com.google.devtools.build.lib.analysis.ConfiguredRuleClassProvider;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.OutputGroupProvider;
-import com.google.devtools.build.lib.analysis.RuleDefinition;
-import com.google.devtools.build.lib.analysis.RuleDefinitionEnvironment;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.mock.BazelAnalysisMock;
 import com.google.devtools.build.lib.analysis.util.AnalysisMock;
 import com.google.devtools.build.lib.analysis.util.BuildViewTestCase;
 import com.google.devtools.build.lib.bazel.rules.BazelRuleClassProvider;
-import com.google.devtools.build.lib.bazel.rules.BazelToolchainType;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.PackageIdentifier;
 import com.google.devtools.build.lib.cmdline.RepositoryName;
-import com.google.devtools.build.lib.packages.RuleClass;
 import com.google.devtools.build.lib.rules.ToolchainType;
 import com.google.devtools.build.lib.rules.core.CoreRules;
 import com.google.devtools.build.lib.util.FileType;
@@ -299,9 +294,12 @@ public class CcCommonTest extends BuildViewTestCase {
     for (String cpu : new String[] {"k8", "piii"}) {
       useConfiguration("--cpu=" + cpu, "--save_temps");
       ConfiguredTarget foo = getConfiguredTarget("//foo:foo");
+      CcToolchainProvider toolchain =
+          CppHelper.getToolchainUsingDefaultCcToolchainAttribute(getRuleContext(foo));
       List<String> temps =
           ActionsTestUtil.baseArtifactNames(getOutputGroup(foo, OutputGroupProvider.TEMP_FILES));
-      if (getTargetConfiguration().getFragment(CppConfiguration.class).usePicForBinaries()) {
+      if (CppHelper.usePicForBinaries(
+          getTargetConfiguration().getFragment(CppConfiguration.class), toolchain)) {
         assertThat(temps).named(cpu).containsExactly("foo.pic.ii", "foo.pic.s");
       } else {
         assertThat(temps).named(cpu).containsExactly("foo.ii", "foo.s");
@@ -316,9 +314,12 @@ public class CcCommonTest extends BuildViewTestCase {
       useConfiguration("--cpu=" + cpu, "--save_temps");
       // Now try with a .c source file.
       ConfiguredTarget csrc = getConfiguredTarget("//csrc:csrc");
+      CcToolchainProvider toolchain =
+          CppHelper.getToolchainUsingDefaultCcToolchainAttribute(getRuleContext(csrc));
       List<String> temps =
           ActionsTestUtil.baseArtifactNames(getOutputGroup(csrc, OutputGroupProvider.TEMP_FILES));
-      if (getTargetConfiguration().getFragment(CppConfiguration.class).usePicForBinaries()) {
+      if (CppHelper.usePicForBinaries(
+          getTargetConfiguration().getFragment(CppConfiguration.class), toolchain)) {
         assertThat(temps).named(cpu).containsExactly("foo.pic.i", "foo.pic.s");
       } else {
         assertThat(temps).named(cpu).containsExactly("foo.i", "foo.s");
@@ -952,31 +953,6 @@ public class CcCommonTest extends BuildViewTestCase {
   }
 
   /**
-   * A {@code toolchain_type} rule for testing that only supports C++.
-   */
-  public static class OnlyCppToolchainTypeRule implements RuleDefinition {
-    @Override
-    public RuleClass build(RuleClass.Builder builder, RuleDefinitionEnvironment environment) {
-      return builder
-          // This means that *every* toolchain_type rule depends on every configuration fragment
-          // that contributes Make variables, regardless of which one it is.
-          .requiresConfigurationFragments(CppConfiguration.class)
-          .removeAttribute("licenses")
-          .removeAttribute("distribs")
-          .build();
-    }
-
-    @Override
-    public Metadata getMetadata() {
-      return Metadata.builder()
-          .name("toolchain_type")
-          .factoryClass(BazelToolchainType.class)
-          .ancestors(BaseRuleClasses.BaseRule.class)
-          .build();
-    }
-  }
-
-  /**
    * Tests for the case where there are only C++ rules defined.
    */
   @RunWith(JUnit4.class)
@@ -996,7 +972,6 @@ public class CcCommonTest extends BuildViewTestCase {
           BazelRuleClassProvider.PLATFORM_RULES.init(builder);
           BazelRuleClassProvider.GENERIC_RULES.init(builder);
           BazelRuleClassProvider.CPP_RULES.init(builder);
-          builder.addRuleDefinition(new OnlyCppToolchainTypeRule());
           return builder.build();
         }
 

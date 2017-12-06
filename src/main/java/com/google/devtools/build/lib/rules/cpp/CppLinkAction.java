@@ -26,6 +26,7 @@ import com.google.devtools.build.lib.actions.AbstractAction;
 import com.google.devtools.build.lib.actions.ActionEnvironment;
 import com.google.devtools.build.lib.actions.ActionExecutionContext;
 import com.google.devtools.build.lib.actions.ActionExecutionException;
+import com.google.devtools.build.lib.actions.ActionKeyContext;
 import com.google.devtools.build.lib.actions.ActionOwner;
 import com.google.devtools.build.lib.actions.ActionResult;
 import com.google.devtools.build.lib.actions.Artifact;
@@ -118,9 +119,9 @@ public final class CppLinkAction extends AbstractAction
   private final boolean isLtoIndexing;
 
   private final PathFragment ldExecutable;
+  private final String hostSystemName;
+  private final String targetCpu;
 
-  // This is set for both LTO indexing and LTO linking.
-  @Nullable private final Iterable<LtoBackendArtifacts> allLtoBackendArtifacts;
   private final Iterable<Artifact> mandatoryInputs;
 
   // Linking uses a lot of memory; estimate 1 MB per input file, min 1.5 Gib.
@@ -158,7 +159,6 @@ public final class CppLinkAction extends AbstractAction
       LibraryToLink interfaceOutputLibrary,
       boolean fake,
       boolean isLtoIndexing,
-      Iterable<LtoBackendArtifacts> allLtoBackendArtifacts,
       LinkCommandLine linkCommandLine,
       ActionEnvironment env,
       ImmutableMap<String, String> toolchainEnv,
@@ -183,11 +183,12 @@ public final class CppLinkAction extends AbstractAction
     this.interfaceOutputLibrary = interfaceOutputLibrary;
     this.fake = fake;
     this.isLtoIndexing = isLtoIndexing;
-    this.allLtoBackendArtifacts = allLtoBackendArtifacts;
     this.linkCommandLine = linkCommandLine;
     this.toolchainEnv = toolchainEnv;
     this.executionRequirements = executionRequirements;
     this.ldExecutable = toolchain.getToolPathFragment(Tool.LD);
+    this.hostSystemName = toolchain.getHostSystemName();
+    this.targetCpu = toolchain.getTargetCpu();
   }
 
   private CppConfiguration getCppConfiguration() {
@@ -196,11 +197,11 @@ public final class CppLinkAction extends AbstractAction
 
   @VisibleForTesting
   public String getTargetCpu() {
-    return getCppConfiguration().getTargetCpu();
+    return targetCpu;
   }
 
   public String getHostSystemName() {
-    return getCppConfiguration().getHostSystemName();
+    return hostSystemName;
   }
 
   @Override
@@ -300,10 +301,6 @@ public final class CppLinkAction extends AbstractAction
    */
   public ImmutableMap<Artifact, Artifact> getLinkstamps() {
     return linkCommandLine.getLinkstamps();
-  }
-
-  Iterable<LtoBackendArtifacts> getAllLtoBackendArtifacts() {
-    return allLtoBackendArtifacts;
   }
 
   @Override
@@ -425,7 +422,7 @@ public final class CppLinkAction extends AbstractAction
   }
 
   @Override
-  public ExtraActionInfo.Builder getExtraActionInfo() {
+  public ExtraActionInfo.Builder getExtraActionInfo(ActionKeyContext actionKeyContext) {
     // The uses of getLinkConfiguration in this method may not be consistent with the computed key.
     // I.e., this may be incrementally incorrect.
     CppLinkInfo.Builder info = CppLinkInfo.newBuilder();
@@ -444,7 +441,8 @@ public final class CppLinkAction extends AbstractAction
     info.addAllLinkOpt(getLinkCommandLine().getRawLinkArgv());
 
     try {
-      return super.getExtraActionInfo().setExtension(CppLinkInfo.cppLinkInfo, info.build());
+      return super.getExtraActionInfo(actionKeyContext)
+          .setExtension(CppLinkInfo.cppLinkInfo, info.build());
     } catch (CommandLineExpansionException e) {
       throw new AssertionError("CppLinkAction command line expansion cannot fail.");
     }
@@ -456,7 +454,7 @@ public final class CppLinkAction extends AbstractAction
   }
 
   @Override
-  protected String computeKey() {
+  protected String computeKey(ActionKeyContext actionKeyContext) {
     Fingerprint f = new Fingerprint();
     f.addString(fake ? FAKE_LINK_GUID : LINK_GUID);
     f.addString(ldExecutable.getPathString());
@@ -539,13 +537,14 @@ public final class CppLinkAction extends AbstractAction
     return mandatoryInputs;
   }
 
-  /**
-   * Determines whether or not this link should output a symbol counts file.
-   */
+  /** Determines whether or not this link should output a symbol counts file. */
   public static boolean enableSymbolsCounts(
-      CppConfiguration cppConfiguration, boolean fake, LinkTargetType linkType) {
+      CppConfiguration cppConfiguration,
+      boolean supportsGoldLinker,
+      boolean fake,
+      LinkTargetType linkType) {
     return cppConfiguration.getSymbolCounts()
-        && cppConfiguration.supportsGoldLinker()
+        && supportsGoldLinker
         && linkType == LinkTargetType.EXECUTABLE
         && !fake;
   }

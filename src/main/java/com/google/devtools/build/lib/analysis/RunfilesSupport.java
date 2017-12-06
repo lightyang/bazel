@@ -15,6 +15,7 @@
 package com.google.devtools.build.lib.analysis;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.SourceManifestAction.ManifestType;
@@ -27,7 +28,6 @@ import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTa
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.packages.TargetUtils;
 import com.google.devtools.build.lib.syntax.Type;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
@@ -122,7 +122,7 @@ public final class RunfilesSupport {
     Artifact artifactsMiddleman = createArtifactsMiddleman(ruleContext, runfiles.getAllArtifacts());
     if (createManifest) {
       runfilesInputManifest = createRunfilesInputManifestArtifact(ruleContext);
-      runfilesManifest = createRunfilesAction(ruleContext, runfiles, artifactsMiddleman);
+      runfilesManifest = createRunfilesAction(ruleContext, runfiles);
     } else {
       runfilesInputManifest = runfilesManifest =
           createManifestMiddleman(ruleContext, runfiles, artifactsMiddleman);
@@ -282,16 +282,14 @@ public final class RunfilesSupport {
   }
 
   /**
-   * Creates a runfiles action for all of the specified files, and returns the
-   * output artifact (the artifact for the MANIFEST file).
+   * Creates a runfiles action for all of the specified files, and returns the output artifact (the
+   * artifact for the MANIFEST file).
    *
-   * <p>The "runfiles" action creates a symlink farm that links all the runfiles
-   * (which may come from different places, e.g. different package paths,
-   * generated files, etc.) into a single tree, so that programs can access them
-   * using the workspace-relative name.
+   * <p>The "runfiles" action creates a symlink farm that links all the runfiles (which may come
+   * from different places, e.g. different package paths, generated files, etc.) into a single tree,
+   * so that programs can access them using the workspace-relative name.
    */
-  private Artifact createRunfilesAction(ActionConstructionContext context, Runfiles runfiles,
-      Artifact artifactsMiddleman) {
+  private Artifact createRunfilesAction(ActionConstructionContext context, Runfiles runfiles) {
     // Compute the names of the runfiles directory and its MANIFEST file.
     Artifact inputManifest = getRunfilesInputManifest();
     context.getAnalysisEnvironment().registerAction(
@@ -316,7 +314,6 @@ public final class RunfilesSupport {
             new SymlinkTreeAction(
                 context.getActionOwner(),
                 inputManifest,
-                artifactsMiddleman,
                 outputManifest,
                 /*filesetTree=*/ false,
                 config.getActionEnvironment(),

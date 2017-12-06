@@ -24,9 +24,11 @@ import com.google.devtools.build.lib.actions.ExecutionStrategy;
 import com.google.devtools.build.lib.actions.Spawn;
 import com.google.devtools.build.lib.actions.SpawnActionContext;
 import com.google.devtools.build.lib.actions.SpawnResult;
+import com.google.devtools.build.lib.actions.Spawns;
 import com.google.devtools.build.lib.exec.apple.XCodeLocalEnvProvider;
 import com.google.devtools.build.lib.exec.local.LocalEnvProvider;
 import com.google.devtools.build.lib.runtime.CommandEnvironment;
+import com.google.devtools.build.lib.runtime.ProcessWrapperUtil;
 import com.google.devtools.build.lib.shell.Command;
 import com.google.devtools.build.lib.shell.CommandException;
 import com.google.devtools.build.lib.shell.CommandResult;
@@ -58,7 +60,7 @@ final class DarwinSandboxedSpawnRunner extends AbstractSandboxSpawnRunner {
     if (OS.getCurrent() != OS.DARWIN) {
       return false;
     }
-    if (!ProcessWrapperRunner.isSupported(cmdEnv)) {
+    if (!ProcessWrapperUtil.isSupported(cmdEnv)) {
       return false;
     }
 
@@ -105,8 +107,8 @@ final class DarwinSandboxedSpawnRunner extends AbstractSandboxSpawnRunner {
     this.execRoot = cmdEnv.getExecRoot();
     this.allowNetwork = SandboxHelpers.shouldAllowNetwork(cmdEnv.getOptions());
     this.productName = productName;
-    this.alwaysWritableDirs = getAlwaysWritableDirs(cmdEnv.getDirectories().getFileSystem());
-    this.processWrapper = ProcessWrapperRunner.getProcessWrapper(cmdEnv);
+    this.alwaysWritableDirs = getAlwaysWritableDirs(cmdEnv.getRuntime().getFileSystem());
+    this.processWrapper = ProcessWrapperUtil.getProcessWrapper(cmdEnv);
     this.localEnvProvider = new XCodeLocalEnvProvider();
     this.timeoutGraceSeconds = timeoutGraceSeconds;
   }
@@ -196,7 +198,7 @@ final class DarwinSandboxedSpawnRunner extends AbstractSandboxSpawnRunner {
     Map<String, String> environment =
         localEnvProvider.rewriteLocalEnv(spawn.getEnvironment(), execRoot, tmpDir, productName);
 
-    boolean allowNetworkForThisSpawn = allowNetwork || SandboxHelpers.shouldAllowNetwork(spawn);
+    boolean allowNetworkForThisSpawn = allowNetwork || Spawns.requiresNetwork(spawn);
     SandboxedSpawn sandbox = new SymlinkedSandboxedSpawn(
         sandboxPath,
         sandboxExecRoot,
@@ -222,8 +224,12 @@ final class DarwinSandboxedSpawnRunner extends AbstractSandboxSpawnRunner {
     commandLineArgs.add("-f");
     commandLineArgs.add(sandboxConfigPath.getPathString());
     commandLineArgs.addAll(
-        ProcessWrapperRunner.getCommandLine(
-            processWrapper, spawn.getArguments(), timeout, timeoutGraceSeconds));
+        ProcessWrapperUtil.commandLineBuilder()
+            .setProcessWrapperPath(processWrapper.getPathString())
+            .setCommandArguments(spawn.getArguments())
+            .setTimeout(timeout)
+            .setKillDelay(Duration.ofSeconds(timeoutGraceSeconds))
+            .build());
     return commandLineArgs;
   }
 

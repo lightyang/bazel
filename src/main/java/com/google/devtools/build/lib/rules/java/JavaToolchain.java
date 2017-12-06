@@ -57,7 +57,8 @@ public final class JavaToolchain implements RuleConfiguredTargetFactory {
     boolean javacSupportsWorkers =
         ruleContext.attributes().get("javac_supports_workers", Type.BOOLEAN);
     Artifact javac = ruleContext.getPrerequisiteArtifact("javac", Mode.HOST);
-    Artifact javabuilder = ruleContext.getPrerequisiteArtifact("javabuilder", Mode.HOST);
+    FilesToRunProvider javabuilder =
+        ruleContext.getExecutablePrerequisite("javabuilder", Mode.HOST);
     Artifact headerCompiler = ruleContext.getPrerequisiteArtifact("header_compiler", Mode.HOST);
     boolean forciblyDisableHeaderCompilation =
         ruleContext.attributes().get("forcibly_disable_header_compilation", Type.BOOLEAN);
@@ -80,6 +81,11 @@ public final class JavaToolchain implements RuleConfiguredTargetFactory {
             ruleContext,
             ImmutableMap.<Label, ImmutableCollection<Artifact>>of(
                 AliasProvider.getDependencyLabel(javacDep), ImmutableList.of(javac)));
+
+    ImmutableList<JavaPluginConfigurationProvider> pluginConfiguration =
+        ImmutableList.copyOf(
+            ruleContext.getPrerequisites(
+                "plugin_configuration", Mode.HOST, JavaPluginConfigurationProvider.class));
 
     JavaToolchainData toolchainData =
         new JavaToolchainData(
@@ -112,12 +118,13 @@ public final class JavaToolchain implements RuleConfiguredTargetFactory {
             resourceJarBuilder,
             timezoneData,
             ijar,
-            compatibleJavacOptions);
+            compatibleJavacOptions,
+            pluginConfiguration);
     RuleConfiguredTargetBuilder builder =
         new RuleConfiguredTargetBuilder(ruleContext)
             .addSkylarkTransitiveInfo(
                 JavaToolchainSkylarkApiProvider.NAME, new JavaToolchainSkylarkApiProvider())
-            .addProvider(JavaToolchainProvider.class, provider)
+            .addNativeDeclaredProvider(provider)
             .addProvider(RunfilesProvider.class, RunfilesProvider.simple(Runfiles.EMPTY))
             .setFilesToBuild(new NestedSetBuilder<Artifact>(Order.STABLE_ORDER).build());
 

@@ -293,7 +293,8 @@ public class PopulateTreeArtifactActionTest extends BuildViewTestCase {
                 treeArtifactToPopulate,
                 zipper);
           }
-        });
+        },
+        actionKeyContext);
   }
 
   private PopulateTreeArtifactAction createPopulateTreeArtifactAction() throws Exception {
@@ -319,14 +320,16 @@ public class PopulateTreeArtifactActionTest extends BuildViewTestCase {
 
   private ActionExecutionContext actionExecutionContext(
       List<Artifact> storingExpandedTreeFileArtifacts) throws Exception {
-    Executor executor = new TestExecutorBuilder(directories, null)
-        .setExecution(PopulateTreeArtifactAction.MNEMONIC, mock(SpawnActionContext.class))
-        .build();
+    Executor executor =
+        new TestExecutorBuilder(fileSystem, directories, null)
+            .setExecution(PopulateTreeArtifactAction.MNEMONIC, mock(SpawnActionContext.class))
+            .build();
 
     return new ActionExecutionContext(
         executor,
         null,
         ActionInputPrefetcher.NONE,
+        actionKeyContext,
         new TestMetadataHandler(storingExpandedTreeFileArtifacts),
         null,
         ImmutableMap.<String, String>of(),

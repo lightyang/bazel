@@ -127,8 +127,10 @@ public final class MockProtoSupport {
         "cc_library(name = 'grpc++_codegen_lib')");
     config.create("net/rpc/python/BUILD",
         "package(default_visibility=['//visibility:public'])",
-        "py_library(name = 'python_lite',",
-        "           srcs = [ 'pyrpc.py' ])");
+        "py_library(name = 'proto_python_api_1_stub',",
+        "           srcs = [ 'test_only_prefix_proto_python_api_1_stub.py' ])",
+        "py_library(name = 'proto_python_api_2_stub',",
+        "           srcs = [ 'test_only_prefix_proto_python_api_2_stub.py' ])");
     config.create("java/com/google/net/rpc/BUILD",
         "package(default_visibility=['//visibility:public'])",
         "java_library(name = 'rpc',",
@@ -168,6 +170,11 @@ public final class MockProtoSupport {
         "package(default_visibility=['//visibility:public'])",
         "go_library(name = 'context',",
         "           srcs = [ 'context.go' ])");
+    config.create("third_party/py/six/BUILD",
+        "package(default_visibility=['//visibility:public'])",
+        "licenses(['notice'])",
+        "py_library(name = 'six',",
+        "           srcs = [ '__init__.py' ])");
   }
 
   /**

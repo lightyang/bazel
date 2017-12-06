@@ -13,6 +13,7 @@
 // limitations under the License.
 package com.google.devtools.build.lib.cmdline;
 
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ComparisonChain;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Interner;
@@ -26,7 +27,6 @@ import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModuleCategory;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkPrinter;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkValue;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.util.StringCanonicalizer;
 import com.google.devtools.build.lib.util.StringUtilities;
 import com.google.devtools.build.lib.vfs.PathFragment;
@@ -54,7 +54,7 @@ import javax.annotation.Nullable;
 @ThreadSafe
 public final class Label implements Comparable<Label>, Serializable, SkylarkValue, SkyKey {
   public static final PathFragment EXTERNAL_PACKAGE_NAME = PathFragment.create("external");
-  public static final PathFragment EXTERNAL_PACKAGE_FILE_NAME = PathFragment.create("WORKSPACE");
+  public static final PathFragment WORKSPACE_FILE_NAME = PathFragment.create("WORKSPACE");
   public static final String DEFAULT_REPOSITORY_DIRECTORY = "__main__";
 
   /**

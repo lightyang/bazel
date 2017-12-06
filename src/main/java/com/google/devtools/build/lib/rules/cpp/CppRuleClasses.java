@@ -60,6 +60,7 @@ public class CppRuleClasses {
       LateBoundDefault.fromTargetConfiguration(
           CppConfiguration.class,
           null,
+          // TODO(b/69548520): Remove call to isLipoOptimization
           (rule, attributes, cppConfig) ->
               cppConfig.isLipoOptimization() ? cppConfig.getLipoContextLabel() : null);
 
@@ -285,6 +286,13 @@ public class CppRuleClasses {
    * A string constant for the ThinLTO feature.
    */
   public static final String THIN_LTO = "thin_lto";
+
+  /**
+   * A string constant for allowing use of shared LTO backend actions for linkstatic tests building
+   * with ThinLTO.
+   */
+  public static final String THIN_LTO_LINKSTATIC_TESTS_USE_SHARED_NONLTO_BACKENDS =
+      "thin_lto_linkstatic_tests_use_shared_nonlto_backends";
 
   /**
    * A string constant for the PDB file generation feature, should only be used for toolchains

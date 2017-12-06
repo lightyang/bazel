@@ -19,6 +19,7 @@ import static java.util.stream.Collectors.toCollection;
 
 import com.google.common.base.Function;
 import com.google.common.base.Optional;
+import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
 import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableList;
@@ -57,7 +58,6 @@ import com.google.devtools.build.lib.rules.cpp.LinkerInputs.LibraryToLink;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.FileTypeSet;
 import com.google.devtools.build.lib.util.Pair;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -245,15 +245,25 @@ public final class CcLibraryHelper {
     }
 
     /**
-     * Adds the static, pic-static, and dynamic (both compile-time and execution-time) libraries to
-     * the given builder.
+     * Adds the static, pic-static libraries to the given builder.
+     * If addDynamicLibraries parameter is true, it also adds dynamic(both compile-time and
+     * execution-time) libraries.
      */
-    public void addLinkingOutputsTo(NestedSetBuilder<Artifact> filesBuilder) {
+    public void addLinkingOutputsTo(
+        NestedSetBuilder<Artifact> filesBuilder, boolean addDynamicLibraries) {
       filesBuilder
           .addAll(LinkerInputs.toLibraryArtifacts(linkingOutputs.getStaticLibraries()))
-          .addAll(LinkerInputs.toLibraryArtifacts(linkingOutputs.getPicStaticLibraries()))
-          .addAll(LinkerInputs.toNonSolibArtifacts(linkingOutputs.getDynamicLibraries()))
-          .addAll(LinkerInputs.toNonSolibArtifacts(linkingOutputs.getExecutionDynamicLibraries()));
+          .addAll(LinkerInputs.toLibraryArtifacts(linkingOutputs.getPicStaticLibraries()));
+      if (addDynamicLibraries) {
+        filesBuilder
+            .addAll(LinkerInputs.toNonSolibArtifacts(linkingOutputs.getDynamicLibraries()))
+            .addAll(
+                LinkerInputs.toNonSolibArtifacts(linkingOutputs.getExecutionDynamicLibraries()));
+      }
+    }
+
+    public void addLinkingOutputsTo(NestedSetBuilder<Artifact> filesBuilder) {
+      addLinkingOutputsTo(filesBuilder, true);
     }
   }
 
@@ -1027,7 +1037,6 @@ public final class CcLibraryHelper {
 
     DwoArtifactsCollector dwoArtifacts =
         DwoArtifactsCollector.transitiveCollector(
-            ruleContext,
             ccOutputs,
             deps, /*generateDwo=*/
             false, /*ltoBackendArtifactsUsePic=*/
@@ -1057,7 +1066,7 @@ public final class CcLibraryHelper {
     if (emitCompileProviders) {
       boolean isLipoCollector = cppConfiguration.isLipoContextCollector();
       boolean processHeadersInDependencies = cppConfiguration.processHeadersInDependencies();
-      boolean usePic = CppHelper.usePic(ruleContext, false);
+      boolean usePic = CppHelper.usePic(ruleContext, ccToolchain, false);
       outputGroups.put(
           OutputGroupProvider.FILES_TO_COMPILE,
           ccOutputs.getFilesToCompile(isLipoCollector, processHeadersInDependencies, usePic));
@@ -1139,7 +1148,7 @@ public final class CcLibraryHelper {
               Link.LinkTargetType.DYNAMIC_LIBRARY,
               linkedArtifactNameSuffix));
 
-      if (ccToolchain.getCppConfiguration().useInterfaceSharedObjects()
+      if (CppHelper.useInterfaceSharedObjects(ccToolchain.getCppConfiguration(), ccToolchain)
           && emitInterfaceSharedObjects) {
         dynamicLibrary.add(
             CppHelper.getLinuxLinkedArtifact(

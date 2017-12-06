@@ -52,7 +52,7 @@ public class DocstringUtilsTest {
   @Test
   public void multiParagraphDocstring() throws Exception {
     List<DocstringParseError> errors = new ArrayList<>();
-    DocstringInfo info = DocstringUtils.parseDocstring("summary\n\nfoo\n\nbar", 0, errors);
+    DocstringInfo info = DocstringUtils.parseDocstring("summary\n\nfoo\n\nbar\n", 0, errors);
     Truth.assertThat(info.summary).isEqualTo("summary");
     Truth.assertThat(info.parameters).isEmpty();
     Truth.assertThat(info.longDescription).isEqualTo("foo\n\nbar");
@@ -63,7 +63,7 @@ public class DocstringUtilsTest {
   public void inconsistentIndentation() throws Exception {
     List<DocstringParseError> errors = new ArrayList<>();
     DocstringInfo info =
-        DocstringUtils.parseDocstring("summary\n" + "\n" + "  foo\n" + "bar", 2, errors);
+        DocstringUtils.parseDocstring("summary\n" + "\n" + "  foo\n" + "bar\n  ", 2, errors);
     Truth.assertThat(info.summary).isEqualTo("summary");
     Truth.assertThat(info.parameters).isEmpty();
     Truth.assertThat(info.longDescription).isEqualTo("foo\nbar");
@@ -76,7 +76,8 @@ public class DocstringUtilsTest {
             "summary\n"
                 + "\n"
                 + "  baseline indentation\n"
-                + "    more indentation can be useful (e.g. for example code)\n",
+                + "    more indentation can be useful (e.g. for example code)\n"
+                + "  ",
             2,
             errors);
     Truth.assertThat(info.summary).isEqualTo("summary");
@@ -135,11 +136,83 @@ public class DocstringUtilsTest {
   }
 
   @Test
+  public void whitespaceOnlyLinesCountAsBlank() throws Exception {
+    List<DocstringParseError> errors = new ArrayList<>();
+    DocstringInfo info =
+        DocstringUtils.parseDocstring(
+            "summary\n"
+                + "        \n" // if not blank, would have too much indent
+                + "    description\n"
+                + "  \n"       // if not blank, would have too little indent
+                + "    Args:\n"
+                + "      foo: foo description\n"
+                + "      \n"   // if not blank, would be indented just the right amount to end param
+                               //   description but not Args section
+                + "    Returns:\n"
+                + "      returns description\n"
+                + "     \n"    // if not blank, would be section content that's indented too little
+                + "    ",
+            4,
+            errors);
+    Truth.assertThat(info.parameters).hasSize(1);
+    Truth.assertThat(info.parameters.get(0).description).isEqualTo("foo description");
+    Truth.assertThat(info.returns).isEqualTo("returns description");
+    Truth.assertThat(errors).isEmpty();
+  }
+
+  @Test
+  public void closingQuoteMustBeProperlyIndented() throws Exception {
+    List<DocstringParseError> errors = new ArrayList<>();
+    DocstringUtils.parseDocstring("summary", 4, errors);
+    Truth.assertThat(errors).isEmpty();
+
+    errors = new ArrayList<>();
+    DocstringUtils.parseDocstring(
+        "summary\n"
+            + "\n"
+            + "    more description",
+        4, errors);
+    Truth.assertThat(errors.toString())
+        .contains("3: closing docstring quote should be on its own line, indented the same as the "
+            + "opening quote");
+
+    errors = new ArrayList<>();
+    DocstringUtils.parseDocstring(
+        "summary\n"
+            + "\n"
+            + "    more description\n"
+            + "  ",      // too little
+        4, errors);
+    Truth.assertThat(errors.toString())
+        .contains("4: closing docstring quote should be indented the same as the opening quote");
+
+    errors = new ArrayList<>();
+    DocstringUtils.parseDocstring(
+        "summary\n"
+            + "\n"
+            + "    more description\n"
+            + "      ",  // too much
+        4, errors);
+    Truth.assertThat(errors.toString())
+        .contains("4: closing docstring quote should be indented the same as the opening quote");
+
+    errors = new ArrayList<>();
+    DocstringUtils.parseDocstring(
+        "summary\n"
+            + "\n"
+            + "    more description\n"
+            + "",        // too little (empty line special case)
+        4, errors);
+    Truth.assertThat(errors.toString())
+        .contains("4: closing docstring quote should be indented the same as the opening quote");
+  }
+
+  @Test
   public void emptySection() throws Exception {
     List<DocstringParseError> errors = new ArrayList<>();
     DocstringUtils.parseDocstring(
         "summary\n" + "\n" + "Args:\n" + "More description.\n", 0, errors);
-    Truth.assertThat(errors.toString()).contains("3: section is empty");
+    Truth.assertThat(errors.toString()).contains("3: section is empty or badly formatted");
 
     errors = new ArrayList<>();
     DocstringUtils.parseDocstring(
@@ -160,6 +233,15 @@ public class DocstringUtilsTest {
   }
 
   @Test
+  public void sectionOnOneLine() throws Exception {
+    List<DocstringParseError> errors = new ArrayList<>();
+    DocstringUtils.parseDocstring("summary\n" + "\n" + "Returns: foo\n", 0, errors);
+    Truth.assertThat(errors).hasSize(1);
+    Truth.assertThat(errors.get(0).toString())
+        .startsWith("3: the return value should be documented in a section");
+  }
+
+  @Test
   public void docstringReturn() throws Exception {
     List<DocstringParseError> errors = new ArrayList<>();
     DocstringInfo info =
@@ -169,7 +251,8 @@ public class DocstringUtilsTest {
                 + "  Returns:\n"
                 + "    line 1\n"
                 + "\n"
-                + "    line 2\n",
+                + "    line 2\n"
+                + "  ",
             2,
             errors);
     Truth.assertThat(info.summary).isEqualTo("summary");
@@ -188,7 +271,8 @@ public class DocstringUtilsTest {
                 + "  Deprecated:\n"
                 + "    line 1\n"
                 + "\n"
-                + "    line 2\n",
+                + "    line 2\n"
+                + "  ",
             2,
             errors);
     Truth.assertThat(info.summary).isEqualTo("summary");
@@ -201,23 +285,26 @@ public class DocstringUtilsTest {
   public void docstringDeprecatedTheWrongWay() throws Exception {
     List<DocstringParseError> errors = new ArrayList<>();
     DocstringInfo info =
-        DocstringUtils.parseDocstring("summary\n" + "\n" + "  Deprecated: foo\n", 2, errors);
+        DocstringUtils.parseDocstring("summary\n" + "\n" + "  Deprecated: foo\n  ", 2, errors);
     Truth.assertThat(info.summary).isEqualTo("summary");
     Truth.assertThat(info.deprecated).isEqualTo("Deprecated: foo");
     Truth.assertThat(info.longDescription).isEqualTo("Deprecated: foo");
     Truth.assertThat(errors).hasSize(1);
     Truth.assertThat(errors.get(0).toString())
-        .isEqualTo(
+        .startsWith(
             "3: use a 'Deprecated:' section for deprecations, similar to a 'Returns:' section");
 
     errors = new ArrayList<>();
-    info = DocstringUtils.parseDocstring("summary\n" + "\n" + "  This is DEPRECATED.\n", 2, errors);
+    info = DocstringUtils.parseDocstring(
+        "summary\n" + "\n" + "  This is DEPRECATED.\n  ",
+        2,
+        errors);
     Truth.assertThat(info.summary).isEqualTo("summary");
     Truth.assertThat(info.deprecated).isEqualTo("This is DEPRECATED.");
     Truth.assertThat(info.longDescription).isEqualTo("This is DEPRECATED.");
     Truth.assertThat(errors).hasSize(1);
     Truth.assertThat(errors.get(0).toString())
-        .isEqualTo(
+        .startsWith(
             "3: use a 'Deprecated:' section for deprecations, similar to a 'Returns:' section");
   }
 
@@ -233,7 +320,8 @@ public class DocstringUtilsTest {
                 + "      line\n"
                 + "    param2 (mutable, unused): bar\n"
                 + "    *args: args\n"
-                + "    **kwargs: kwargs\n",
+                + "    **kwargs: kwargs\n"
+                + "  ",
             2,
             errors);
     Truth.assertThat(info.summary).isEqualTo("summary");
@@ -275,7 +363,8 @@ public class DocstringUtilsTest {
                 + "\n"
                 + "      line\n"
                 + "\n"
-                + "    param2: foo\n",
+                + "    param2: foo\n"
+                + "  ",
             2,
             errors);
     Truth.assertThat(info.summary).isEqualTo("summary");
@@ -358,7 +447,8 @@ public class DocstringUtilsTest {
                 + "  Args:\n"
                 + "    param1: foo\n"
                 + "\n"
-                + "  description\n",
+                + "  description\n"
+                + "  ",
             2,
             errors);
     Truth.assertThat(info.summary).isEqualTo("summary");
@@ -377,6 +467,29 @@ public class DocstringUtilsTest {
   }
 
   @Test
+  public void noRepeatedErrorAboutWrongOrder() throws Exception {
+    List<DocstringParseError> errors = new ArrayList<>();
+    DocstringInfo info =
+        DocstringUtils.parseDocstring(
+            "summary\n"
+                + "\n"
+                + "  Args:\n"
+                + "    param1: foo\n"
+                + "\n"
+                + "  line 1\n"
+                + "  line 2\n"
+                + "  ",
+            2,
+            errors);
+    Truth.assertThat(info.summary).isEqualTo("summary");
+    Truth.assertThat(info.parameters).hasSize(1);
+    Truth.assertThat(info.longDescription).isEqualTo("line 1\nline 2");
+    Truth.assertThat(errors).hasSize(1);
+    Truth.assertThat(errors.get(0).toString())
+        .isEqualTo("6: description body should go before the special sections");
+  }
+
+  @Test
   public void invalidParameterDoc() throws Exception {
     List<DocstringParseError> errors = new ArrayList<>();
     DocstringInfo info =
@@ -390,7 +503,10 @@ public class DocstringUtilsTest {
             2,
             errors);
     Truth.assertThat(info.parameters).isEmpty();
-    Truth.assertThat(errors.toString()).contains("4: invalid parameter documentation");
+    Truth.assertThat(errors.toString())
+        .contains(
+            "4: invalid parameter documentation"
+                + " (expected format: \"parameter_name: documentation\").");
   }
 
   @Test

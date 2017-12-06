@@ -21,11 +21,13 @@ import com.google.common.collect.ImmutableSortedMap;
 import com.google.devtools.build.lib.actions.AbstractAction;
 import com.google.devtools.build.lib.actions.ActionExecutionContext;
 import com.google.devtools.build.lib.actions.ActionExecutionException;
+import com.google.devtools.build.lib.actions.ActionKeyContext;
 import com.google.devtools.build.lib.actions.ActionOwner;
 import com.google.devtools.build.lib.actions.ActionResult;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.util.Fingerprint;
+import com.google.devtools.build.lib.vfs.FileSystem;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.Symlinks;
@@ -54,11 +56,11 @@ public final class CreateIncSymlinkAction extends AbstractAction {
   }
 
   @Override
-  public void prepare(Path execRoot) throws IOException {
+  public void prepare(FileSystem fileSystem, Path execRoot) throws IOException {
     if (includePath.isDirectory(Symlinks.NOFOLLOW)) {
       FileSystemUtils.deleteTree(includePath);
     }
-    super.prepare(execRoot);
+    super.prepare(fileSystem, execRoot);
   }
 
   @Override
@@ -82,7 +84,7 @@ public final class CreateIncSymlinkAction extends AbstractAction {
   }
 
   @Override
-  public String computeKey() {
+  public String computeKey(ActionKeyContext actionKeyContext) {
     Fingerprint key = new Fingerprint();
     for (Map.Entry<Artifact, Artifact> entry : symlinks.entrySet()) {
       key.addPath(entry.getKey().getPath());

@@ -228,7 +228,11 @@ function new_step() {
   else
     new_line="\n"
   fi
-  display -n "$new_line$LEAVES  $1"
+  if [ -t 2 ]; then
+    display -n "$new_line$LEAVES  $1"
+  else
+    display -n "$new_line$1"
+  fi
 }
 
 function git_sha1() {
@@ -283,8 +287,8 @@ function get_java_version() {
     || fail "JAVA_HOME ($JAVA_HOME) is not a path to a working JDK."
 
   JAVAC_VERSION=$("${JAVAC}" -version 2>&1)
-  if [[ "$JAVAC_VERSION" =~ javac\ (1\.([789]|[1-9][0-9])).*$ ]]; then
-    JAVAC_VERSION=${BASH_REMATCH[1]}
+  if [[ "$JAVAC_VERSION" =~ javac\ ((1\.)?([789]|[1-9][0-9])).*$ ]]; then
+    JAVAC_VERSION=1.${BASH_REMATCH[3]}
   else
     fail \
       "Cannot determine JDK version, please set \$JAVA_HOME.\n" \

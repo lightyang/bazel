@@ -58,7 +58,7 @@ import com.google.protobuf.Any;
 import io.grpc.Status;
 import java.time.Duration;
 import java.util.Deque;
-import java.util.List;
+import java.util.Set;
 import java.util.concurrent.BlockingDeque;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentLinkedDeque;
@@ -83,6 +83,8 @@ public class BuildEventServiceTransport implements BuildEventTransport {
 
   /** Max wait time until for the Streaming RPC to finish after all events were sent. */
   private static final Duration PUBLISH_EVENT_STREAM_FINISHED_TIMEOUT = Duration.ofSeconds(30);
+  /** Max wait time between isStreamActive checks of the PublishBuildToolEventStream RPC. */
+  private static final int STREAMING_RPC_POLL_IN_SECS = 1;
 
   private final ListeningExecutorService uploaderExecutorService;
   private final Duration uploadTimeout;
@@ -131,7 +133,7 @@ public class BuildEventServiceTransport implements BuildEventTransport {
       PathConverter pathConverter,
       EventHandler commandLineReporter,
       @Nullable String projectId,
-      List<String> keywords) {
+      Set<String> keywords) {
     this(besClient, uploadTimeout, bestEffortUpload, publishLifecycleEvents, buildRequestId,
         invocationId, command, moduleEnvironment, clock, pathConverter, commandLineReporter,
         projectId, keywords, new JavaSleeper());
@@ -151,7 +153,7 @@ public class BuildEventServiceTransport implements BuildEventTransport {
       PathConverter pathConverter,
       EventHandler commandLineReporter,
       @Nullable String projectId,
-      List<String> keywords,
+      Set<String> keywords,
       Sleeper sleeper) {
     this.besClient = besClient;
     this.besProtoUtil = new BuildEventServiceProtoUtil(
@@ -471,12 +473,20 @@ public class BuildEventServiceTransport implements BuildEventTransport {
     ListenableFuture<Status> streamDone = besClient
         .openStream(ackCallback(pendingAck, besClient));
     try {
-      PublishBuildToolEventStreamRequest event;
+      @Nullable PublishBuildToolEventStreamRequest event;
       do {
-        event = pendingSend.takeFirst();
-        pendingAck.add(event);
-        besClient.sendOverStream(event);
+        event = pendingSend.pollFirst(STREAMING_RPC_POLL_IN_SECS, TimeUnit.SECONDS);
+        if (event != null) {
+          pendingAck.add(event);
+          besClient.sendOverStream(event);
+        }
+        checkState(besClient.isStreamActive(), "Stream was closed prematurely.");
       } while (!isLastEvent(event));
+      logger.log(
+          Level.INFO,
+          String.format(
+              "Will end publishEventStream() isLastEvent: %s isStreamActive: %s",
+              isLastEvent(event), besClient.isStreamActive()));
     } catch (InterruptedException e) {
       // By convention the interrupted flag should have been cleared,
       // but just to be sure clear it.
@@ -485,8 +495,13 @@ public class BuildEventServiceTransport implements BuildEventTransport {
       besClient.abortStream(Status.CANCELLED.augmentDescription(additionalDetails));
       throw e;
     } catch (Exception e) {
+      Status status = streamDone.isDone() ? streamDone.get() : null;
       String additionalDetail = e.getMessage();
-      logger.log(Level.WARNING, "Aborting publishBuildToolEventStream RPC: " + additionalDetail);
+      logger.log(
+          Level.WARNING,
+          String.format(
+              "Aborting publishBuildToolEventStream RPC (status=%s): %s", status, additionalDetail),
+          e);
       besClient.abortStream(Status.INTERNAL.augmentDescription(additionalDetail));
       throw e;
     }
@@ -511,7 +526,7 @@ public class BuildEventServiceTransport implements BuildEventTransport {
     }
   }
 
-  private static boolean isLastEvent(PublishBuildToolEventStreamRequest event) {
+  private static boolean isLastEvent(@Nullable PublishBuildToolEventStreamRequest event) {
     return event != null
         && event.getOrderedBuildEvent().getEvent().getEventCase() == COMPONENT_STREAM_FINISHED;
   }

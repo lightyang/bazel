@@ -17,6 +17,7 @@ filegroup(
         "//third_party/java/jacoco:srcs",
         "//third_party/java/jarjar:srcs",
         "//third_party/java/javapoet:srcs",
+        "//third_party/java/jcommander:srcs",
         "//third_party/java/jopt-simple:srcs",
         "//third_party/java/jdk/langtools:srcs",
         "//third_party/java/jdk/javabuilder:srcs",
@@ -166,30 +167,35 @@ java_import(
 
 java_import(
     name = "asm",
-    jars = ["asm/asm-5.1.jar"],
+    jars = ["asm/asm-6.0.jar"],
+    srcjar = "asm/asm-6.0-sources.jar",
 )
 
 java_import(
     name = "asm-analysis",
-    jars = ["asm/asm-analysis-5.1.jar"],
+    jars = ["asm/asm-analysis-6.0.jar"],
+    srcjar = "asm/asm-analysis-6.0-sources.jar",
     runtime_deps = [":asm-tree"],
 )
 
 java_import(
     name = "asm-commons",
-    jars = ["asm/asm-commons-5.1.jar"],
+    jars = ["asm/asm-commons-6.0.jar"],
+    srcjar = "asm/asm-commons-6.0-sources.jar",
     runtime_deps = [":asm-tree"],
 )
 
 java_import(
     name = "asm-tree",
-    jars = ["asm/asm-tree-5.1.jar"],
+    jars = ["asm/asm-tree-6.0.jar"],
+    srcjar = "asm/asm-tree-6.0-sources.jar",
     runtime_deps = [":asm"],
 )
 
 java_import(
     name = "asm-util",
-    jars = ["asm/asm-util-5.1.jar"],
+    jars = ["asm/asm-util-6.0.jar"],
+    srcjar = "asm/asm-util-6.0-sources.jar",
     runtime_deps = [":asm-tree"],
 )
 
@@ -388,7 +394,7 @@ java_import(
 java_import(
     name = "opencensus-api",
     jars = [
-        "opencensus/opencensus-api-0.5.1.jar",
+        "opencensus/opencensus-api-0.6.0.jar",
     ],
 )
 
@@ -406,11 +412,6 @@ java_import(
 java_import(
     name = "jimfs",
     jars = ["jimfs/jimfs-1.1.jar"],
-)
-
-java_import(
-    name = "joda_time",
-    jars = ["joda_time/joda-time-2.3.jar"],
 )
 
 java_import(
@@ -451,12 +452,12 @@ java_import(
 
 java_import(
     name = "netty",
-    jars = ["netty/netty-all-4.1.14.Final.jar"],
+    jars = ["netty/netty-all-4.1.16.Final.jar"],
 )
 
 java_import(
     name = "netty_tcnative",
-    jars = ["netty_tcnative/netty-tcnative-boringssl-static-2.0.5.Final.jar"],
+    jars = ["netty_tcnative/netty-tcnative-boringssl-static-2.0.6.Final.jar"],
 )
 
 java_import(
@@ -520,7 +521,12 @@ java_import(
 
 java_import(
     name = "truth",
-    jars = ["truth/truth-0.32.jar"],
+    jars = ["truth/truth-0.36.jar"],
+)
+
+java_import(
+    name = "truth8",
+    jars = ["truth8/truth-java8-extension-0.36.jar"],
 )
 
 java_import(

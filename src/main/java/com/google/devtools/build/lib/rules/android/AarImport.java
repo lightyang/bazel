@@ -63,9 +63,7 @@ public class AarImport implements RuleConfiguredTargetFactory {
   @Override
   public ConfiguredTarget create(RuleContext ruleContext)
       throws InterruptedException, RuleErrorException {
-    if (!AndroidSdkProvider.verifyPresence(ruleContext)) {
-      return null;
-    }
+    AndroidSdkProvider.verifyPresence(ruleContext);
 
     RuleConfiguredTargetBuilder ruleBuilder = new RuleConfiguredTargetBuilder(ruleContext);
     Artifact aar = ruleContext.getPrerequisiteArtifact("aar", Mode.TARGET);
@@ -99,9 +97,8 @@ public class AarImport implements RuleConfiguredTargetFactory {
     ResourceApk resourceApk =
         androidManifest.packAarWithDataAndResources(
             ruleContext,
-            new LocalResourceContainer.Builder(ruleContext)
-                .withResources(ImmutableList.of(resourcesProvider))
-                .build(),
+            LocalResourceContainer.forResourceFileProvider(
+                ruleContext, resourcesProvider, "resources"),
             ResourceDependencies.fromRuleDeps(ruleContext, JavaCommon.isNeverLink(ruleContext)),
             ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_R_TXT),
             ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_LOCAL_SYMBOLS),
@@ -284,13 +281,13 @@ public class AarImport implements RuleConfiguredTargetFactory {
   // Adds the appropriate SpawnAction options depending on if SingleJar is a jar or not.
   private static SpawnAction.Builder singleJarSpawnActionBuilder(RuleContext ruleContext) {
     SpawnAction.Builder builder = new SpawnAction.Builder().useDefaultShellEnvironment();
-    Artifact singleJar = JavaToolchainProvider.fromRuleContext(ruleContext).getSingleJar();
+    Artifact singleJar = JavaToolchainProvider.from(ruleContext).getSingleJar();
     if (singleJar.getFilename().endsWith(".jar")) {
       builder
           .setJarExecutable(
               JavaCommon.getHostJavaExecutable(ruleContext),
               singleJar,
-              JavaToolchainProvider.fromRuleContext(ruleContext).getJvmOptions())
+              JavaToolchainProvider.from(ruleContext).getJvmOptions())
           .addTransitiveInputs(JavaHelper.getHostJavabaseInputs(ruleContext));
     } else {
       builder.setExecutable(singleJar);

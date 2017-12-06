@@ -46,11 +46,12 @@ public abstract class SkylarkSemantics {
   public abstract boolean incompatibleDictLiteralHasNoDuplicates();
   public abstract boolean incompatibleDisallowDictPlus();
   public abstract boolean incompatibleDisallowKeywordOnlyArgs();
-  public abstract boolean incompatibleDisallowSetConstructor();
   public abstract boolean incompatibleDisallowToplevelIfStatement();
+  public abstract boolean incompatibleDisallowUncalledSetConstructor();
   public abstract boolean incompatibleListPlusEqualsInplace();
   public abstract boolean incompatibleLoadArgumentIsLabel();
   public abstract boolean incompatibleNewActionsApi();
+  public abstract boolean incompatibleShowAllPrintMessages();
   public abstract boolean incompatibleStringIsNotIterable();
   public abstract boolean internalDoNotExportBuiltins();
   public abstract boolean internalSkylarkFlagTestCanary();
@@ -59,24 +60,26 @@ public abstract class SkylarkSemantics {
     return new AutoValue_SkylarkSemantics.Builder();
   }
 
-  public static final SkylarkSemantics DEFAULT_SEMANTICS = builder()
-      // <== Add new options here in alphabetic order ==>
-      .incompatibleBzlDisallowLoadAfterStatement(false)
-      .incompatibleCheckedArithmetic(true)
-      .incompatibleComprehensionVariablesDoNotLeak(true)
-      .incompatibleDepsetIsNotIterable(false)
-      .incompatibleDictLiteralHasNoDuplicates(true)
-      .incompatibleDisallowDictPlus(false)
-      .incompatibleDisallowKeywordOnlyArgs(true)
-      .incompatibleDisallowSetConstructor(true)
-      .incompatibleDisallowToplevelIfStatement(true)
-      .incompatibleListPlusEqualsInplace(true)
-      .incompatibleLoadArgumentIsLabel(false)
-      .incompatibleNewActionsApi(false)
-      .incompatibleStringIsNotIterable(false)
-      .internalDoNotExportBuiltins(false)
-      .internalSkylarkFlagTestCanary(false)
-      .build();
+  public static final SkylarkSemantics DEFAULT_SEMANTICS =
+      builder()
+          // <== Add new options here in alphabetic order ==>
+          .incompatibleBzlDisallowLoadAfterStatement(false)
+          .incompatibleCheckedArithmetic(true)
+          .incompatibleComprehensionVariablesDoNotLeak(true)
+          .incompatibleDepsetIsNotIterable(false)
+          .incompatibleDictLiteralHasNoDuplicates(true)
+          .incompatibleDisallowDictPlus(false)
+          .incompatibleDisallowKeywordOnlyArgs(true)
+          .incompatibleDisallowToplevelIfStatement(true)
+          .incompatibleDisallowUncalledSetConstructor(false)
+          .incompatibleListPlusEqualsInplace(true)
+          .incompatibleLoadArgumentIsLabel(true)
+          .incompatibleNewActionsApi(false)
+          .incompatibleShowAllPrintMessages(true)
+          .incompatibleStringIsNotIterable(false)
+          .internalDoNotExportBuiltins(false)
+          .internalSkylarkFlagTestCanary(false)
+          .build();
 
   /** Builder for {@link SkylarkSemantics}. All fields are mandatory. */
   @AutoValue.Builder
@@ -90,11 +93,12 @@ public abstract class SkylarkSemantics {
     public abstract Builder incompatibleDictLiteralHasNoDuplicates(boolean value);
     public abstract Builder incompatibleDisallowDictPlus(boolean value);
     public abstract Builder incompatibleDisallowKeywordOnlyArgs(boolean value);
-    public abstract Builder incompatibleDisallowSetConstructor(boolean value);
     public abstract Builder incompatibleDisallowToplevelIfStatement(boolean value);
+    public abstract Builder incompatibleDisallowUncalledSetConstructor(boolean value);
     public abstract Builder incompatibleListPlusEqualsInplace(boolean value);
     public abstract Builder incompatibleLoadArgumentIsLabel(boolean value);
     public abstract Builder incompatibleNewActionsApi(boolean value);
+    public abstract Builder incompatibleShowAllPrintMessages(boolean value);
     public abstract Builder incompatibleStringIsNotIterable(boolean value);
     public abstract Builder internalDoNotExportBuiltins(boolean value);
     public abstract Builder internalSkylarkFlagTestCanary(boolean value);

@@ -136,17 +136,10 @@ toolchain {
     compiler_flag: "-DNDEBUG"
     compiler_flag: "-ffunction-sections"
     compiler_flag: "-fdata-sections"
-    compiler_flag: "-Wno-unused-variable"
-    compiler_flag: "-Winit-self"
-    compiler_flag: "-Wno-extra"
   }
   compilation_mode_flags {
     mode: DBG
     compiler_flag: "-g"
-    compiler_flag: "-DDEBUG"
-    compiler_flag: "-O0"
-    compiler_flag: "-fstack-protector"
-    compiler_flag: "-fstack-protector-all"
   }
   linking_mode_flags {
     mode: DYNAMIC
@@ -164,9 +157,6 @@ toolchain {
   unfiltered_cxx_flag: "-D__TIMESTAMP__=\"redacted\""
   unfiltered_cxx_flag: "-D__TIME__=\"redacted\""
   default_python_version: "python2.7"
-  ar_flag: "-static"
-  ar_flag: "-s"
-  ar_flag: "-o"
   feature {
     name: "fastbuild"
   }
@@ -178,23 +168,6 @@ toolchain {
   }
   feature {
     name: "dbg"
-  }
-  feature {
-    name: "use_glibcxx_dbg_opts"
-    flag_set {
-      action: "c-compile"
-      action: "c++-compile"
-      action: "objc-compile"
-      action: "objc++-compile"
-      flag_group {
-        flag: "-D_GLIBCXX_DEBUG"
-        flag: "-D_GLIBCXX_DEBUG_PEDANTIC"
-        flag: "-D_GLIBCPP_CONCEPT_CHECKS"
-      }
-    }
-    requires {
-      feature: "dbg"
-    }
   }
   feature {
     name: "compile_all_modules"
@@ -309,36 +282,10 @@ toolchain {
   feature {
     name: "output_execpath_flags"
     flag_set {
+      action: "c++-link-executable"
       action: "c++-link-dynamic-library"
       flag_group {
         flag: "-o"
-        flag: "%{output_execpath}"
-      }
-      expand_if_all_available: "output_execpath"
-    }
-  }
-  feature {
-    name: "output_execpath_flags_executable"
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
-        flag: "-o"
-      }
-      expand_if_all_available: "output_execpath"
-    }
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
-        flag: "/dev/null"
-        flag: "-MMD"
-        flag: "-MF"
-      }
-      expand_if_all_available: "skip_mostly_static"
-      expand_if_all_available: "output_execpath"
-    }
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
@@ -371,7 +318,6 @@ toolchain {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
-      expand_if_all_available: "uses_action_configs_for_cc_archiving"
     }
   }
   feature {
@@ -950,6 +896,7 @@ toolchain {
       action: "objc++-compile"
       flag_group {
         flag: "-DOS_MACOSX"
+        flag: "-fno-autolink"
       }
     }
   }
@@ -1203,22 +1150,6 @@ toolchain {
         flag: "-S"
         flag: "-o"
         flag: "%{output_file}"
-        flag: "-R"
-        flag: ".gnu.switches.text.quote_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.bracket_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.system_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.cpp_defines"
-        flag: "-R"
-        flag: ".gnu.switches.text.cpp_includes"
-        flag: "-R"
-        flag: ".gnu.switches.text.cl_args"
-        flag: "-R"
-        flag: ".gnu.switches.text.lipo_info"
-        flag: "-R"
-        flag: ".gnu.switches.text.annotation"
       }
       flag_group {
         flag: "%{stripopts}"
@@ -1590,7 +1521,7 @@ toolchain {
     implies: "contains_objc_source"
     implies: "symbol_counts"
     implies: "linkstamps"
-    implies: "output_execpath_flags_executable"
+    implies: "output_execpath_flags"
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
     implies: "input_param_flags"
@@ -1809,17 +1740,10 @@ toolchain {
     compiler_flag: "-DNDEBUG"
     compiler_flag: "-ffunction-sections"
     compiler_flag: "-fdata-sections"
-    compiler_flag: "-Wno-unused-variable"
-    compiler_flag: "-Winit-self"
-    compiler_flag: "-Wno-extra"
   }
   compilation_mode_flags {
     mode: DBG
     compiler_flag: "-g"
-    compiler_flag: "-DDEBUG"
-    compiler_flag: "-O0"
-    compiler_flag: "-fstack-protector"
-    compiler_flag: "-fstack-protector-all"
   }
   make_variable {
     name: "STACK_FRAME_UNLIMITED"
@@ -1834,9 +1758,6 @@ toolchain {
   unfiltered_cxx_flag: "-target"
   unfiltered_cxx_flag: "x86_64-apple-ios"
   default_python_version: "python2.7"
-  ar_flag: "-static"
-  ar_flag: "-s"
-  ar_flag: "-o"
   feature {
     name: "fastbuild"
   }
@@ -1848,23 +1769,6 @@ toolchain {
   }
   feature {
     name: "dbg"
-  }
-  feature {
-    name: "use_glibcxx_dbg_opts"
-    flag_set {
-      action: "c-compile"
-      action: "c++-compile"
-      action: "objc-compile"
-      action: "objc++-compile"
-      flag_group {
-        flag: "-D_GLIBCXX_DEBUG"
-        flag: "-D_GLIBCXX_DEBUG_PEDANTIC"
-        flag: "-D_GLIBCPP_CONCEPT_CHECKS"
-      }
-    }
-    requires {
-      feature: "dbg"
-    }
   }
   feature {
     name: "compile_all_modules"
@@ -1988,36 +1892,10 @@ toolchain {
   feature {
     name: "output_execpath_flags"
     flag_set {
+      action: "c++-link-executable"
       action: "c++-link-dynamic-library"
       flag_group {
         flag: "-o"
-        flag: "%{output_execpath}"
-      }
-      expand_if_all_available: "output_execpath"
-    }
-  }
-  feature {
-    name: "output_execpath_flags_executable"
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
-        flag: "-o"
-      }
-      expand_if_all_available: "output_execpath"
-    }
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
-        flag: "/dev/null"
-        flag: "-MMD"
-        flag: "-MF"
-      }
-      expand_if_all_available: "skip_mostly_static"
-      expand_if_all_available: "output_execpath"
-    }
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
@@ -2050,7 +1928,6 @@ toolchain {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
-      expand_if_all_available: "uses_action_configs_for_cc_archiving"
     }
   }
   feature {
@@ -2629,6 +2506,7 @@ toolchain {
       action: "objc++-compile"
       flag_group {
         flag: "-DOS_IOS"
+        flag: "-fno-autolink"
       }
     }
   }
@@ -2887,22 +2765,6 @@ toolchain {
         flag: "-S"
         flag: "-o"
         flag: "%{output_file}"
-        flag: "-R"
-        flag: ".gnu.switches.text.quote_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.bracket_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.system_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.cpp_defines"
-        flag: "-R"
-        flag: ".gnu.switches.text.cpp_includes"
-        flag: "-R"
-        flag: ".gnu.switches.text.cl_args"
-        flag: "-R"
-        flag: ".gnu.switches.text.lipo_info"
-        flag: "-R"
-        flag: ".gnu.switches.text.annotation"
       }
       flag_group {
         flag: "%{stripopts}"
@@ -3276,7 +3138,7 @@ toolchain {
     implies: "contains_objc_source"
     implies: "symbol_counts"
     implies: "linkstamps"
-    implies: "output_execpath_flags_executable"
+    implies: "output_execpath_flags"
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
     implies: "input_param_flags"
@@ -3495,17 +3357,10 @@ toolchain {
     compiler_flag: "-DNDEBUG"
     compiler_flag: "-ffunction-sections"
     compiler_flag: "-fdata-sections"
-    compiler_flag: "-Wno-unused-variable"
-    compiler_flag: "-Winit-self"
-    compiler_flag: "-Wno-extra"
   }
   compilation_mode_flags {
     mode: DBG
     compiler_flag: "-g"
-    compiler_flag: "-DDEBUG"
-    compiler_flag: "-O0"
-    compiler_flag: "-fstack-protector"
-    compiler_flag: "-fstack-protector-all"
   }
   make_variable {
     name: "STACK_FRAME_UNLIMITED"
@@ -3520,9 +3375,6 @@ toolchain {
   unfiltered_cxx_flag: "-target"
   unfiltered_cxx_flag: "i386-apple-watchos"
   default_python_version: "python2.7"
-  ar_flag: "-static"
-  ar_flag: "-s"
-  ar_flag: "-o"
   feature {
     name: "fastbuild"
   }
@@ -3534,23 +3386,6 @@ toolchain {
   }
   feature {
     name: "dbg"
-  }
-  feature {
-    name: "use_glibcxx_dbg_opts"
-    flag_set {
-      action: "c-compile"
-      action: "c++-compile"
-      action: "objc-compile"
-      action: "objc++-compile"
-      flag_group {
-        flag: "-D_GLIBCXX_DEBUG"
-        flag: "-D_GLIBCXX_DEBUG_PEDANTIC"
-        flag: "-D_GLIBCPP_CONCEPT_CHECKS"
-      }
-    }
-    requires {
-      feature: "dbg"
-    }
   }
   feature {
     name: "compile_all_modules"
@@ -3674,36 +3509,10 @@ toolchain {
   feature {
     name: "output_execpath_flags"
     flag_set {
+      action: "c++-link-executable"
       action: "c++-link-dynamic-library"
       flag_group {
         flag: "-o"
-        flag: "%{output_execpath}"
-      }
-      expand_if_all_available: "output_execpath"
-    }
-  }
-  feature {
-    name: "output_execpath_flags_executable"
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
-        flag: "-o"
-      }
-      expand_if_all_available: "output_execpath"
-    }
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
-        flag: "/dev/null"
-        flag: "-MMD"
-        flag: "-MF"
-      }
-      expand_if_all_available: "skip_mostly_static"
-      expand_if_all_available: "output_execpath"
-    }
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
@@ -3736,7 +3545,6 @@ toolchain {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
-      expand_if_all_available: "uses_action_configs_for_cc_archiving"
     }
   }
   feature {
@@ -4315,6 +4123,7 @@ toolchain {
       action: "objc++-compile"
       flag_group {
         flag: "-DOS_IOS"
+        flag: "-fno-autolink"
       }
     }
   }
@@ -4575,22 +4384,6 @@ toolchain {
         flag: "-S"
         flag: "-o"
         flag: "%{output_file}"
-        flag: "-R"
-        flag: ".gnu.switches.text.quote_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.bracket_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.system_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.cpp_defines"
-        flag: "-R"
-        flag: ".gnu.switches.text.cpp_includes"
-        flag: "-R"
-        flag: ".gnu.switches.text.cl_args"
-        flag: "-R"
-        flag: ".gnu.switches.text.lipo_info"
-        flag: "-R"
-        flag: ".gnu.switches.text.annotation"
       }
       flag_group {
         flag: "%{stripopts}"
@@ -4964,7 +4757,7 @@ toolchain {
     implies: "contains_objc_source"
     implies: "symbol_counts"
     implies: "linkstamps"
-    implies: "output_execpath_flags_executable"
+    implies: "output_execpath_flags"
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
     implies: "input_param_flags"
@@ -5183,18 +4976,11 @@ toolchain {
     compiler_flag: "-DNDEBUG"
     compiler_flag: "-ffunction-sections"
     compiler_flag: "-fdata-sections"
-    compiler_flag: "-Wno-unused-variable"
-    compiler_flag: "-Winit-self"
-    compiler_flag: "-Wno-extra"
     compiler_flag: "-DNS_BLOCK_ASSERTIONS=1"
   }
   compilation_mode_flags {
     mode: DBG
     compiler_flag: "-g"
-    compiler_flag: "-DDEBUG"
-    compiler_flag: "-O0"
-    compiler_flag: "-fstack-protector"
-    compiler_flag: "-fstack-protector-all"
   }
   make_variable {
     name: "STACK_FRAME_UNLIMITED"
@@ -5209,9 +4995,6 @@ toolchain {
   unfiltered_cxx_flag: "-target"
   unfiltered_cxx_flag: "x86_64-apple-tvos"
   default_python_version: "python2.7"
-  ar_flag: "-static"
-  ar_flag: "-s"
-  ar_flag: "-o"
   feature {
     name: "fastbuild"
   }
@@ -5223,23 +5006,6 @@ toolchain {
   }
   feature {
     name: "dbg"
-  }
-  feature {
-    name: "use_glibcxx_dbg_opts"
-    flag_set {
-      action: "c-compile"
-      action: "c++-compile"
-      action: "objc-compile"
-      action: "objc++-compile"
-      flag_group {
-        flag: "-D_GLIBCXX_DEBUG"
-        flag: "-D_GLIBCXX_DEBUG_PEDANTIC"
-        flag: "-D_GLIBCPP_CONCEPT_CHECKS"
-      }
-    }
-    requires {
-      feature: "dbg"
-    }
   }
   feature {
     name: "compile_all_modules"
@@ -5363,36 +5129,10 @@ toolchain {
   feature {
     name: "output_execpath_flags"
     flag_set {
+      action: "c++-link-executable"
       action: "c++-link-dynamic-library"
       flag_group {
         flag: "-o"
-        flag: "%{output_execpath}"
-      }
-      expand_if_all_available: "output_execpath"
-    }
-  }
-  feature {
-    name: "output_execpath_flags_executable"
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
-        flag: "-o"
-      }
-      expand_if_all_available: "output_execpath"
-    }
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
-        flag: "/dev/null"
-        flag: "-MMD"
-        flag: "-MF"
-      }
-      expand_if_all_available: "skip_mostly_static"
-      expand_if_all_available: "output_execpath"
-    }
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
@@ -5425,7 +5165,6 @@ toolchain {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
-      expand_if_all_available: "uses_action_configs_for_cc_archiving"
     }
   }
   feature {
@@ -6004,6 +5743,7 @@ toolchain {
       action: "objc++-compile"
       flag_group {
         flag: "-DOS_TVOS"
+        flag: "-fno-autolink"
       }
     }
   }
@@ -6283,22 +6023,6 @@ toolchain {
         flag: "-S"
         flag: "-o"
         flag: "%{output_file}"
-        flag: "-R"
-        flag: ".gnu.switches.text.quote_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.bracket_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.system_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.cpp_defines"
-        flag: "-R"
-        flag: ".gnu.switches.text.cpp_includes"
-        flag: "-R"
-        flag: ".gnu.switches.text.cl_args"
-        flag: "-R"
-        flag: ".gnu.switches.text.lipo_info"
-        flag: "-R"
-        flag: ".gnu.switches.text.annotation"
       }
       flag_group {
         flag: "%{stripopts}"
@@ -6679,7 +6403,7 @@ toolchain {
     implies: "contains_objc_source"
     implies: "symbol_counts"
     implies: "linkstamps"
-    implies: "output_execpath_flags_executable"
+    implies: "output_execpath_flags"
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
     implies: "input_param_flags"
@@ -6900,17 +6624,10 @@ toolchain {
     compiler_flag: "-DNDEBUG"
     compiler_flag: "-ffunction-sections"
     compiler_flag: "-fdata-sections"
-    compiler_flag: "-Wno-unused-variable"
-    compiler_flag: "-Winit-self"
-    compiler_flag: "-Wno-extra"
   }
   compilation_mode_flags {
     mode: DBG
     compiler_flag: "-g"
-    compiler_flag: "-DDEBUG"
-    compiler_flag: "-O0"
-    compiler_flag: "-fstack-protector"
-    compiler_flag: "-fstack-protector-all"
   }
   make_variable {
     name: "STACK_FRAME_UNLIMITED"
@@ -6925,9 +6642,6 @@ toolchain {
   unfiltered_cxx_flag: "-target"
   unfiltered_cxx_flag: "i386-apple-ios"
   default_python_version: "python2.7"
-  ar_flag: "-static"
-  ar_flag: "-s"
-  ar_flag: "-o"
   feature {
     name: "fastbuild"
   }
@@ -6939,23 +6653,6 @@ toolchain {
   }
   feature {
     name: "dbg"
-  }
-  feature {
-    name: "use_glibcxx_dbg_opts"
-    flag_set {
-      action: "c-compile"
-      action: "c++-compile"
-      action: "objc-compile"
-      action: "objc++-compile"
-      flag_group {
-        flag: "-D_GLIBCXX_DEBUG"
-        flag: "-D_GLIBCXX_DEBUG_PEDANTIC"
-        flag: "-D_GLIBCPP_CONCEPT_CHECKS"
-      }
-    }
-    requires {
-      feature: "dbg"
-    }
   }
   feature {
     name: "compile_all_modules"
@@ -7079,36 +6776,10 @@ toolchain {
   feature {
     name: "output_execpath_flags"
     flag_set {
+      action: "c++-link-executable"
       action: "c++-link-dynamic-library"
       flag_group {
         flag: "-o"
-        flag: "%{output_execpath}"
-      }
-      expand_if_all_available: "output_execpath"
-    }
-  }
-  feature {
-    name: "output_execpath_flags_executable"
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
-        flag: "-o"
-      }
-      expand_if_all_available: "output_execpath"
-    }
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
-        flag: "/dev/null"
-        flag: "-MMD"
-        flag: "-MF"
-      }
-      expand_if_all_available: "skip_mostly_static"
-      expand_if_all_available: "output_execpath"
-    }
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
@@ -7141,7 +6812,6 @@ toolchain {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
-      expand_if_all_available: "uses_action_configs_for_cc_archiving"
     }
   }
   feature {
@@ -7720,6 +7390,7 @@ toolchain {
       action: "objc++-compile"
       flag_group {
         flag: "-DOS_IOS"
+        flag: "-fno-autolink"
       }
     }
   }
@@ -7978,22 +7649,6 @@ toolchain {
         flag: "-S"
         flag: "-o"
         flag: "%{output_file}"
-        flag: "-R"
-        flag: ".gnu.switches.text.quote_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.bracket_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.system_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.cpp_defines"
-        flag: "-R"
-        flag: ".gnu.switches.text.cpp_includes"
-        flag: "-R"
-        flag: ".gnu.switches.text.cl_args"
-        flag: "-R"
-        flag: ".gnu.switches.text.lipo_info"
-        flag: "-R"
-        flag: ".gnu.switches.text.annotation"
       }
       flag_group {
         flag: "%{stripopts}"
@@ -8367,7 +8022,7 @@ toolchain {
     implies: "contains_objc_source"
     implies: "symbol_counts"
     implies: "linkstamps"
-    implies: "output_execpath_flags_executable"
+    implies: "output_execpath_flags"
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
     implies: "input_param_flags"
@@ -8586,17 +8241,10 @@ toolchain {
     compiler_flag: "-DNDEBUG"
     compiler_flag: "-ffunction-sections"
     compiler_flag: "-fdata-sections"
-    compiler_flag: "-Wno-unused-variable"
-    compiler_flag: "-Winit-self"
-    compiler_flag: "-Wno-extra"
   }
   compilation_mode_flags {
     mode: DBG
     compiler_flag: "-g"
-    compiler_flag: "-DDEBUG"
-    compiler_flag: "-O0"
-    compiler_flag: "-fstack-protector"
-    compiler_flag: "-fstack-protector-all"
   }
   make_variable {
     name: "STACK_FRAME_UNLIMITED"
@@ -8611,9 +8259,6 @@ toolchain {
   unfiltered_cxx_flag: "-target"
   unfiltered_cxx_flag: "armv7-apple-ios"
   default_python_version: "python2.7"
-  ar_flag: "-static"
-  ar_flag: "-s"
-  ar_flag: "-o"
   feature {
     name: "fastbuild"
   }
@@ -8625,23 +8270,6 @@ toolchain {
   }
   feature {
     name: "dbg"
-  }
-  feature {
-    name: "use_glibcxx_dbg_opts"
-    flag_set {
-      action: "c-compile"
-      action: "c++-compile"
-      action: "objc-compile"
-      action: "objc++-compile"
-      flag_group {
-        flag: "-D_GLIBCXX_DEBUG"
-        flag: "-D_GLIBCXX_DEBUG_PEDANTIC"
-        flag: "-D_GLIBCPP_CONCEPT_CHECKS"
-      }
-    }
-    requires {
-      feature: "dbg"
-    }
   }
   feature {
     name: "compile_all_modules"
@@ -8765,36 +8393,10 @@ toolchain {
   feature {
     name: "output_execpath_flags"
     flag_set {
+      action: "c++-link-executable"
       action: "c++-link-dynamic-library"
       flag_group {
         flag: "-o"
-        flag: "%{output_execpath}"
-      }
-      expand_if_all_available: "output_execpath"
-    }
-  }
-  feature {
-    name: "output_execpath_flags_executable"
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
-        flag: "-o"
-      }
-      expand_if_all_available: "output_execpath"
-    }
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
-        flag: "/dev/null"
-        flag: "-MMD"
-        flag: "-MF"
-      }
-      expand_if_all_available: "skip_mostly_static"
-      expand_if_all_available: "output_execpath"
-    }
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
@@ -8827,7 +8429,6 @@ toolchain {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
-      expand_if_all_available: "uses_action_configs_for_cc_archiving"
     }
   }
   feature {
@@ -9406,6 +9007,7 @@ toolchain {
       action: "objc++-compile"
       flag_group {
         flag: "-DOS_IOS"
+        flag: "-fno-autolink"
       }
     }
   }
@@ -9654,22 +9256,6 @@ toolchain {
         flag: "-S"
         flag: "-o"
         flag: "%{output_file}"
-        flag: "-R"
-        flag: ".gnu.switches.text.quote_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.bracket_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.system_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.cpp_defines"
-        flag: "-R"
-        flag: ".gnu.switches.text.cpp_includes"
-        flag: "-R"
-        flag: ".gnu.switches.text.cl_args"
-        flag: "-R"
-        flag: ".gnu.switches.text.lipo_info"
-        flag: "-R"
-        flag: ".gnu.switches.text.annotation"
       }
       flag_group {
         flag: "%{stripopts}"
@@ -10041,7 +9627,7 @@ toolchain {
     implies: "contains_objc_source"
     implies: "symbol_counts"
     implies: "linkstamps"
-    implies: "output_execpath_flags_executable"
+    implies: "output_execpath_flags"
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
     implies: "input_param_flags"
@@ -10260,17 +9846,10 @@ toolchain {
     compiler_flag: "-DNDEBUG"
     compiler_flag: "-ffunction-sections"
     compiler_flag: "-fdata-sections"
-    compiler_flag: "-Wno-unused-variable"
-    compiler_flag: "-Winit-self"
-    compiler_flag: "-Wno-extra"
   }
   compilation_mode_flags {
     mode: DBG
     compiler_flag: "-g"
-    compiler_flag: "-DDEBUG"
-    compiler_flag: "-O0"
-    compiler_flag: "-fstack-protector"
-    compiler_flag: "-fstack-protector-all"
   }
   make_variable {
     name: "STACK_FRAME_UNLIMITED"
@@ -10285,9 +9864,6 @@ toolchain {
   unfiltered_cxx_flag: "-target"
   unfiltered_cxx_flag: "armv7k-apple-watchos"
   default_python_version: "python2.7"
-  ar_flag: "-static"
-  ar_flag: "-s"
-  ar_flag: "-o"
   feature {
     name: "fastbuild"
   }
@@ -10299,23 +9875,6 @@ toolchain {
   }
   feature {
     name: "dbg"
-  }
-  feature {
-    name: "use_glibcxx_dbg_opts"
-    flag_set {
-      action: "c-compile"
-      action: "c++-compile"
-      action: "objc-compile"
-      action: "objc++-compile"
-      flag_group {
-        flag: "-D_GLIBCXX_DEBUG"
-        flag: "-D_GLIBCXX_DEBUG_PEDANTIC"
-        flag: "-D_GLIBCPP_CONCEPT_CHECKS"
-      }
-    }
-    requires {
-      feature: "dbg"
-    }
   }
   feature {
     name: "compile_all_modules"
@@ -10439,36 +9998,10 @@ toolchain {
   feature {
     name: "output_execpath_flags"
     flag_set {
+      action: "c++-link-executable"
       action: "c++-link-dynamic-library"
       flag_group {
         flag: "-o"
-        flag: "%{output_execpath}"
-      }
-      expand_if_all_available: "output_execpath"
-    }
-  }
-  feature {
-    name: "output_execpath_flags_executable"
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
-        flag: "-o"
-      }
-      expand_if_all_available: "output_execpath"
-    }
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
-        flag: "/dev/null"
-        flag: "-MMD"
-        flag: "-MF"
-      }
-      expand_if_all_available: "skip_mostly_static"
-      expand_if_all_available: "output_execpath"
-    }
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
@@ -10501,7 +10034,6 @@ toolchain {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
-      expand_if_all_available: "uses_action_configs_for_cc_archiving"
     }
   }
   feature {
@@ -11080,6 +10612,7 @@ toolchain {
       action: "objc++-compile"
       flag_group {
         flag: "-DOS_IOS"
+        flag: "-fno-autolink"
       }
     }
   }
@@ -11330,22 +10863,6 @@ toolchain {
         flag: "-S"
         flag: "-o"
         flag: "%{output_file}"
-        flag: "-R"
-        flag: ".gnu.switches.text.quote_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.bracket_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.system_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.cpp_defines"
-        flag: "-R"
-        flag: ".gnu.switches.text.cpp_includes"
-        flag: "-R"
-        flag: ".gnu.switches.text.cl_args"
-        flag: "-R"
-        flag: ".gnu.switches.text.lipo_info"
-        flag: "-R"
-        flag: ".gnu.switches.text.annotation"
       }
       flag_group {
         flag: "%{stripopts}"
@@ -11717,7 +11234,7 @@ toolchain {
     implies: "contains_objc_source"
     implies: "symbol_counts"
     implies: "linkstamps"
-    implies: "output_execpath_flags_executable"
+    implies: "output_execpath_flags"
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
     implies: "input_param_flags"
@@ -11936,18 +11453,11 @@ toolchain {
     compiler_flag: "-DNDEBUG"
     compiler_flag: "-ffunction-sections"
     compiler_flag: "-fdata-sections"
-    compiler_flag: "-Wno-unused-variable"
-    compiler_flag: "-Winit-self"
-    compiler_flag: "-Wno-extra"
     compiler_flag: "-DNS_BLOCK_ASSERTIONS=1"
   }
   compilation_mode_flags {
     mode: DBG
     compiler_flag: "-g"
-    compiler_flag: "-DDEBUG"
-    compiler_flag: "-O0"
-    compiler_flag: "-fstack-protector"
-    compiler_flag: "-fstack-protector-all"
   }
   make_variable {
     name: "STACK_FRAME_UNLIMITED"
@@ -11962,9 +11472,6 @@ toolchain {
   unfiltered_cxx_flag: "-target"
   unfiltered_cxx_flag: "arm64-apple-tvos"
   default_python_version: "python2.7"
-  ar_flag: "-static"
-  ar_flag: "-s"
-  ar_flag: "-o"
   feature {
     name: "fastbuild"
   }
@@ -11976,23 +11483,6 @@ toolchain {
   }
   feature {
     name: "dbg"
-  }
-  feature {
-    name: "use_glibcxx_dbg_opts"
-    flag_set {
-      action: "c-compile"
-      action: "c++-compile"
-      action: "objc-compile"
-      action: "objc++-compile"
-      flag_group {
-        flag: "-D_GLIBCXX_DEBUG"
-        flag: "-D_GLIBCXX_DEBUG_PEDANTIC"
-        flag: "-D_GLIBCPP_CONCEPT_CHECKS"
-      }
-    }
-    requires {
-      feature: "dbg"
-    }
   }
   feature {
     name: "compile_all_modules"
@@ -12116,36 +11606,10 @@ toolchain {
   feature {
     name: "output_execpath_flags"
     flag_set {
+      action: "c++-link-executable"
       action: "c++-link-dynamic-library"
       flag_group {
         flag: "-o"
-        flag: "%{output_execpath}"
-      }
-      expand_if_all_available: "output_execpath"
-    }
-  }
-  feature {
-    name: "output_execpath_flags_executable"
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
-        flag: "-o"
-      }
-      expand_if_all_available: "output_execpath"
-    }
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
-        flag: "/dev/null"
-        flag: "-MMD"
-        flag: "-MF"
-      }
-      expand_if_all_available: "skip_mostly_static"
-      expand_if_all_available: "output_execpath"
-    }
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
@@ -12178,7 +11642,6 @@ toolchain {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
-      expand_if_all_available: "uses_action_configs_for_cc_archiving"
     }
   }
   feature {
@@ -12757,6 +12220,7 @@ toolchain {
       action: "objc++-compile"
       flag_group {
         flag: "-DOS_TVOS"
+        flag: "-fno-autolink"
       }
     }
   }
@@ -13026,22 +12490,6 @@ toolchain {
         flag: "-S"
         flag: "-o"
         flag: "%{output_file}"
-        flag: "-R"
-        flag: ".gnu.switches.text.quote_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.bracket_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.system_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.cpp_defines"
-        flag: "-R"
-        flag: ".gnu.switches.text.cpp_includes"
-        flag: "-R"
-        flag: ".gnu.switches.text.cl_args"
-        flag: "-R"
-        flag: ".gnu.switches.text.lipo_info"
-        flag: "-R"
-        flag: ".gnu.switches.text.annotation"
       }
       flag_group {
         flag: "%{stripopts}"
@@ -13420,7 +12868,7 @@ toolchain {
     implies: "contains_objc_source"
     implies: "symbol_counts"
     implies: "linkstamps"
-    implies: "output_execpath_flags_executable"
+    implies: "output_execpath_flags"
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
     implies: "input_param_flags"
@@ -13641,17 +13089,10 @@ toolchain {
     compiler_flag: "-DNDEBUG"
     compiler_flag: "-ffunction-sections"
     compiler_flag: "-fdata-sections"
-    compiler_flag: "-Wno-unused-variable"
-    compiler_flag: "-Winit-self"
-    compiler_flag: "-Wno-extra"
   }
   compilation_mode_flags {
     mode: DBG
     compiler_flag: "-g"
-    compiler_flag: "-DDEBUG"
-    compiler_flag: "-O0"
-    compiler_flag: "-fstack-protector"
-    compiler_flag: "-fstack-protector-all"
   }
   make_variable {
     name: "STACK_FRAME_UNLIMITED"
@@ -13666,9 +13107,6 @@ toolchain {
   unfiltered_cxx_flag: "-target"
   unfiltered_cxx_flag: "arm64-apple-ios"
   default_python_version: "python2.7"
-  ar_flag: "-static"
-  ar_flag: "-s"
-  ar_flag: "-o"
   feature {
     name: "fastbuild"
   }
@@ -13680,23 +13118,6 @@ toolchain {
   }
   feature {
     name: "dbg"
-  }
-  feature {
-    name: "use_glibcxx_dbg_opts"
-    flag_set {
-      action: "c-compile"
-      action: "c++-compile"
-      action: "objc-compile"
-      action: "objc++-compile"
-      flag_group {
-        flag: "-D_GLIBCXX_DEBUG"
-        flag: "-D_GLIBCXX_DEBUG_PEDANTIC"
-        flag: "-D_GLIBCPP_CONCEPT_CHECKS"
-      }
-    }
-    requires {
-      feature: "dbg"
-    }
   }
   feature {
     name: "compile_all_modules"
@@ -13820,36 +13241,10 @@ toolchain {
   feature {
     name: "output_execpath_flags"
     flag_set {
+      action: "c++-link-executable"
       action: "c++-link-dynamic-library"
       flag_group {
         flag: "-o"
-        flag: "%{output_execpath}"
-      }
-      expand_if_all_available: "output_execpath"
-    }
-  }
-  feature {
-    name: "output_execpath_flags_executable"
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
-        flag: "-o"
-      }
-      expand_if_all_available: "output_execpath"
-    }
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
-        flag: "/dev/null"
-        flag: "-MMD"
-        flag: "-MF"
-      }
-      expand_if_all_available: "skip_mostly_static"
-      expand_if_all_available: "output_execpath"
-    }
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
@@ -13882,7 +13277,6 @@ toolchain {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
-      expand_if_all_available: "uses_action_configs_for_cc_archiving"
     }
   }
   feature {
@@ -14461,6 +13855,7 @@ toolchain {
       action: "objc++-compile"
       flag_group {
         flag: "-DOS_IOS"
+        flag: "-fno-autolink"
       }
     }
   }
@@ -14709,22 +14104,6 @@ toolchain {
         flag: "-S"
         flag: "-o"
         flag: "%{output_file}"
-        flag: "-R"
-        flag: ".gnu.switches.text.quote_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.bracket_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.system_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.cpp_defines"
-        flag: "-R"
-        flag: ".gnu.switches.text.cpp_includes"
-        flag: "-R"
-        flag: ".gnu.switches.text.cl_args"
-        flag: "-R"
-        flag: ".gnu.switches.text.lipo_info"
-        flag: "-R"
-        flag: ".gnu.switches.text.annotation"
       }
       flag_group {
         flag: "%{stripopts}"
@@ -15096,7 +14475,7 @@ toolchain {
     implies: "contains_objc_source"
     implies: "symbol_counts"
     implies: "linkstamps"
-    implies: "output_execpath_flags_executable"
+    implies: "output_execpath_flags"
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
     implies: "input_param_flags"
@@ -15314,18 +14693,11 @@ toolchain {
     compiler_flag: "-DNDEBUG"
     compiler_flag: "-ffunction-sections"
     compiler_flag: "-fdata-sections"
-    compiler_flag: "-Wno-unused-variable"
-    compiler_flag: "-Winit-self"
-    compiler_flag: "-Wno-extra"
     compiler_flag: "-DNS_BLOCK_ASSERTIONS=1"
   }
   compilation_mode_flags {
     mode: DBG
     compiler_flag: "-g"
-    compiler_flag: "-DDEBUG"
-    compiler_flag: "-O0"
-    compiler_flag: "-fstack-protector"
-    compiler_flag: "-fstack-protector-all"
   }
   make_variable {
     name: "STACK_FRAME_UNLIMITED"
@@ -15343,9 +14715,6 @@ toolchain {
   supports_interface_shared_objects: false
   supports_incremental_linker: false
   supports_fission: false
-  ar_flag: "-static"
-  ar_flag: "-s"
-  ar_flag: "-o"
   feature {
     name: "fastbuild"
   }
@@ -15357,23 +14726,6 @@ toolchain {
   }
   feature {
     name: "dbg"
-  }
-  feature {
-    name: "use_glibcxx_dbg_opts"
-    flag_set {
-      action: "c-compile"
-      action: "c++-compile"
-      action: "objc-compile"
-      action: "objc++-compile"
-      flag_group {
-        flag: "-D_GLIBCXX_DEBUG"
-        flag: "-D_GLIBCXX_DEBUG_PEDANTIC"
-        flag: "-D_GLIBCPP_CONCEPT_CHECKS"
-      }
-    }
-    requires {
-      feature: "dbg"
-    }
   }
   feature {
     name: "compile_all_modules"
@@ -15497,36 +14849,10 @@ toolchain {
   feature {
     name: "output_execpath_flags"
     flag_set {
+      action: "c++-link-executable"
       action: "c++-link-dynamic-library"
       flag_group {
         flag: "-o"
-        flag: "%{output_execpath}"
-      }
-      expand_if_all_available: "output_execpath"
-    }
-  }
-  feature {
-    name: "output_execpath_flags_executable"
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
-        flag: "-o"
-      }
-      expand_if_all_available: "output_execpath"
-    }
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
-        flag: "/dev/null"
-        flag: "-MMD"
-        flag: "-MF"
-      }
-      expand_if_all_available: "skip_mostly_static"
-      expand_if_all_available: "output_execpath"
-    }
-    flag_set {
-      action: "c++-link-executable"
-      flag_group {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
@@ -15559,7 +14885,6 @@ toolchain {
         flag: "%{output_execpath}"
       }
       expand_if_all_available: "output_execpath"
-      expand_if_all_available: "uses_action_configs_for_cc_archiving"
     }
   }
   feature {
@@ -16138,6 +15463,7 @@ toolchain {
       action: "objc++-compile"
       flag_group {
         flag: "-DOS_IOS"
+        flag: "-fno-autolink"
       }
     }
   }
@@ -16386,22 +15712,6 @@ toolchain {
         flag: "-S"
         flag: "-o"
         flag: "%{output_file}"
-        flag: "-R"
-        flag: ".gnu.switches.text.quote_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.bracket_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.system_paths"
-        flag: "-R"
-        flag: ".gnu.switches.text.cpp_defines"
-        flag: "-R"
-        flag: ".gnu.switches.text.cpp_includes"
-        flag: "-R"
-        flag: ".gnu.switches.text.cl_args"
-        flag: "-R"
-        flag: ".gnu.switches.text.lipo_info"
-        flag: "-R"
-        flag: ".gnu.switches.text.annotation"
       }
       flag_group {
         flag: "%{stripopts}"
@@ -16773,7 +16083,7 @@ toolchain {
     implies: "contains_objc_source"
     implies: "symbol_counts"
     implies: "linkstamps"
-    implies: "output_execpath_flags_executable"
+    implies: "output_execpath_flags"
     implies: "global_whole_archive_open"
     implies: "runtime_root_flags"
     implies: "input_param_flags"

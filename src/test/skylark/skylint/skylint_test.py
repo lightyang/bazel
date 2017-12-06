@@ -13,7 +13,9 @@
 # limitations under the License.
 
 import os.path
+import shutil
 import subprocess
+import tempfile
 import unittest
 
 from src.test.skylark.skylint import testenv
@@ -49,12 +51,57 @@ class SkylintTest(unittest.TestCase):
       output = e.output
     self.assertEqual("File not found: does_not_exist.bzl\n", output)
 
-  def testDisablingChecker(self):
+  def testDisablingCheck(self):
     output = subprocess.check_output([
-        testenv.SKYLINT_BINARY_PATH, "--disable=docstring",
+        testenv.SKYLINT_BINARY_PATH, "--disable-checks=docstring",
         os.path.join(testenv.SKYLINT_TESTDATA_PATH, "bad.bzl.test")
     ])
     self.assertEqual(output, "")
+
+  def testDisablingCategory(self):
+    output = subprocess.check_output([
+        testenv.SKYLINT_BINARY_PATH,
+        "--disable-categories=missing-module-docstring",
+        os.path.join(testenv.SKYLINT_TESTDATA_PATH, "bad.bzl.test")
+    ])
+    self.assertEqual(output, "")
+
+  IMPORT_BZL_CONTENTS = """
+def foo():
+  '''bar
+
+  Deprecated:
+    test.'''"""
+
+  def GetOutputOfDependencyTestCase(self, options):
+    # Create these dynamically to not interfere with Bazel package structure:
+    temp_dir = tempfile.mkdtemp()
+    try:
+      open(os.path.join(temp_dir, "WORKSPACE"), "a").close()
+      open(os.path.join(temp_dir, "BUILD"), "a").close()
+      with open(os.path.join(temp_dir, "dependencies.bzl"), "a") as f:
+        f.write("'''Docstring'''\nload(':import.bzl', 'foo')\nfoo()")
+      with open(os.path.join(temp_dir, "import.bzl"), "a") as f:
+        f.write(self.IMPORT_BZL_CONTENTS)
+      output = None
+      try:
+        subprocess.check_output([
+            testenv.SKYLINT_BINARY_PATH,
+            os.path.join(temp_dir, "dependencies.bzl")
+        ] + options)
+      except subprocess.CalledProcessError as e:
+        output = e.output
+      return output
+    finally:
+      shutil.rmtree(temp_dir)
+
+  def testDependencyAnalysis(self):
+    output = self.GetOutputOfDependencyTestCase([])
+    self.assertIn("import.bzl) is deprecated: test.", output)
+
+  def testSingleFileModeWorks(self):
+    output = self.GetOutputOfDependencyTestCase(["--single-file"])
+    self.assertEqual(output, None)
 
 
 if __name__ == "__main__":

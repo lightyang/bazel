@@ -16,86 +16,19 @@ package com.google.devtools.build.lib.runtime;
 import com.google.devtools.build.lib.runtime.CommandLineEvent.ToolCommandLineEvent;
 import com.google.devtools.build.lib.util.OptionsUtils;
 import com.google.devtools.build.lib.vfs.PathFragment;
-import com.google.devtools.common.options.Converter;
 import com.google.devtools.common.options.Converters;
 import com.google.devtools.common.options.Option;
 import com.google.devtools.common.options.OptionDocumentationCategory;
 import com.google.devtools.common.options.OptionEffectTag;
 import com.google.devtools.common.options.OptionMetadataTag;
 import com.google.devtools.common.options.OptionsBase;
-import com.google.devtools.common.options.OptionsParsingException;
 import java.util.List;
-import java.util.Map;
 import java.util.logging.Level;
 
 /**
  * Options common to all commands.
  */
 public class CommonCommandOptions extends OptionsBase {
-  /**
-   * A class representing a blazerc option. blazeRc is serial number of the rc
-   * file this option came from, option is the name of the option and value is
-   * its value (or null if not specified).
-   */
-  public static class OptionOverride {
-    final int blazeRc;
-    final String command;
-    final String option;
-
-    public OptionOverride(int blazeRc, String command, String option) {
-      this.blazeRc = blazeRc;
-      this.command = command;
-      this.option = option;
-    }
-
-    @Override
-    public String toString() {
-      return String.format("%d:%s=%s", blazeRc, command, option);
-    }
-  }
-
-  /** Converter for --default_override. The format is: --default_override=blazerc:command=option. */
-  public static class OptionOverrideConverter implements Converter<OptionOverride> {
-    static final String ERROR_MESSAGE = "option overrides must be in form "
-      + " rcfile:command=option, where rcfile is a nonzero integer";
-
-    public OptionOverrideConverter() {}
-
-    @Override
-    public OptionOverride convert(String input) throws OptionsParsingException {
-      int colonPos = input.indexOf(':');
-      int assignmentPos = input.indexOf('=');
-
-      if (colonPos < 0) {
-        throw new OptionsParsingException(ERROR_MESSAGE);
-      }
-
-      if (assignmentPos <= colonPos + 1) {
-        throw new OptionsParsingException(ERROR_MESSAGE);
-      }
-
-      int blazeRc;
-      try {
-        blazeRc = Integer.valueOf(input.substring(0, colonPos));
-      } catch (NumberFormatException e) {
-        throw new OptionsParsingException(ERROR_MESSAGE);
-      }
-
-      if (blazeRc < 0) {
-        throw new OptionsParsingException(ERROR_MESSAGE);
-      }
-
-      String command = input.substring(colonPos + 1, assignmentPos);
-      String option = input.substring(assignmentPos + 1);
-
-      return new OptionOverride(blazeRc, command, option);
-    }
-
-    @Override
-    public String getTypeDescription() {
-      return "blazerc option override";
-    }
-  }
 
   // To create a new incompatible change, see the javadoc for AllIncompatibleChangesExpansion.
   @Option(
@@ -141,18 +74,6 @@ public class CommonCommandOptions extends OptionsBase {
   public Level verbosity;
 
   @Option(
-    name = "client_env",
-    defaultValue = "",
-    documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
-    metadataTags = {OptionMetadataTag.HIDDEN},
-    effectTags = {OptionEffectTag.CHANGES_INPUTS},
-    converter = Converters.AssignmentConverter.class,
-    allowMultiple = true,
-    help = "A system-generated parameter which specifies the client's environment"
-  )
-  public List<Map.Entry<String, String>> clientEnv;
-
-  @Option(
     name = "client_cwd",
     defaultValue = "",
     documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
@@ -172,36 +93,6 @@ public class CommonCommandOptions extends OptionsBase {
     help = "Whether to announce rc options."
   )
   public boolean announceRcOptions;
-
-  /**
-   * These are the actual default overrides. Each value is a tuple of (bazelrc index, command name,
-   * value). The blazerc index is a number used to find the blazerc in --rc_source's values.
-   *
-   * <p>For example: "--default_override=rc:build=--cpu=piii"
-   */
-  @Option(
-    name = "default_override",
-    defaultValue = "",
-    allowMultiple = true,
-    documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
-    effectTags = {OptionEffectTag.CHANGES_INPUTS},
-    metadataTags = {OptionMetadataTag.HIDDEN},
-    converter = OptionOverrideConverter.class,
-    help = ""
-  )
-  public List<OptionOverride> optionsOverrides;
-
-  /** This is the filename that the Blaze client parsed. */
-  @Option(
-    name = "rc_source",
-    defaultValue = "",
-    allowMultiple = true,
-    documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
-    effectTags = {OptionEffectTag.CHANGES_INPUTS},
-    metadataTags = {OptionMetadataTag.HIDDEN},
-    help = ""
-  )
-  public List<String> rcSource;
 
   @Option(
     name = "always_profile_slow_operations",
@@ -257,18 +148,6 @@ public class CommonCommandOptions extends OptionsBase {
     help = "If set, write memory usage data to the specified file at phase ends."
   )
   public PathFragment memoryProfilePath;
-
-  @Deprecated
-  @Option(
-    name = "gc_watchdog",
-    defaultValue = "false",
-    documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
-    effectTags = {OptionEffectTag.NO_OP},
-    metadataTags = {OptionMetadataTag.DEPRECATED},
-    deprecationWarning = "Ignoring: this option is no longer supported",
-    help = "Deprecated."
-  )
-  public boolean gcWatchdog;
 
   @Option(
     name = "experimental_oom_more_eagerly_threshold",
@@ -384,4 +263,19 @@ public class CommonCommandOptions extends OptionsBase {
             + "logged with the rest of the Bazel invocation."
   )
   public ToolCommandLineEvent toolCommandLine;
+
+  @Option(
+    name = "unconditional_warning",
+    defaultValue = "",
+    documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+    effectTags = {OptionEffectTag.TERMINAL_OUTPUT},
+    allowMultiple = true,
+    help =
+        "A warning that will unconditionally get printed with build warnings and errors. This is "
+            + "useful to deprecate bazelrc files or --config definitions. If the intent is to "
+            + "effectively deprecate some flag or combination of flags, this is NOT sufficient. "
+            + "The flag or flags should use the deprecationWarning field in the option definition, "
+            + "or the bad combination should be checked for programmatically."
+  )
+  public List<String> deprecationWarnings;
 }

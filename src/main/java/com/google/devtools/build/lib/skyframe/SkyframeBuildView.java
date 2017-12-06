@@ -14,6 +14,7 @@
 package com.google.devtools.build.lib.skyframe;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Preconditions;
 import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -24,6 +25,7 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.common.eventbus.EventBus;
 import com.google.devtools.build.lib.actions.ActionAnalysisMetadata;
+import com.google.devtools.build.lib.actions.ActionKeyContext;
 import com.google.devtools.build.lib.actions.ActionLookupValue;
 import com.google.devtools.build.lib.actions.ArtifactFactory;
 import com.google.devtools.build.lib.actions.ArtifactOwner;
@@ -64,7 +66,6 @@ import com.google.devtools.build.lib.skyframe.ConfiguredTargetFunction.Configure
 import com.google.devtools.build.lib.skyframe.SkyframeActionExecutor.ConflictException;
 import com.google.devtools.build.lib.skyframe.SkylarkImportLookupFunction.SkylarkImportFailedException;
 import com.google.devtools.build.lib.util.OrderedSetMultimap;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.skyframe.CycleInfo;
 import com.google.devtools.build.skyframe.ErrorInfo;
@@ -400,7 +401,7 @@ public final class SkyframeBuildView {
       if (culprit.functionName().equals(SkyFunctions.CONFIGURED_TARGET)) {
         return ((ConfiguredTargetKey) culprit.argument()).getLabel();
       } else if (culprit.functionName().equals(SkyFunctions.TRANSITIVE_TARGET)) {
-        return (Label) culprit.argument();
+        return ((TransitiveTargetKey) culprit).getLabel();
       } else {
         return labelToLoad;
       }
@@ -472,7 +473,13 @@ public final class SkyframeBuildView {
     boolean extendedSanityChecks = config != null && config.extendedSanityChecks();
     boolean allowRegisteringActions = config == null || config.isActionsEnabled();
     return new CachingAnalysisEnvironment(
-        artifactFactory, owner, isSystemEnv, extendedSanityChecks, eventHandler, env,
+        artifactFactory,
+        skyframeExecutor.getActionKeyContext(),
+        owner,
+        isSystemEnv,
+        extendedSanityChecks,
+        eventHandler,
+        env,
         allowRegisteringActions);
   }
 
@@ -616,6 +623,10 @@ public final class SkyframeBuildView {
    */
   public void enableAnalysis(boolean enable) {
     this.enableAnalysis = enable;
+  }
+
+  public ActionKeyContext getActionKeyContext() {
+    return skyframeExecutor.getActionKeyContext();
   }
 
   private class ConfiguredTargetValueProgressReceiver

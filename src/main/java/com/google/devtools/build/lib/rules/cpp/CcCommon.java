@@ -14,6 +14,7 @@
 package com.google.devtools.build.lib.rules.cpp;
 
 import com.google.common.base.Joiner;
+import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
 import com.google.common.base.Predicates;
 import com.google.common.collect.FluentIterable;
@@ -26,9 +27,9 @@ import com.google.devtools.build.lib.actions.ActionAnalysisMetadata;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.AnalysisEnvironment;
 import com.google.devtools.build.lib.analysis.FileProvider;
-import com.google.devtools.build.lib.analysis.MakeVariableInfo;
 import com.google.devtools.build.lib.analysis.MakeVariableSupplier;
 import com.google.devtools.build.lib.analysis.RuleContext;
+import com.google.devtools.build.lib.analysis.TemplateVariableInfo;
 import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.analysis.config.CompilationMode;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
@@ -53,7 +54,6 @@ import com.google.devtools.build.lib.shell.ShellUtils;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.FileType;
 import com.google.devtools.build.lib.util.Pair;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.ArrayList;
 import java.util.List;
@@ -130,8 +130,9 @@ public final class CcCommon {
     Iterable<String> ourLinkopts = ruleContext.attributes().get("linkopts", Type.STRING_LIST);
     List<String> result;
     if (ourLinkopts != null) {
-      boolean allowDashStatic = !cppConfiguration.forceIgnoreDashStatic()
-          && (cppConfiguration.getDynamicMode() != DynamicMode.FULLY);
+      boolean allowDashStatic =
+          !cppConfiguration.forceIgnoreDashStatic()
+              && (CppHelper.getDynamicMode(cppConfiguration, ccToolchain) != DynamicMode.FULLY);
       if (!allowDashStatic) {
         ourLinkopts = Iterables.filter(ourLinkopts, (v) -> !"-static".equals(v));
       }
@@ -140,8 +141,7 @@ public final class CcCommon {
       result = ImmutableList.of();
     }
 
-    if (ApplePlatform.isApplePlatform(cppConfiguration.getTargetCpu())
-        && result.contains("-static")) {
+    if (ApplePlatform.isApplePlatform(ccToolchain.getTargetCpu()) && result.contains("-static")) {
       ruleContext.attributeError(
           "linkopts", "Apple builds do not support statically linked binaries");
     }
@@ -190,7 +190,6 @@ public final class CcCommon {
     return compilationOutputs == null // Possible in LIPO collection mode (see initializationHook).
         ? DwoArtifactsCollector.emptyCollector()
         : DwoArtifactsCollector.transitiveCollector(
-            ruleContext,
             compilationOutputs,
             deps.build(),
             generateDwo,
@@ -523,8 +522,13 @@ public final class CcCommon {
    * @return mangled symlink artifact.
    */
   public Artifact getDynamicLibrarySymlink(Artifact library, boolean preserveName) {
-    return  SolibSymlinkAction.getDynamicLibrarySymlink(
-        ruleContext, library, preserveName, true, ruleContext.getConfiguration());
+    return SolibSymlinkAction.getDynamicLibrarySymlink(
+        ruleContext,
+        ccToolchain.getSolibDirectory(),
+        library,
+        preserveName,
+        true,
+        ruleContext.getConfiguration());
   }
 
   /**
@@ -533,6 +537,12 @@ public final class CcCommon {
   Iterable<Artifact> getLinkerScripts() {
     return FileType.filter(ruleContext.getPrerequisiteArtifacts("deps", Mode.TARGET).list(),
         CppFileTypes.LINKER_SCRIPT);
+  }
+
+  /** Returns the Windows DEF file specified in win_def_file attribute of the rule. */
+  @Nullable
+  Artifact getWinDefFile() {
+    return ruleContext.getPrerequisiteArtifact("win_def_file", Mode.TARGET);
   }
 
   /**
@@ -605,7 +615,7 @@ public final class CcCommon {
             ImmutableSet.of(
                 toolchain.getCompilationMode().toString(), getHostOrNonHostFeature(ruleContext)),
             DEFAULT_FEATURES,
-            toolchain.getFeatures().getDefaultFeatures(),
+            toolchain.getFeatures().getDefaultFeaturesAndActionConfigs(),
             ruleContext.getFeatures())) {
       if (!unsupportedFeatures.contains(feature)) {
         requestedFeatures.add(feature);
@@ -704,10 +714,10 @@ public final class CcCommon {
                 featureConfiguration.getCommandLine(
                     CppCompileAction.CC_FLAGS_MAKE_VARIABLE_ACTION_NAME, buildVariables));
     String oldCcFlags = "";
-    MakeVariableInfo makeVariableInfo =
-        toolchain.get(MakeVariableInfo.PROVIDER);
-    if (makeVariableInfo != null) {
-      oldCcFlags = makeVariableInfo.getMakeVariables().getOrDefault(
+    TemplateVariableInfo templateVariableInfo =
+        toolchain.get(TemplateVariableInfo.PROVIDER);
+    if (templateVariableInfo != null) {
+      oldCcFlags = templateVariableInfo.getVariables().getOrDefault(
           CppConfiguration.CC_FLAGS_MAKE_VARIABLE_NAME, "");
     }
     return FluentIterable.of(oldCcFlags)

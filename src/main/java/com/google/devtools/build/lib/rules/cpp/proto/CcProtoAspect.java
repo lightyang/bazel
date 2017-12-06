@@ -190,7 +190,9 @@ public class CcProtoAspect extends NativeAspectClass implements ConfiguredAspect
       CcLibraryHelper.Info info = helper.build();
       ccLibraryProviders = info.getProviders();
       outputGroups = info.getOutputGroups();
-      info.addLinkingOutputsTo(filesBuilder);
+      // On Windows, dynamic library is not built by default, so don't add them to filesToBuild.
+      info.addLinkingOutputsTo(
+          filesBuilder, !featureConfiguration.isEnabled(CppRuleClasses.TARGETS_WINDOWS));
     }
 
     private boolean areSrcsBlacklisted() {
@@ -230,7 +232,7 @@ public class CcProtoAspect extends NativeAspectClass implements ConfiguredAspect
       helper.enableCcNativeLibrariesProvider();
       // TODO(dougk): Configure output artifact with action_config
       // once proto compile action is configurable from the crosstool.
-      if (!ruleContext.getFragment(CppConfiguration.class).supportsDynamicLinker()) {
+      if (!ccToolchain(ruleContext).supportsDynamicLinker()) {
         helper.setCreateDynamicLibrary(false);
       }
       TransitiveInfoCollection runtime = getProtoToolchainProvider().runtime();

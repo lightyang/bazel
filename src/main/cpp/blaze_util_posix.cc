@@ -338,10 +338,10 @@ void WriteSystemSpecificProcessIdentifier(
 // daemonizes then exec()s the actual JVM, which is also non-trivial. So I hope
 // this will be good enough because for all its flaws, this solution is at least
 // localized here.
-void ExecuteDaemon(const string& exe,
-                   const std::vector<string>& args_vector,
-                   const string& daemon_output, const string& server_dir,
-                   BlazeServerStartup** server_startup) {
+int ExecuteDaemon(const string& exe,
+                  const std::vector<string>& args_vector,
+                  const string& daemon_output, const string& server_dir,
+                  BlazeServerStartup** server_startup) {
   int fds[2];
 
   if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds)) {
@@ -373,7 +373,7 @@ void ExecuteDaemon(const string& exe,
     WriteToFdWithRetryEintr(fds[0], &dummy, 1,
                        "cannot notify server about having written PID file");
     *server_startup = new SocketBlazeServerStartup(fds[0]);
-    return;
+    return server_pid;
   } else {
     // Child process (i.e. the server)
     // NB: There should only be system calls in this branch. See the comment
@@ -397,6 +397,7 @@ void ExecuteDaemon(const string& exe,
 
     execv(exe_chars, const_cast<char**>(argv));
     DieAfterFork("Cannot execute daemon");
+    return -1;
   }
 }
 
@@ -622,7 +623,7 @@ uint64_t AcquireLock(const string& output_base, bool batch_mode, bool block,
   // ones) mention that the Blaze invocation hangs on a non-existent PID.  This
   // should help troubleshoot those scenarios in case there really is a bug
   // somewhere.
-  size_t attempts = 0;
+  bool multiple_attempts = false;
   string owner;
   const uint64_t start_time = GetMillisecondsMonotonic();
   while (setlk(lockfd, &lock) == -1) {
@@ -636,13 +637,10 @@ uint64_t AcquireLock(const string& output_base, bool batch_mode, bool block,
     if (owner != buffer) {
       // Each time we learn a new lock owner, print it out.
       owner = buffer;
-      if (attempts > 0) {
-        fprintf(stderr, " client lock owner changed\n");
-      }
       fprintf(stderr, "Another command holds the client lock: \n%s\n",
               owner.c_str());
       if (block) {
-        fprintf(stderr, "Waiting for it to complete...");
+        fprintf(stderr, "Waiting for it to complete...\n");
         fflush(stderr);
       }
     }
@@ -653,10 +651,7 @@ uint64_t AcquireLock(const string& output_base, bool batch_mode, bool block,
     }
 
     TrySleep(500);
-    attempts += 1;
-  }
-  if (attempts > 0) {
-    fprintf(stderr, " done!\n");
+    multiple_attempts = true;
   }
   const uint64_t end_time = GetMillisecondsMonotonic();
 
@@ -664,7 +659,7 @@ uint64_t AcquireLock(const string& output_base, bool batch_mode, bool block,
   // avoid unnecessary noise in the logs.  In this metric, we are only
   // interested in knowing how long it took for other commands to complete, not
   // how fast acquiring a lock is.
-  const uint64_t wait_time = attempts == 0 ? 0 : end_time - start_time;
+  const uint64_t wait_time = !multiple_attempts ? 0 : end_time - start_time;
 
   // Identify ourselves in the lockfile.
   // The contents are printed for human consumption when another client

@@ -31,6 +31,7 @@ import com.google.devtools.build.lib.packages.RuleClass;
 import com.google.devtools.build.lib.packages.RuleClass.Builder;
 import com.google.devtools.build.lib.packages.RuleClass.Builder.RuleClassType;
 import com.google.devtools.build.lib.packages.RuleFactory.InvalidRuleException;
+import com.google.devtools.build.lib.packages.WorkspaceFactoryHelper;
 import com.google.devtools.build.lib.skylarkinterface.Param;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkSignature;
 import com.google.devtools.build.lib.syntax.BaseFunction;
@@ -173,11 +174,13 @@ public class SkylarkRepositoryModule {
         PackageContext context = PackageFactory.getContext(env, ast);
         @SuppressWarnings("unchecked")
         Map<String, Object> attributeValues = (Map<String, Object>) args[0];
-        return context
-            .getBuilder()
-            .externalPackageData()
-            .createAndAddRepositoryRule(
-                context.getBuilder(), ruleClass, null, attributeValues, ast);
+        return WorkspaceFactoryHelper.createAndAddRepositoryRule(
+            context.getBuilder(),
+            ruleClass,
+            null,
+            attributeValues,
+            ast,
+            (Boolean) env.lookup("$allow_override"));
       } catch (InvalidRuleException | NameConflictException | LabelSyntaxException e) {
         throw new EvalException(ast.getLocation(), e.getMessage());
       }

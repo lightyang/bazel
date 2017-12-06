@@ -163,7 +163,13 @@ public class ControlFlowChecker extends SyntaxTreeVisitor {
       issues.add(
           Issue.create(
               MISSING_RETURN_VALUE_CATEGORY,
-              "some but not all execution paths of '" + node.getIdentifier() + "' return a value",
+              "some but not all execution paths of '"
+                  + node.getIdentifier()
+                  + "' return a value."
+                  + " If it is intentional, make it explicit using 'return None'."
+                  + " If you know these cannot happen,"
+                  + " add the statement `fail('unreachable')` to them."
+                  + " For more details, have a look at the documentation.",
               node.getLocation()));
       for (Wrapper<ReturnStatement> returnWrapper : cfi.returnStatementsWithoutValue) {
         issues.add(

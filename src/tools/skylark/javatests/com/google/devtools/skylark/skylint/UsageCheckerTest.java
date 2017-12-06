@@ -38,8 +38,26 @@ public class UsageCheckerTest {
   @Test
   public void reportUnusedImports() throws Exception {
     String message = findIssues("load('foo', 'x', 'y', _z = 'Z')").toString();
-    Truth.assertThat(message).contains("1:13-1:15: unused binding of 'x' [unused-binding]");
-    Truth.assertThat(message).contains("1:18-1:20: unused binding of 'y' [unused-binding]");
+    Truth.assertThat(message)
+        .contains(
+            "1:13-1:15: unused binding of 'x'. If you want to re-export a symbol,"
+                + " use the following pattern:\n"
+                + "\n"
+                + "load(..., _x = 'x', ...)\n"
+                + "x = _x\n"
+                + "\n"
+                + "More details in the documentation."
+                + " [unused-binding]");
+    Truth.assertThat(message)
+        .contains(
+            "1:18-1:20: unused binding of 'y'. If you want to re-export a symbol,"
+                + " use the following pattern:\n"
+                + "\n"
+                + "load(..., _y = 'y', ...)\n"
+                + "y = _y\n"
+                + "\n"
+                + "More details in the documentation."
+                + " [unused-binding]");
     Truth.assertThat(message).contains("1:23-1:24: unused binding of '_z' [unused-binding]");
   }
 
@@ -140,7 +158,8 @@ public class UsageCheckerTest {
                 "  print(y)")
             .toString();
     Truth.assertThat(message)
-        .contains("8:3-8:3: variable 'y' may not have been initialized [uninitialized-variable]");
+        .containsMatch(
+            "8:3-8:3: variable 'y' may not have been initialized. .+ \\[uninitialized-variable\\]");
   }
 
   @Test
@@ -148,7 +167,8 @@ public class UsageCheckerTest {
     String message =
         findIssues("def some_function():", "  for _ in []:", "    y = 1", "  print(y)").toString();
     Truth.assertThat(message)
-        .contains("4:9-4:9: variable 'y' may not have been initialized [uninitialized-variable]");
+        .containsMatch(
+            "4:9-4:9: variable 'y' may not have been initialized. .+ \\[uninitialized-variable\\]");
   }
 
   @Test
@@ -286,6 +306,10 @@ public class UsageCheckerTest {
   @Test
   public void dontReportLocalsStartingWithUnderscore() throws Exception {
     Truth.assertThat(findIssues("def f(_param):", "  _local = [[] for _x in []]")).isEmpty();
+    Truth.assertThat(findIssues("def f(unused_param):", "  unused_local = [[] for unused_x in []]"))
+        .isEmpty();
+    Truth.assertThat(findIssues("def f():", "  UNUSED_CONSTANT = 'unused'"))
+        .isEmpty();
   }
 
   @Test

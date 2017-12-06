@@ -14,9 +14,9 @@
 package com.google.devtools.build.skyframe;
 
 import com.google.common.base.MoreObjects;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableSet;
 import com.google.devtools.build.lib.util.GroupedList;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.skyframe.NodeEntry.DirtyState;
 import java.util.Collection;
 import java.util.Set;
@@ -54,6 +54,9 @@ public abstract class DirtyBuildingState {
    * <p>Getting the number of last-built dependencies should not throw {@link InterruptedException}.
    */
   protected abstract int getNumOfGroupsInLastBuildDirectDeps();
+
+  /** The number of total dependencies requested the last time the node was built. */
+  public abstract int getNumElementsInLastBuildDirectDeps();
 
   /**
    * The value of the node the last time it was built.
@@ -234,6 +237,11 @@ public abstract class DirtyBuildingState {
     @Override
     protected int getNumOfGroupsInLastBuildDirectDeps() {
       return lastBuildDirectDeps.listSize();
+    }
+
+    @Override
+    public int getNumElementsInLastBuildDirectDeps() {
+      return lastBuildDirectDeps.numElements();
     }
 
     @Override

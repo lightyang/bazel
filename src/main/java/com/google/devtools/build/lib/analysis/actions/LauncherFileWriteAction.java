@@ -14,16 +14,17 @@
 package com.google.devtools.build.lib.analysis.actions;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.io.ByteStreams;
 import com.google.devtools.build.lib.actions.ActionExecutionContext;
+import com.google.devtools.build.lib.actions.ActionKeyContext;
 import com.google.devtools.build.lib.actions.ActionOwner;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.util.Fingerprint;
 import com.google.devtools.build.lib.util.OS;
-import com.google.devtools.build.lib.util.Preconditions;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -86,7 +87,7 @@ public final class LauncherFileWriteAction extends AbstractFileWriteAction {
   }
 
   @Override
-  protected String computeKey() {
+  protected String computeKey(ActionKeyContext actionKeyContext) {
     Fingerprint f = new Fingerprint();
     f.addString(GUID);
     try {

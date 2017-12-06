@@ -54,9 +54,17 @@ public abstract class FileWriteActionTestCase extends BuildViewTestCase {
 
   @Before
   public final void createExecutorAndContext() throws Exception {
-    executor = new TestExecutorBuilder(directories, binTools).build();
-    context = new ActionExecutionContext(executor, null, ActionInputPrefetcher.NONE, null,
-        new FileOutErr(), ImmutableMap.<String, String>of(), null);
+    executor = new TestExecutorBuilder(fileSystem, directories, binTools).build();
+    context =
+        new ActionExecutionContext(
+            executor,
+            null,
+            ActionInputPrefetcher.NONE,
+            actionKeyContext,
+            null,
+            new FileOutErr(),
+            ImmutableMap.<String, String>of(),
+            null);
   }
 
   protected abstract Action createAction(
@@ -109,6 +117,7 @@ public abstract class FileWriteActionTestCase extends BuildViewTestCase {
                 attributesToFlip.contains(KeyAttributes.DATA) ? "0" : "1",
                 attributesToFlip.contains(KeyAttributes.MAKE_EXECUTABLE));
           }
-        });
+        },
+        actionKeyContext);
   }
 }

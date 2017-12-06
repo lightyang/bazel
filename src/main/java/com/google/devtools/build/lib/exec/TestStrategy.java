@@ -56,7 +56,6 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import javax.annotation.Nullable;
 
 /** A strategy for executing a {@link TestRunnerAction}. */
@@ -148,7 +147,7 @@ public abstract class TestStrategy implements TestActionContext {
   }
 
   @Override
-  public abstract Set<SpawnResult> exec(
+  public abstract List<SpawnResult> exec(
       TestRunnerAction action, ActionExecutionContext actionExecutionContext)
       throws ExecException, InterruptedException;
 
@@ -411,7 +410,12 @@ public abstract class TestStrategy implements TestActionContext {
 
     new SymlinkTreeHelper(execSettings.getInputManifest().getPath(), runfilesDir, false)
         .createSymlinks(
-            testAction, actionExecutionContext, binTools, shellEnvironment, enableRunfiles);
+            testAction,
+            actionExecutionContext,
+            binTools,
+            shellEnvironment,
+            execSettings.getInputManifest(),
+            enableRunfiles);
 
     actionExecutionContext.getEventHandler()
         .handle(Event.progress(testAction.getProgressMessage()));

@@ -130,11 +130,11 @@ http_file(
 http_archive(
     name = "bazel_toolchains",
     urls = [
-        "http://mirror.bazel.build/github.com/bazelbuild/bazel-toolchains/archive/b2b4b38433bf2d1159360855ea4004378308711b.tar.gz",
-        "https://github.com/bazelbuild/bazel-toolchains/archive/b2b4b38433bf2d1159360855ea4004378308711b.tar.gz",
+        "https://mirror.bazel.build/github.com/bazelbuild/bazel-toolchains/archive/af4681c3d19f063f090222ec3d04108c4e0ca255.tar.gz",
+        "https://github.com/bazelbuild/bazel-toolchains/archive/af4681c3d19f063f090222ec3d04108c4e0ca255.tar.gz",
     ],
-    strip_prefix = "bazel-toolchains-b2b4b38433bf2d1159360855ea4004378308711b",
-    sha256 = "46187270ca04ff8109980f45c3438fabfe48695e163789096eb82ee097ffe685",
+    strip_prefix = "bazel-toolchains-af4681c3d19f063f090222ec3d04108c4e0ca255",
+    sha256 = "d58bb2d6c8603f600d522b6104d6192a65339aa26cbba9f11ff5c4b36dedb928",
 )
 
 http_archive(
@@ -144,4 +144,10 @@ http_archive(
     ],
     strip_prefix = "re2-2017-08-01",
     sha256 = "938723dc197125392698c5fcf41acb74877866ff140b81fd50b7314bf26f1636",
+)
+
+# For src/test/shell/bazel:bazel_sandboxing_test
+http_file(
+  name = 'mount_path_toolchain',
+  url = 'https://asci-toolchain.appspot.com.storage.googleapis.com/toolchain-testing/mount_path_toolchain.tar.gz',
 )

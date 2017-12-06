@@ -14,24 +14,26 @@
 
 package com.google.devtools.build.lib.rules.cpp;
 
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
+import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.CompilationMode;
 import com.google.devtools.build.lib.analysis.config.InvalidConfigurationException;
 import com.google.devtools.build.lib.cmdline.Label;
 import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
+import com.google.devtools.build.lib.concurrent.ThreadSafety.Immutable;
 import com.google.devtools.build.lib.rules.cpp.CppActionConfigs.CppPlatform;
-import com.google.devtools.build.lib.rules.cpp.CppConfiguration.FlagList;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration.Tool;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig;
 import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig.CToolchain;
 import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig.CToolchain.ArtifactNamePattern;
+import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig.CToolchain.OptionalFlag;
 import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig.LinkingModeFlags;
 import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig.LipoMode;
 import com.google.devtools.build.lib.view.config.crosstool.CrosstoolConfig.ToolPath;
@@ -52,8 +54,10 @@ import java.util.Set;
  * <p>This wrapper class is used to re-plumb information so that it's eventually accessed through
  * {@link CcToolchainProvider} instead of {@link CppConfiguration}.
  */
+@Immutable
 public final class CppToolchainInfo {
 
+  private CToolchain toolchain;
   private final PathFragment crosstoolTopPathFragment;
   private final String toolchainIdentifier;
   private final CcToolchainFeatures toolchainFeatures;
@@ -101,7 +105,7 @@ public final class CppToolchainInfo {
   public CppToolchainInfo(
       CToolchain cToolchain, PathFragment crosstoolTopPathFragment, Label toolchainLabel)
       throws InvalidConfigurationException {
-    CToolchain toolchain = cToolchain;
+    this.toolchain = cToolchain;
     this.crosstoolTopPathFragment = crosstoolTopPathFragment;
     this.hostSystemName = toolchain.getHostSystemName();
     this.compiler = toolchain.getCompiler();
@@ -139,7 +143,7 @@ public final class CppToolchainInfo {
     this.solibDirectory = "_solib_" + targetCpu;
 
     this.supportsEmbeddedRuntimes = toolchain.getSupportsEmbeddedRuntimes();
-    toolchain = addLegacyFeatures(toolchain);
+    this.toolchain = addLegacyFeatures(toolchain);
     this.toolchainFeatures = new CcToolchainFeatures(toolchain);
     this.supportsGoldLinker = toolchain.getSupportsGoldLinker();
     this.supportsStartEndLib = toolchain.getSupportsStartEndLib();
@@ -240,7 +244,7 @@ public final class CppToolchainInfo {
     dynamicLibraryLinkFlags =
         new FlagList(
             ImmutableList.copyOf(linkerFlagList),
-            CppConfiguration.convertOptionalOptions(optionalLinkerFlagList),
+            FlagList.convertOptionalOptions(optionalLinkerFlagList),
             ImmutableList.<String>of());
 
     this.objcopyOptions = ImmutableList.copyOf(toolchain.getObjcopyEmbedFlagList());
@@ -410,6 +414,13 @@ public final class CppToolchainInfo {
   }
 
   /**
+   * Returns the computed {@link CToolchain} proto for this toolchain.
+   */
+  public CToolchain getToolchain() {
+    return toolchain;
+  }
+
+  /**
    * Returns the toolchain identifier, which uniquely identifies the compiler version, target libc
    * version, target cpu, and LIPO linkage.
    */
@@ -442,7 +453,11 @@ public final class CppToolchainInfo {
     return targetLibc;
   }
 
-  /** Returns the target architecture using blaze-specific constants (e.g. "piii"). */
+  /**
+   * Returns the target architecture using blaze-specific constants (e.g. "piii").
+   *
+   * <p>Equivalent to {@link BuildConfiguration#getCpu()}
+   */
   public String getTargetCpu() {
     return targetCpu;
   }
@@ -554,6 +569,13 @@ public final class CppToolchainInfo {
    */
   public boolean toolchainNeedsPic() {
     return toolchainNeedsPic;
+  }
+
+  /**
+   * Returns optional flags for linking.
+   */
+  public List<OptionalFlag> getOptionalLinkerFlags() {
+    return toolchain.getOptionalLinkerFlagList();
   }
 
   /**

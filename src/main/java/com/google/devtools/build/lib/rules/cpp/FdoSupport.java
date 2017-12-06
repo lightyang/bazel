@@ -17,6 +17,7 @@ package com.google.devtools.build.lib.rules.cpp;
 import static java.nio.charset.StandardCharsets.ISO_8859_1;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableCollection;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -34,7 +35,6 @@ import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadSafe;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
 import com.google.devtools.build.lib.skyframe.FileValue;
 import com.google.devtools.build.lib.skyframe.PrecomputedValue;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
@@ -626,9 +626,10 @@ public class FdoSupport {
   private Iterable<Artifact> getAuxiliaryInputs(
       RuleContext ruleContext, PathFragment sourceName, PathFragment sourceExecPath, boolean usePic,
       FdoSupportProvider fdoSupportProvider) {
-    CppConfiguration cppConfig = ruleContext.getFragment(CppConfiguration.class);
+    CcToolchainProvider toolchain =
+        CppHelper.getToolchainUsingDefaultCcToolchainAttribute(ruleContext);
     LipoContextProvider lipoContextProvider =
-        cppConfig.isLLVMCompiler() ? null : CppHelper.getLipoContextProvider(ruleContext);
+        toolchain.isLLVMCompiler() ? null : CppHelper.getLipoContextProvider(ruleContext);
 
     // If --fdo_optimize was not specified, we don't have any additional inputs.
     if (fdoProfile == null) {

@@ -13,6 +13,7 @@
 // limitations under the License.
 package com.google.devtools.build.lib.rules.android;
 
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
@@ -60,6 +61,7 @@ import com.google.devtools.build.lib.rules.java.JavaCompilationArgs.ClasspathTyp
 import com.google.devtools.build.lib.rules.java.JavaCompilationArgsProvider;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArtifacts;
 import com.google.devtools.build.lib.rules.java.JavaCompilationHelper;
+import com.google.devtools.build.lib.rules.java.JavaGenJarsProvider;
 import com.google.devtools.build.lib.rules.java.JavaInfo;
 import com.google.devtools.build.lib.rules.java.JavaRuleOutputJarsProvider;
 import com.google.devtools.build.lib.rules.java.JavaRuleOutputJarsProvider.OutputJar;
@@ -72,7 +74,6 @@ import com.google.devtools.build.lib.rules.java.JavaUtil;
 import com.google.devtools.build.lib.rules.java.proto.GeneratedExtensionRegistryProvider;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.FileType;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.Collection;
 import java.util.List;
@@ -790,13 +791,17 @@ public class AndroidCommon {
             compileTimeDependencyArtifacts,
             NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER));
     javaCommon.addTransitiveInfoProviders(builder, filesToBuild, classJar, ANDROID_COLLECTION_SPEC);
-    javaCommon.addGenJarsProvider(builder, genClassJar, genSourceJar);
+
+    JavaGenJarsProvider javaGenJarsProvider =
+        javaCommon.createJavaGenJarsProvider(genClassJar, genSourceJar);
+    javaCommon.addJavaGenJarsProvider(builder, javaGenJarsProvider);
 
     DataBinding.maybeAddProvider(builder, ruleContext);
     JavaInfo javaInfo = JavaInfo.Builder.create()
         .addProvider(JavaCompilationArgsProvider.class, compilationArgsProvider)
         .addProvider(JavaRuleOutputJarsProvider.class, ruleOutputJarsProvider)
         .addProvider(JavaSourceJarsProvider.class, sourceJarsProvider)
+        .addProvider(JavaGenJarsProvider.class, javaGenJarsProvider)
         .build();
 
     return builder

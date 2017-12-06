@@ -17,6 +17,7 @@ package com.google.devtools.build.lib.rules.cpp;
 import static java.nio.charset.StandardCharsets.ISO_8859_1;
 import static java.util.stream.Collectors.joining;
 
+import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -34,13 +35,12 @@ import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.concurrent.ThreadSafety.ThreadCompatible;
 import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.util.ShellEscaper;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.io.IOException;
-import java.util.Set;
+import java.util.List;
 import java.util.UUID;
 import java.util.logging.Logger;
 
@@ -110,7 +110,6 @@ public class FakeCppCompileAction extends CppCompileAction {
         CppCompilationContext.disallowUndeclaredHeaders(context),
         actionContext,
         nocopts,
-        VOID_SPECIAL_INPUTS_HANDLER,
         lipoScannables,
         ImmutableList.<Artifact>of(),
         GUID,
@@ -127,7 +126,7 @@ public class FakeCppCompileAction extends CppCompileAction {
   public ActionResult execute(ActionExecutionContext actionExecutionContext)
       throws ActionExecutionException, InterruptedException {
     setModuleFileFlags();
-    Set<SpawnResult> spawnResults;
+    List<SpawnResult> spawnResults;
     // First, do a normal compilation, to generate the ".d" file. The generated object file is built
     // to a temporary location (tempOutputFile) and ignored afterwards.
     logger.info("Generating " + getDotdFile());
@@ -156,7 +155,6 @@ public class FakeCppCompileAction extends CppCompileAction {
           new HeaderDiscovery.Builder()
               .setAction(this)
               .setSourceFile(getSourceFile())
-              .setSpecialInputsHandler(specialInputsHandler)
               .setDependencies(processDepset(execRoot, reply).getDependencies())
               .setPermittedSystemIncludePrefixes(getPermittedSystemIncludePrefixes(execRoot))
               .setAllowedDerivedinputsMap(getAllowedDerivedInputsMap());

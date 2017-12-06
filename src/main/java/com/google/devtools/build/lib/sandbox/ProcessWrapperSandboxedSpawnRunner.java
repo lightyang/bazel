@@ -20,6 +20,7 @@ import com.google.devtools.build.lib.actions.SpawnResult;
 import com.google.devtools.build.lib.exec.apple.XCodeLocalEnvProvider;
 import com.google.devtools.build.lib.exec.local.LocalEnvProvider;
 import com.google.devtools.build.lib.runtime.CommandEnvironment;
+import com.google.devtools.build.lib.runtime.ProcessWrapperUtil;
 import com.google.devtools.build.lib.util.OS;
 import com.google.devtools.build.lib.vfs.Path;
 import java.io.IOException;
@@ -31,7 +32,7 @@ import java.util.Map;
 final class ProcessWrapperSandboxedSpawnRunner extends AbstractSandboxSpawnRunner {
 
   public static boolean isSupported(CommandEnvironment cmdEnv) {
-    return OS.isPosixCompatible() && ProcessWrapperRunner.isSupported(cmdEnv);
+    return OS.isPosixCompatible() && ProcessWrapperUtil.isSupported(cmdEnv);
   }
 
   private final Path execRoot;
@@ -49,7 +50,7 @@ final class ProcessWrapperSandboxedSpawnRunner extends AbstractSandboxSpawnRunne
     this.execRoot = cmdEnv.getExecRoot();
     this.productName = productName;
     this.timeoutGraceSeconds = timeoutGraceSeconds;
-    this.processWrapper = ProcessWrapperRunner.getProcessWrapper(cmdEnv);
+    this.processWrapper = ProcessWrapperUtil.getProcessWrapper(cmdEnv);
     this.localEnvProvider =
         OS.getCurrent() == OS.DARWIN
             ? new XCodeLocalEnvProvider()
@@ -69,8 +70,12 @@ final class ProcessWrapperSandboxedSpawnRunner extends AbstractSandboxSpawnRunne
 
     Duration timeout = policy.getTimeout();
     List<String> arguments =
-        ProcessWrapperRunner.getCommandLine(
-            processWrapper, spawn.getArguments(), timeout, timeoutGraceSeconds);
+        ProcessWrapperUtil.commandLineBuilder()
+            .setProcessWrapperPath(processWrapper.getPathString())
+            .setCommandArguments(spawn.getArguments())
+            .setTimeout(timeout)
+            .setKillDelay(Duration.ofSeconds(timeoutGraceSeconds))
+            .build();
     Map<String, String> environment =
         localEnvProvider.rewriteLocalEnv(spawn.getEnvironment(), execRoot, tmpDir, productName);
 

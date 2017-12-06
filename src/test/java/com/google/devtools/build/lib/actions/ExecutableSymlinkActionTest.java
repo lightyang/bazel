@@ -39,6 +39,7 @@ public class ExecutableSymlinkActionTest {
   private Root outputRoot;
   TestFileOutErr outErr;
   private Executor executor;
+  private final ActionKeyContext actionKeyContext = new ActionKeyContext();
 
   @Before
   public final void createExecutor() throws Exception  {
@@ -46,7 +47,7 @@ public class ExecutableSymlinkActionTest {
     inputRoot = Root.asDerivedRoot(inputDir);
     outputRoot = Root.asDerivedRoot(scratch.dir("/out"));
     outErr = new TestFileOutErr();
-    executor = new DummyExecutor(inputDir);
+    executor = new DummyExecutor(scratch.getFileSystem(), inputDir);
   }
 
   private ActionExecutionContext createContext() {
@@ -55,7 +56,11 @@ public class ExecutableSymlinkActionTest {
         executor,
         new SingleBuildFileCache(execRoot.getPathString(), execRoot.getFileSystem()),
         ActionInputPrefetcher.NONE,
-        null, outErr, ImmutableMap.<String, String>of(), null);
+        actionKeyContext,
+        null,
+        outErr,
+        ImmutableMap.<String, String>of(),
+        null);
   }
 
   @Test

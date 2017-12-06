@@ -16,9 +16,9 @@ java_library(
     deps = [
         "//src/main/java/com/google/devtools/build/lib:build-base",
         "//src/main/java/com/google/devtools/build/lib:build-configuration-option-details",
+        "//src/main/java/com/google/devtools/build/lib:core-rules",
         "//src/main/java/com/google/devtools/build/lib:events",
         "//src/main/java/com/google/devtools/build/lib:packages-internal",
-        "//src/main/java/com/google/devtools/build/lib:preconditions",
         "//src/main/java/com/google/devtools/build/lib:skylarkinterface",
         "//src/main/java/com/google/devtools/build/lib/actions",
         "//src/main/java/com/google/devtools/build/lib/analysis/platform",

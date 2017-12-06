@@ -105,13 +105,13 @@ import javax.annotation.Nullable;
     category = SkylarkModuleCategory.BUILTIN,
     doc = "Data required for the analysis of a target that comes from targets that "
         + "depend on it and not targets that it depends on.")
-public final class BuildConfiguration implements BuildEvent {
+public class BuildConfiguration implements BuildEvent {
   /**
    * An interface for language-specific configurations.
    *
-   * <p>All implementations must be immutable and communicate this as clearly as possible
-   * (e.g. declare {@link ImmutableList} signatures on their interfaces vs. {@link List}).
-   * This is because fragment instances may be shared across configurations.
+   * <p>All implementations must be immutable and communicate this as clearly as possible (e.g.
+   * declare {@link ImmutableList} signatures on their interfaces vs. {@link List}). This is because
+   * fragment instances may be shared across configurations.
    */
   public abstract static class Fragment {
     /**
@@ -665,6 +665,16 @@ public final class BuildConfiguration implements BuildEvent {
     public boolean collectCodeCoverage;
 
     @Option(
+        name = "experimental_java_coverage",
+        defaultValue = "false",
+        category = "testing",
+        documentationCategory  = OptionDocumentationCategory.OUTPUT_PARAMETERS,
+        effectTags =  { OptionEffectTag.AFFECTS_OUTPUTS },
+        help = "If true Bazel will use a new way of computing code coverage for java targets."
+    )
+    public boolean experimentalJavaCoverage;
+
+    @Option(
       name = "coverage_support",
       converter = LabelConverter.class,
       defaultValue = "@bazel_tools//tools/test:coverage_support",
@@ -752,19 +762,15 @@ public final class BuildConfiguration implements BuildEvent {
     )
     public boolean legacyExternalRunfiles;
 
+    @Deprecated
     @Option(
       name = "check_fileset_dependencies_recursively",
       defaultValue = "true",
       category = "semantics",
-      documentationCategory = OptionDocumentationCategory.OUTPUT_SELECTION,
-      effectTags = { OptionEffectTag.AFFECTS_OUTPUTS },
-      help =
-          "If false, fileset targets will, whenever possible, create "
-              + "symlinks to directories instead of creating one symlink for each "
-              + "file inside the directory. Disabling this will significantly "
-              + "speed up fileset builds, but targets that depend on filesets will "
-              + "not be rebuilt if files are added, removed or modified in a "
-              + "subdirectory which has not been traversed."
+      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+      deprecationWarning = "This flag is a no-op and fileset dependencies are always checked "
+        + "to ensure correctness of builds.",
+      effectTags = { OptionEffectTag.AFFECTS_OUTPUTS }
     )
     public boolean checkFilesetDependenciesRecursively;
 
@@ -936,9 +942,6 @@ public final class BuildConfiguration implements BuildEvent {
 
     @Option(
       name = "auto_cpu_environment_group",
-      // TODO(b/67853005): Remove when all usage of experimental_auto_cpu_environment_group is
-      // removed
-      oldName = "experimental_auto_cpu_environment_group",
       converter = EmptyToNullLabelConverter.class,
       defaultValue = "",
       category = "flags",
@@ -951,9 +954,30 @@ public final class BuildConfiguration implements BuildEvent {
     )
     public Label autoCpuEnvironmentGroup;
 
-    /**
-     * Values for --experimental_dynamic_configs.
-     */
+    /** The source of make variables for this configuration. */
+    public enum MakeVariableSource {
+      CONFIGURATION,
+      TOOLCHAIN
+    }
+
+    /** Converter for --make_variables_source. */
+    public static class MakeVariableSourceConverter extends EnumConverter<MakeVariableSource> {
+      public MakeVariableSourceConverter() {
+        super(MakeVariableSource.class, "Make variable source");
+      }
+    }
+
+    @Option(
+      name = "make_variables_source",
+      converter = MakeVariableSourceConverter.class,
+      defaultValue = "configuration",
+      metadataTags = {OptionMetadataTag.HIDDEN},
+      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+      effectTags = {OptionEffectTag.UNKNOWN}
+    )
+    public MakeVariableSource makeVariableSource;
+
+    /** Values for --experimental_dynamic_configs. */
     public enum ConfigsMode {
       /** Only include the configuration fragments each rule needs. */
       ON,
@@ -1258,6 +1282,10 @@ public final class BuildConfiguration implements BuildEvent {
   public void reportInvalidOptions(EventHandler reporter) {
     for (Fragment fragment : fragments.values()) {
       fragment.reportInvalidOptions(reporter, this.buildOptions);
+    }
+
+    if (OS.getCurrent() == OS.WINDOWS && runfilesEnabled()) {
+      reporter.handle(Event.error("building runfiles is not supported on Windows"));
     }
 
     if (options.outputDirectoryName != null) {
@@ -1846,10 +1874,6 @@ public final class BuildConfiguration implements BuildEvent {
     return options.legacyExternalRunfiles;
   }
 
-  public boolean getCheckFilesetDependenciesRecursively() {
-    return options.checkFilesetDependenciesRecursively;
-  }
-
   public boolean getSkyframeNativeFileset() {
     return options.skyframeNativeFileset;
   }
@@ -1892,6 +1916,10 @@ public final class BuildConfiguration implements BuildEvent {
           + "ctx.coverage_instrumented</code></a> function.")
   public boolean isCodeCoverageEnabled() {
     return options.collectCodeCoverage;
+  }
+
+  public boolean isExperimentalJavaCoverage() {
+    return options.experimentalJavaCoverage;
   }
 
   public boolean isLLVMCoverageMapFormatEnabled() {
@@ -1954,7 +1982,7 @@ public final class BuildConfiguration implements BuildEvent {
   }
 
   /** Returns the cache key of the build options used to create this configuration. */
-  public final String checksum() {
+  public String checksum() {
     return checksum;
   }
 

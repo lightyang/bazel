@@ -26,6 +26,7 @@ import com.google.devtools.build.lib.actions.AbstractAction;
 import com.google.devtools.build.lib.actions.Action;
 import com.google.devtools.build.lib.actions.ActionExecutionContext;
 import com.google.devtools.build.lib.actions.ActionExecutionException;
+import com.google.devtools.build.lib.actions.ActionKeyContext;
 import com.google.devtools.build.lib.actions.ActionResult;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.Executor;
@@ -68,7 +69,7 @@ public class SkyframeAwareActionTest extends TimestampBuilderTestCase {
 
   @Before
   public final void createExecutor() throws Exception {
-    executor = new DummyExecutor(rootDirectory);
+    executor = new DummyExecutor(fileSystem, rootDirectory);
   }
 
   private static final class TrackingEvaluationProgressReceiver
@@ -207,7 +208,7 @@ public class SkyframeAwareActionTest extends TimestampBuilderTestCase {
     }
 
     @Override
-    protected String computeKey() {
+    protected String computeKey(ActionKeyContext actionKeyContext) {
       return getPrimaryOutput().getExecPathString() + executionCounter.get();
     }
   }
@@ -651,7 +652,7 @@ public class SkyframeAwareActionTest extends TimestampBuilderTestCase {
     }
 
     @Override
-    protected String computeKey() {
+    protected String computeKey(ActionKeyContext actionKeyContext) {
       return new Fingerprint().addInt(42).hexDigestAndReset();
     }
   }

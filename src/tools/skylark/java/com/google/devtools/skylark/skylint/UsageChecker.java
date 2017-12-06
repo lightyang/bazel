@@ -189,7 +189,8 @@ public class UsageChecker extends AstVisitorWithNameResolution {
     if ("_".equals(name) || nameInfo.kind == Kind.BUILTIN) {
       return;
     }
-    if ((nameInfo.kind == Kind.LOCAL || nameInfo.kind == Kind.PARAMETER) && name.startsWith("_")) {
+    if ((nameInfo.kind == Kind.LOCAL || nameInfo.kind == Kind.PARAMETER)
+        && (name.startsWith("_") || name.startsWith("unused_") || name.startsWith("UNUSED_"))) {
       // local variables starting with an underscore need not be used
       return;
     }
@@ -198,7 +199,22 @@ public class UsageChecker extends AstVisitorWithNameResolution {
       return;
     }
     String message = "unused binding of '" + name + "'";
-    if (nameInfo.kind == Kind.PARAMETER) {
+    if (nameInfo.kind == Kind.IMPORTED && !nameInfo.name.startsWith("_")) {
+      message +=
+          ". If you want to re-export a symbol, use the following pattern:\n"
+              + "\n"
+              + "load(..., _"
+              + name
+              + " = '"
+              + name
+              + "', ...)\n"
+              + name
+              + " = _"
+              + name
+              + "\n"
+              + "\n"
+              + "More details in the documentation.";
+    } else if (nameInfo.kind == Kind.PARAMETER) {
       message +=
           ". If this is intentional, "
               + "you can add `_ignore = [<param1>, <param2>, ...]` to the function body.";
@@ -220,7 +236,13 @@ public class UsageChecker extends AstVisitorWithNameResolution {
       issues.add(
           Issue.create(
               UNINITIALIZED_VARIABLE_CATEGORY,
-              "variable '" + info.name + "' may not have been initialized",
+              "variable '"
+                  + info.name
+                  + "' may not have been initialized."
+                  + " If you believe this is wrong, you can add `fail('unreachable')"
+                  + " to the branches where it is not initialized"
+                  + " or initialize it with `None` at the beginning."
+                  + " For more details, have a look at the documentation.",
               node.getLocation()));
     }
   }

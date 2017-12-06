@@ -16,6 +16,7 @@ package com.google.devtools.build.lib.rules.cpp;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
+import com.google.common.base.Preconditions;
 import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -36,7 +37,6 @@ import com.google.devtools.build.lib.rules.cpp.Link.LinkStaticness;
 import com.google.devtools.build.lib.rules.cpp.Link.LinkTargetType;
 import com.google.devtools.build.lib.rules.cpp.Link.Staticness;
 import com.google.devtools.build.lib.util.Pair;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.util.ShellEscaper;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.ArrayList;
@@ -340,16 +340,21 @@ public final class LinkCommandLine extends CommandLine {
     toolchainFlags.addAll(linkopts);
     // Extra toolchain link options based on the output's link staticness.
     if (fullyStatic) {
-      toolchainFlags.addAll(cppConfiguration.getFullyStaticLinkOptions(features, sharedLinkopts));
+      toolchainFlags.addAll(
+          CppHelper.getFullyStaticLinkOptions(
+              cppConfiguration, ccProvider, features, sharedLinkopts));
     } else if (mostlyStatic) {
-      toolchainFlags.addAll(cppConfiguration.getMostlyStaticLinkOptions(features, sharedLinkopts));
+      toolchainFlags.addAll(
+          CppHelper.getMostlyStaticLinkOptions(
+              cppConfiguration, ccProvider, features, sharedLinkopts));
     } else {
-      toolchainFlags.addAll(cppConfiguration.getDynamicLinkOptions(features, sharedLinkopts));
+      toolchainFlags.addAll(
+          CppHelper.getDynamicLinkOptions(cppConfiguration, ccProvider, features, sharedLinkopts));
     }
 
     // Extra test-specific link options.
     if (useTestOnlyFlags) {
-      toolchainFlags.addAll(cppConfiguration.getTestOnlyLinkOptions());
+      toolchainFlags.addAll(ccProvider.getTestOnlyLinkOptions());
     }
 
     toolchainFlags.addAll(ccProvider.getLinkOptions());
@@ -488,7 +493,7 @@ public final class LinkCommandLine extends CommandLine {
       return ImmutableList.copyOf(batchCommand);
     }
   }
-  
+
   private boolean isSharedNativeLibrary() {
     return nativeDeps && cppConfiguration.shareNativeDeps();
   }
@@ -587,7 +592,8 @@ public final class LinkCommandLine extends CommandLine {
         CppModel.PREPROCESSOR_DEFINES_VARIABLE_NAME,
         computeAllLinkstampDefines());
     // For dynamic libraries, produce position independent code.
-    if (linkTargetType == LinkTargetType.DYNAMIC_LIBRARY && cppConfiguration.toolchainNeedsPic()) {
+    if (cppConfiguration.forcePic()
+        || (linkTargetType == LinkTargetType.DYNAMIC_LIBRARY && ccProvider.toolchainNeedsPic())) {
       linkstampVariables.addStringVariable(CppModel.PIC_VARIABLE_NAME, "");
     }
     return linkstampVariables.build();

@@ -13,6 +13,7 @@
 // limitations under the License.
 package com.google.devtools.build.lib.rules.android;
 
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
@@ -27,7 +28,6 @@ import com.google.devtools.build.lib.rules.java.JavaHelper;
 import com.google.devtools.build.lib.rules.java.JavaToolchainProvider;
 import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.util.Pair;
-import com.google.devtools.build.lib.util.Preconditions;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.List;
 
@@ -419,13 +419,13 @@ public class ApkActionsBuilder {
   // Adds the appropriate SpawnAction options depending on if SingleJar is a jar or not.
   private static void setSingleJarAsExecutable(
       RuleContext ruleContext, SpawnAction.Builder builder) {
-    Artifact singleJar = JavaToolchainProvider.fromRuleContext(ruleContext).getSingleJar();
+    Artifact singleJar = JavaToolchainProvider.from(ruleContext).getSingleJar();
     if (singleJar.getFilename().endsWith(".jar")) {
       builder
           .setJarExecutable(
               JavaCommon.getHostJavaExecutable(ruleContext),
               singleJar,
-              JavaToolchainProvider.fromRuleContext(ruleContext).getJvmOptions())
+              JavaToolchainProvider.from(ruleContext).getJvmOptions())
           .addTransitiveInputs(JavaHelper.getHostJavabaseInputs(ruleContext));
     } else {
       builder.setExecutable(singleJar);

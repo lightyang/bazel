@@ -17,11 +17,13 @@ package com.google.devtools.skylark.skylint;
 import static com.google.devtools.skylark.skylint.DocstringUtils.extractDocstring;
 
 import com.google.devtools.build.lib.events.Location.LineAndColumn;
+import com.google.devtools.build.lib.syntax.ASTNode;
 import com.google.devtools.build.lib.syntax.BuildFileAST;
 import com.google.devtools.build.lib.syntax.Expression;
 import com.google.devtools.build.lib.syntax.FunctionDefStatement;
 import com.google.devtools.build.lib.syntax.Parameter;
 import com.google.devtools.build.lib.syntax.ReturnStatement;
+import com.google.devtools.build.lib.syntax.Statement;
 import com.google.devtools.build.lib.syntax.StringLiteral;
 import com.google.devtools.build.lib.syntax.SyntaxTreeVisitor;
 import com.google.devtools.skylark.skylint.DocstringUtils.DocstringInfo;
@@ -34,9 +36,12 @@ import java.util.List;
 
 /** Checks the existence of docstrings. */
 public class DocstringChecker extends SyntaxTreeVisitor {
-  private static final String MISSING_DOCSTRING_CATEGORY = "missing-docstring";
+  private static final String MISSING_MODULE_DOCSTRING_CATEGORY = "missing-module-docstring";
+  private static final String MISSING_FUNCTION_DOCSTRING_CATEGORY = "missing-function-docstring";
   private static final String INCONSISTENT_DOCSTRING_CATEGORY = "inconsistent-docstring";
   private static final String BAD_DOCSTRING_FORMAT_CATEGORY = "bad-docstring-format";
+  /** If a function is at least this many statements long, a docstring is required. */
+  private static final int FUNCTION_LENGTH_DOCSTRING_THRESHOLD = 5;
 
   private final List<Issue> issues = new ArrayList<>();
   private boolean containsReturnWithValue = false;
@@ -56,7 +61,8 @@ public class DocstringChecker extends SyntaxTreeVisitor {
       // This location is invalid if the file is empty but this edge case is not worth the trouble.
       Location end = new Location(2, 1);
       LocationRange range = new LocationRange(start, end);
-      issues.add(new Issue(MISSING_DOCSTRING_CATEGORY, "file has no module docstring", range));
+      issues.add(
+          new Issue(MISSING_MODULE_DOCSTRING_CATEGORY, "file has no module docstring", range));
     } else {
       List<DocstringParseError> errors = new ArrayList<>();
       DocstringUtils.parseDocstring(moduleDocstring, errors);
@@ -79,7 +85,9 @@ public class DocstringChecker extends SyntaxTreeVisitor {
     containsReturnWithValue = false;
     super.visit(node);
     StringLiteral functionDocstring = extractDocstring(node.getStatements());
-    if (functionDocstring == null && !node.getIdentifier().getName().startsWith("_")) {
+    if (functionDocstring == null
+        && !node.getIdentifier().getName().startsWith("_")
+        && countNestedStatements(node) >= FUNCTION_LENGTH_DOCSTRING_THRESHOLD) {
       Location start = Location.from(node.getLocation().getStartLineAndColumn());
       Location end;
       if (node.getStatements().isEmpty()) {
@@ -89,10 +97,17 @@ public class DocstringChecker extends SyntaxTreeVisitor {
         LineAndColumn lac = node.getStatements().get(0).getLocation().getStartLineAndColumn();
         end = new Location(lac.getLine(), lac.getColumn() - 1); // right before the first statement
       }
+      String name = node.getIdentifier().getName();
       issues.add(
           new Issue(
-              MISSING_DOCSTRING_CATEGORY,
-              "function '" + node.getIdentifier().getName() + "' has no docstring",
+              MISSING_FUNCTION_DOCSTRING_CATEGORY,
+              "function '"
+                  + name
+                  + "' has no docstring"
+                  + " (if this function is intended to be private,"
+                  + " the name should start with an underscore: '_"
+                  + name
+                  + "')",
               new LocationRange(start, end)));
     }
     if (functionDocstring == null) {
@@ -109,6 +124,21 @@ public class DocstringChecker extends SyntaxTreeVisitor {
     }
   }
 
+  private static class StatementCounter extends SyntaxTreeVisitor {
+    public int count = 0;
+
+    @Override
+    public void visitBlock(List<Statement> statements) {
+      count += statements.size();
+    }
+  }
+
+  private static int countNestedStatements(ASTNode node) {
+    StatementCounter counter = new StatementCounter();
+    counter.visit(node);
+    return counter.count;
+  }
+
   private static void checkMultilineFunctionDocstring(
       FunctionDefStatement functionDef,
       StringLiteral docstringLiteral,
@@ -119,7 +149,8 @@ public class DocstringChecker extends SyntaxTreeVisitor {
       issues.add(
           Issue.create(
               INCONSISTENT_DOCSTRING_CATEGORY,
-              "incomplete docstring: the return value is not documented",
+              "incomplete docstring: the return value is not documented"
+                  + " (no 'Returns:' section found)",
               docstringLiteral.getLocation()));
     }
     List<String> documentedParams = new ArrayList<>();
@@ -148,11 +179,18 @@ public class DocstringChecker extends SyntaxTreeVisitor {
       List<String> declaredParams,
       List<Issue> issues) {
     if (documentedParams.isEmpty() && !declaredParams.isEmpty()) {
+      StringBuilder message =
+          new StringBuilder("incomplete docstring: the function parameters are not documented")
+              .append(" (no 'Args:' section found)\n")
+              .append("The parameter documentation should look like this:\n\n")
+              .append("Args:\n");
+      for (String param : declaredParams) {
+        message.append("  ").append(param).append(": ...\n");
+      }
+      message.append("\n");
       issues.add(
           Issue.create(
-              INCONSISTENT_DOCSTRING_CATEGORY,
-              "incomplete docstring: the function parameters are not documented",
-              docstringLiteral.getLocation()));
+              INCONSISTENT_DOCSTRING_CATEGORY, message.toString(), docstringLiteral.getLocation()));
       return;
     }
     for (String param : declaredParams) {
@@ -204,7 +242,7 @@ public class DocstringChecker extends SyntaxTreeVisitor {
       startColumn = 1;
     }
     Location start = new Location(startLine, startColumn);
-    Location end = new Location(startLine, startColumn + error.line.length() - 1);
+    Location end = new Location(startLine, Math.max(1, startColumn + error.line.length() - 1));
     return new Issue(
         BAD_DOCSTRING_FORMAT_CATEGORY,
         "bad docstring format: " + error.message,

@@ -433,6 +433,11 @@ static vector<string> GetArgumentArray() {
   } else {
     result.push_back("--nodeep_execroot");
   }
+  if (globals->options->expand_configs_in_place) {
+    result.push_back("--expand_configs_in_place");
+  } else {
+    result.push_back("--noexpand_configs_in_place");
+  }
   if (globals->options->oom_more_eagerly) {
     result.push_back("--experimental_oom_more_eagerly");
   }
@@ -586,7 +591,7 @@ static void VerifyJavaVersionAndSetJvm() {
 }
 
 // Starts the Blaze server.
-static void StartServer(const WorkspaceLayout *workspace_layout,
+static int StartServer(const WorkspaceLayout *workspace_layout,
                         BlazeServerStartup **server_startup) {
   vector<string> jvm_args_vector = GetArgumentArray();
   string argument_string = GetArgumentString(jvm_args_vector);
@@ -611,8 +616,8 @@ static void StartServer(const WorkspaceLayout *workspace_layout,
   // we can still print errors to the terminal.
   GoToWorkspace(workspace_layout);
 
-  ExecuteDaemon(exe, jvm_args_vector, globals->jvm_log_file, server_dir,
-                server_startup);
+  return ExecuteDaemon(exe, jvm_args_vector, globals->jvm_log_file, server_dir,
+                       server_startup);
 }
 
 // Replace this process with blaze in standalone/batch mode.
@@ -742,7 +747,7 @@ static void StartServerAndConnect(const WorkspaceLayout *workspace_layout,
                 globals->options->io_nice_level);
 
   BlazeServerStartup *server_startup;
-  StartServer(workspace_layout, &server_startup);
+  server_pid = StartServer(workspace_layout, &server_startup);
 
   // Give the server two minutes to start up. That's enough to connect with a
   // debugger.
@@ -770,17 +775,15 @@ static void StartServerAndConnect(const WorkspaceLayout *workspace_layout,
     std::this_thread::sleep_until(next_attempt_time);
     if (!server_startup->IsStillAlive()) {
       globals->option_processor->PrintStartupOptionsProvenanceMessage();
-      fprintf(stderr,
-              "\nunexpected pipe read status: %s\n"
-              "Server presumed dead. Now printing '%s':\n",
-              blaze_util::GetLastErrorString().c_str(),
+      fprintf(stderr, "\nServer crashed during startup. Now printing '%s':\n",
               globals->jvm_log_file.c_str());
       WriteFileToStderrOrDie(globals->jvm_log_file.c_str());
       exit(blaze_exit_code::INTERNAL_ERROR);
     }
   }
   die(blaze_exit_code::INTERNAL_ERROR,
-      "\nError: couldn't connect to server after 120 seconds.");
+      "\nError: couldn't connect to server (%d) after 120 seconds.",
+      server_pid);
 }
 
 // A devtools_ijar::ZipExtractorProcessor to extract the files from the blaze
@@ -1285,12 +1288,6 @@ static void PrepareEnvironmentForJvm() {
     // This would override --host_jvm_args
     PrintWarning("ignoring _JAVA_OPTIONS in environment.");
     blaze::UnsetEnv("_JAVA_OPTIONS");
-  }
-
-  if (!blaze::GetEnv("TEST_TMPDIR").empty()) {
-    fprintf(stderr,
-            "INFO: $TEST_TMPDIR defined: output root default is '%s'.\n",
-            globals->options->output_root.c_str());
   }
 
   // TODO(bazel-team):  We've also seen a failure during loading (creating

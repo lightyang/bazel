@@ -13,6 +13,7 @@
 // limitations under the License.
 package com.google.devtools.build.lib.syntax;
 
+import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
@@ -23,7 +24,6 @@ import com.google.devtools.build.lib.skylarkinterface.SkylarkModule;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkModuleCategory;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkPrinter;
 import com.google.devtools.build.lib.skylarkinterface.SkylarkValue;
-import com.google.devtools.build.lib.util.Preconditions;
 import java.util.Collection;
 import java.util.List;
 import javax.annotation.Nullable;
@@ -91,20 +91,6 @@ public final class SkylarkNestedSet implements SkylarkValue, SkylarkQueryable {
   private final List<Object> items;
   @Nullable
   private final List<NestedSet> transitiveItems;
-
-  // Dummy class used to create a documentation for the deprecated `set` type
-  // TODO(bazel-team): remove before the end of 2017
-  @SkylarkModule(
-      name = "set",
-      category = SkylarkModuleCategory.BUILTIN,
-      doc = "A deprecated alias for <a href=\"depset.html\">depset</a>. "
-          + "Please use <a href=\"depset.html\">depset</a> instead. "
-          + "If you need a hash set that supports O(1) membership testing "
-          + "consider using a <a href=\"dict.html\">dict</a>."
-  )
-  static final class LegacySet {
-    private LegacySet() {}
-  }
 
   public SkylarkNestedSet(Order order, Object item, Location loc) throws EvalException {
     this(order, SkylarkType.TOP, item, loc, null);
