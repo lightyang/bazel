@@ -130,20 +130,20 @@ http_file(
 http_archive(
     name = "bazel_toolchains",
     urls = [
-        "https://mirror.bazel.build/github.com/bazelbuild/bazel-toolchains/archive/af4681c3d19f063f090222ec3d04108c4e0ca255.tar.gz",
-        "https://github.com/bazelbuild/bazel-toolchains/archive/af4681c3d19f063f090222ec3d04108c4e0ca255.tar.gz",
+        "https://mirror.bazel.build/github.com/bazelbuild/bazel-toolchains/archive/b49ba3689f46ac50e9277dafd8ff32b26951f82e.tar.gz",
+        "https://github.com/bazelbuild/bazel-toolchains/archive/b49ba3689f46ac50e9277dafd8ff32b26951f82e.tar.gz",
     ],
-    strip_prefix = "bazel-toolchains-af4681c3d19f063f090222ec3d04108c4e0ca255",
-    sha256 = "d58bb2d6c8603f600d522b6104d6192a65339aa26cbba9f11ff5c4b36dedb928",
+    strip_prefix = "bazel-toolchains-b49ba3689f46ac50e9277dafd8ff32b26951f82e",
+    sha256 = "1266f1e27b4363c83222f1a776397c7a069fbfd6aacc9559afa61cdd73e1b429",
 )
 
 http_archive(
     name = "com_googlesource_code_re2",
     urls = [
-        "https://github.com/google/re2/archive/2017-08-01.tar.gz",
+        "https://github.com/google/re2/archive/2017-12-01.tar.gz",
     ],
-    strip_prefix = "re2-2017-08-01",
-    sha256 = "938723dc197125392698c5fcf41acb74877866ff140b81fd50b7314bf26f1636",
+    strip_prefix = "re2-2017-12-01",
+    sha256 = "62797e7cd7cc959419710cd25b075b5f5b247da0e8214d47bf5af9b32128fb0d",
 )
 
 # For src/test/shell/bazel:bazel_sandboxing_test

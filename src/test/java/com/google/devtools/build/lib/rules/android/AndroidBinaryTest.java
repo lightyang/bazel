@@ -1258,6 +1258,44 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
     assertThat(resourceArguments(directResources)).contains("hdpi,xhdpi");
   }
 
+  /** Test that resources are not filtered in analysis under aapt2. */
+  @Test
+  public void testFilteredResourcesFilteringAapt2() throws Exception {
+    List<String> resources =
+        ImmutableList.of("res/values/foo.xml", "res/values-en/foo.xml", "res/values-fr/foo.xml");
+    String dir = "java/r/android";
+
+    mockAndroidSdkWithAapt2();
+
+    useConfiguration(
+        "--android_sdk=//sdk:sdk",
+        "--experimental_android_resource_filtering_method",
+        "filter_in_analysis");
+
+    ConfiguredTarget binary =
+        scratchConfiguredTarget(
+            dir,
+            "r",
+            "android_binary(name = 'r',",
+            "  manifest = 'AndroidManifest.xml',",
+            "  resource_configuration_filters = ['', 'en, es, '],",
+            "  aapt_version = 'aapt2',",
+            "  densities = ['hdpi, , ', 'xhdpi'],",
+            "  resource_files = ['" + Joiner.on("', '").join(resources) + "'])");
+    ResourceContainer directResources = getResourceContainer(binary, /* transitive= */ false);
+
+    // Validate that the AndroidResourceProvider for this binary contains all values.
+    assertThat(resourceContentsPaths(dir, directResources)).containsExactlyElementsIn(resources);
+
+    // Validate that the input to resource processing contains all values.
+    assertThat(resourceInputPaths(dir, directResources)).containsAllIn(resources);
+
+    // Validate that the filters are correctly passed to the resource processing action
+    // This includes trimming whitespace and ignoring empty filters.
+    assertThat(resourceArguments(directResources)).contains("en,es");
+    assertThat(resourceArguments(directResources)).contains("hdpi,xhdpi");
+  }
+
   @Test
   public void testFilteredResourcesFilteringNotSpecified() throws Exception {
     // TODO(asteinb): Once prefiltering is run by default, remove this test and remove the
@@ -4036,6 +4074,39 @@ public class AndroidBinaryTest extends AndroidBuildViewTestCase {
     ConfiguredTarget b1 = getConfiguredTarget("//java/com/google/android/instr:b1");
     AndroidInstrumentationInfo provider = b1.get(AndroidInstrumentationInfo.PROVIDER);
     assertThat(provider).isNull();
+  }
+
+  @Test
+  public void testFilterActionWithInstrumentedBinary() throws Exception {
+    scratch.file(
+        "java/com/google/android/instr/BUILD",
+        "android_binary(name = 'b1',",
+        "               srcs = ['b1.java'],",
+        "               instruments = ':b2',",
+        "               manifest = 'AndroidManifest.xml')",
+        "android_binary(name = 'b2',",
+        "               srcs = ['b2.java'],",
+        "               manifest = 'AndroidManifest.xml')");
+    ConfiguredTarget b1 = getConfiguredTarget("//java/com/google/android/instr:b1");
+    SpawnAction action =
+        (SpawnAction)
+            actionsTestUtil().getActionForArtifactEndingWith(getFilesToBuild(b1), "_filtered.jar");
+    assertThat(action.getArguments())
+        .containsAllOf(
+            "--inputZip",
+            getFirstArtifactEndingWith(action.getInputs(), "b1_deploy.jar").getExecPathString(),
+            "--filterZips",
+            getFirstArtifactEndingWith(action.getInputs(), "b2_deploy.jar").getExecPathString(),
+            "--outputZip",
+            getFirstArtifactEndingWith(action.getOutputs(), "b1_filtered.jar").getExecPathString(),
+            "--filterTypes",
+            ".class",
+            "--checkHashMismatch",
+            "IGNORE",
+            "--explicitFilters",
+            "R\\.class,R\\$.*\\.class",
+            "--outputMode",
+            "DONT_CARE");
   }
 
   /**

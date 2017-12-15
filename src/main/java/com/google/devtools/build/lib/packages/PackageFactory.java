@@ -588,7 +588,12 @@ public final class PackageFactory {
     }
 
     GlobList<String> globList = GlobList.captureResults(includes, excludes, matches);
-    return MutableList.copyOf(env, globList);
+    if (env.getSemantics().incompatibleDisableGlobTracking()) {
+      // Converting to ImmutableList will remove glob information from the list.
+      return MutableList.copyOf(env, ImmutableList.copyOf(globList));
+    } else {
+      return MutableList.copyOf(env, globList);
+    }
   }
 
   /**
@@ -1552,8 +1557,9 @@ public final class PackageFactory {
    */
   private ClassObject newNativeModule() {
     ImmutableMap.Builder<String, Object> builder = new ImmutableMap.Builder<>();
-    for (String nativeFunction : Runtime.getFunctionNames(SkylarkNativeModule.class)) {
-      builder.put(nativeFunction, Runtime.getFunction(SkylarkNativeModule.class, nativeFunction));
+    Runtime.BuiltinRegistry builtins = Runtime.getBuiltinRegistry();
+    for (String nativeFunction : builtins.getFunctionNames(SkylarkNativeModule.class)) {
+      builder.put(nativeFunction, builtins.getFunction(SkylarkNativeModule.class, nativeFunction));
     }
     builder.putAll(ruleFunctions);
     builder.put("package", newPackageFunction(packageArguments));

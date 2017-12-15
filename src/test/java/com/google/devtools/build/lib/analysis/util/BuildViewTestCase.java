@@ -57,7 +57,7 @@ import com.google.devtools.build.lib.analysis.ExtraActionArtifactsProvider;
 import com.google.devtools.build.lib.analysis.FileProvider;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
 import com.google.devtools.build.lib.analysis.LabelAndConfiguration;
-import com.google.devtools.build.lib.analysis.OutputGroupProvider;
+import com.google.devtools.build.lib.analysis.OutputGroupInfo;
 import com.google.devtools.build.lib.analysis.PseudoAction;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.Runfiles;
@@ -149,6 +149,7 @@ import com.google.devtools.build.skyframe.SkyFunction;
 import com.google.devtools.common.options.InvocationPolicyEnforcer;
 import com.google.devtools.common.options.Options;
 import com.google.devtools.common.options.OptionsParser;
+import com.google.devtools.common.options.OptionsParsingException;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -197,6 +198,8 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
   protected WorkspaceStatusAction.Factory workspaceStatusActionFactory;
 
   private MutableActionGraph mutableActionGraph;
+
+  private LoadingOptions customLoadingOptions = null;
 
   @Before
   public final void initializeSkyframeExecutor() throws Exception {
@@ -670,7 +673,7 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
   protected Action getGeneratingActionInOutputGroup(
       ConfiguredTarget target, String outputName, String outputGroupName) {
     NestedSet<Artifact> outputGroup =
-        OutputGroupProvider.get(target).getOutputGroup(outputGroupName);
+        OutputGroupInfo.get(target).getOutputGroup(outputGroupName);
     return getGeneratingAction(outputName, outputGroup, "outputGroup/" + outputGroupName);
   }
 
@@ -1430,7 +1433,7 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
 
   protected NestedSet<Artifact> getOutputGroup(
       TransitiveInfoCollection target, String outputGroup) {
-    OutputGroupProvider provider = OutputGroupProvider.get(target);
+    OutputGroupInfo provider = OutputGroupInfo.get(target);
     return provider == null
         ? NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER)
         : provider.getOutputGroup(outputGroup);
@@ -1517,6 +1520,10 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
     return attributes((RuleConfiguredTarget) rule);
   }
 
+  protected void useLoadingOptions(String... options) throws OptionsParsingException {
+    customLoadingOptions = Options.parse(LoadingOptions.class, options).getOptions();
+  }
+
   protected AnalysisResult update(List<String> targets,
       boolean keepGoing,
       int loadingPhaseThreads,
@@ -1535,7 +1542,10 @@ public abstract class BuildViewTestCase extends FoundationTestCase {
       EventBus eventBus)
       throws Exception {
 
-    LoadingOptions loadingOptions = Options.getDefaults(LoadingOptions.class);
+    LoadingOptions loadingOptions =
+        customLoadingOptions == null
+            ? Options.getDefaults(LoadingOptions.class)
+            : customLoadingOptions;
 
     BuildView.Options viewOptions = Options.getDefaults(BuildView.Options.class);
     viewOptions.keepGoing = keepGoing;

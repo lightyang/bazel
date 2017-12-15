@@ -21,33 +21,29 @@ import static java.nio.charset.StandardCharsets.ISO_8859_1;
 
 import com.google.common.base.Function;
 import com.google.common.base.Functions;
-import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
-import com.google.common.collect.Multimap;
-import com.google.common.collect.MultimapBuilder;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.FailAction;
 import com.google.devtools.build.lib.actions.ParameterFile;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
-import com.google.devtools.build.lib.analysis.OutputGroupProvider;
+import com.google.devtools.build.lib.analysis.OutputGroupInfo;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetBuilder;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetFactory;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.Runfiles;
 import com.google.devtools.build.lib.analysis.RunfilesProvider;
-import com.google.devtools.build.lib.analysis.TransitiveInfoCollection;
 import com.google.devtools.build.lib.analysis.actions.CommandLine;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine;
 import com.google.devtools.build.lib.analysis.actions.CustomCommandLine.VectorArg;
+import com.google.devtools.build.lib.analysis.actions.ParamFileInfo;
 import com.google.devtools.build.lib.analysis.actions.ParameterFileWriteAction;
 import com.google.devtools.build.lib.analysis.actions.SpawnAction;
 import com.google.devtools.build.lib.analysis.actions.SpawnActionTemplate;
-import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
@@ -57,8 +53,6 @@ import com.google.devtools.build.lib.packages.TriState;
 import com.google.devtools.build.lib.rules.android.AndroidBinaryMobileInstall.MobileInstallResourceApks;
 import com.google.devtools.build.lib.rules.android.AndroidConfiguration.AndroidAaptVersion;
 import com.google.devtools.build.lib.rules.android.AndroidRuleClasses.MultidexMode;
-import com.google.devtools.build.lib.rules.cpp.CcToolchainProvider;
-import com.google.devtools.build.lib.rules.cpp.CppHelper;
 import com.google.devtools.build.lib.rules.cpp.CppSemantics;
 import com.google.devtools.build.lib.rules.java.DeployArchiveBuilder;
 import com.google.devtools.build.lib.rules.java.JavaCommon;
@@ -77,7 +71,6 @@ import com.google.devtools.build.lib.syntax.Type;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -189,35 +182,11 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
 
     validateRuleContext(ruleContext);
 
-    // TODO(bazel-team): Find a way to simplify this code.
-    // treeKeys() means that the resulting map sorts the entries by key, which is necessary to
-    // ensure determinism.
-    Multimap<String, TransitiveInfoCollection> depsByArchitecture =
-        MultimapBuilder.treeKeys().arrayListValues().build();
-    AndroidConfiguration androidConfig = ruleContext.getFragment(AndroidConfiguration.class);
-    for (Map.Entry<Optional<String>, ? extends List<? extends TransitiveInfoCollection>> entry :
-        ruleContext.getSplitPrerequisites("deps").entrySet()) {
-      String cpu = entry.getKey().or(androidConfig.getCpu());
-      depsByArchitecture.putAll(cpu, entry.getValue());
-    }
-    Map<String, BuildConfiguration> configurationMap = new LinkedHashMap<>();
-    Map<String, CcToolchainProvider> toolchainMap = new LinkedHashMap<>();
-    for (Map.Entry<Optional<String>, ? extends List<? extends TransitiveInfoCollection>> entry :
-        ruleContext.getSplitPrerequisites(":cc_toolchain_split").entrySet()) {
-      String cpu = entry.getKey().or(androidConfig.getCpu());
-      TransitiveInfoCollection dep = Iterables.getOnlyElement(entry.getValue());
-      CcToolchainProvider toolchain = CppHelper.getToolchain(ruleContext, dep);
-      configurationMap.put(cpu, dep.getConfiguration());
-      toolchainMap.put(cpu, toolchain);
-    }
-
     NativeLibs nativeLibs =
         NativeLibs.fromLinkedNativeDeps(
             ruleContext,
+            ImmutableList.of("deps"),
             androidSemantics.getNativeDepsFileName(),
-            depsByArchitecture,
-            toolchainMap,
-            configurationMap,
             cppSemantics);
 
     boolean shrinkResources = shouldShrinkResources(ruleContext);
@@ -323,6 +292,10 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
         collectDesugaredJars(ruleContext, androidCommon, androidSemantics, resourceClasses);
     Artifact deployJar = createDeployJar(ruleContext, javaSemantics, androidCommon, resourceClasses,
         AndroidCommon.getAndroidConfig(ruleContext).checkDesugarDeps(), derivedJarFunction);
+
+    if (isInstrumentation(ruleContext)) {
+      deployJar = getFilteredDeployJar(ruleContext, deployJar);
+    }
 
     OneVersionEnforcementLevel oneVersionEnforcementLevel =
         ruleContext.getFragment(JavaConfiguration.class).oneVersionEnforcementLevel();
@@ -576,7 +549,7 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
         new RuleConfiguredTargetBuilder(ruleContext);
 
     // If this is an instrumentation APK, create the provider for android_instrumentation_test.
-    if (ruleContext.attributes().isAttributeValueExplicitlySpecified("instruments")) {
+    if (isInstrumentation(ruleContext)) {
       Artifact targetApk =
           ruleContext
               .getPrerequisite("instruments", Mode.TARGET)
@@ -607,7 +580,7 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
     }
 
     if (oneVersionEnforcementArtifact != null) {
-      builder.addOutputGroup(OutputGroupProvider.HIDDEN_TOP_LEVEL, oneVersionEnforcementArtifact);
+      builder.addOutputGroup(OutputGroupInfo.HIDDEN_TOP_LEVEL, oneVersionEnforcementArtifact);
     }
 
     if (mobileInstallResourceApks != null) {
@@ -1214,7 +1187,7 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
     SpawnAction.Builder shardAction =
         new SpawnAction.Builder()
             .useDefaultShellEnvironment()
-            .setMnemonic("ShardClassesToDex")
+            .setMnemonic("ShardForMultidex")
             .setProgressMessage("Assembling dex files for %s",
                 ruleContext.getLabel().getCanonicalForm())
             .setExecutable(ruleContext.getExecutablePrerequisite("$dexsharder", Mode.HOST))
@@ -1238,7 +1211,12 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
       shardAction.addInput(inclusionFilterJar);
     }
     ruleContext.registerAction(
-        shardAction.addCommandLine(shardCommandLine.build()).build(ruleContext));
+        shardAction
+            .addCommandLine(
+                shardCommandLine.build(),
+                // Classpaths can be long--overflow into @params file if necessary
+                ParamFileInfo.builder(ParameterFile.ParameterFileType.SHELL_QUOTED).build())
+            .build(ruleContext));
 
     return outputTree;
   }
@@ -1335,7 +1313,10 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
       dexmerger.addInput(mainDexList);
       commandLine.addExecPath("--main-dex-list", mainDexList);
     }
-    dexmerger.addCommandLine(commandLine.build());
+    dexmerger.addCommandLine(
+        commandLine.build(),
+        // Classpaths can be long--overflow into @params file if necessary
+        ParamFileInfo.builder(ParameterFile.ParameterFileType.SHELL_QUOTED).build());
     ruleContext.registerAction(dexmerger.build(ruleContext));
   }
 
@@ -1742,5 +1723,28 @@ public abstract class AndroidBinary implements RuleConfiguredTargetFactory {
   public static Artifact getDxArtifact(RuleContext ruleContext, String baseName) {
     return ruleContext.getUniqueDirectoryArtifact("_dx", baseName,
         ruleContext.getBinOrGenfilesDirectory());
+  }
+
+  /** Returns true if this android_binary target is an instrumentation binary */
+  private static boolean isInstrumentation(RuleContext ruleContext) {
+    return ruleContext.attributes().isAttributeValueExplicitlySpecified("instruments");
+  }
+
+  /**
+   * Perform class filtering using the target APK's predexed JAR. Filter duplicate .class and
+   * R.class files based on name. Prevents runtime crashes on ART. See b/19713845 for details.
+   */
+  private static Artifact getFilteredDeployJar(RuleContext ruleContext, Artifact deployJar)
+      throws InterruptedException {
+    Artifact filterJar =
+        ruleContext
+            .getPrerequisite("instruments", Mode.TARGET)
+            .getProvider(AndroidPreDexJarProvider.class)
+            .getPreDexJar();
+    Artifact filteredDeployJar =
+        ruleContext.getImplicitOutputArtifact(AndroidRuleClasses.ANDROID_TEST_FILTERED_JAR);
+    AndroidCommon.createZipFilterAction(
+        ruleContext, deployJar, filterJar, filteredDeployJar, /* checkHashMismatch */ false);
+    return filteredDeployJar;
   }
 }

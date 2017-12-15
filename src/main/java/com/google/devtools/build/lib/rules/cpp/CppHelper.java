@@ -44,6 +44,7 @@ import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration.Options;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration.Options.MakeVariableSource;
 import com.google.devtools.build.lib.analysis.config.CompilationMode;
+import com.google.devtools.build.lib.analysis.config.InvalidConfigurationException;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget.Mode;
 import com.google.devtools.build.lib.analysis.platform.ToolchainInfo;
 import com.google.devtools.build.lib.cmdline.Label;
@@ -51,6 +52,7 @@ import com.google.devtools.build.lib.cmdline.LabelSyntaxException;
 import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.collect.nestedset.NestedSetBuilder;
 import com.google.devtools.build.lib.collect.nestedset.Order;
+import com.google.devtools.build.lib.packages.RuleClass.ConfiguredTargetFactory.RuleErrorException;
 import com.google.devtools.build.lib.packages.RuleErrorConsumer;
 import com.google.devtools.build.lib.rules.cpp.CcLinkParams.Linkstamp;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainFeatures.FeatureConfiguration;
@@ -97,11 +99,6 @@ public class CppHelper {
 
   /** Base label of the c++ toolchain category. */
   public static final String TOOLCHAIN_TYPE_LABEL = "//tools/cpp:toolchain_type";
-
-  /** Returns label used to select resolved cc_toolchain instances based on platform. */
-  public static Label getCcToolchainType(String toolsRepository) {
-    return Label.parseAbsoluteUnchecked(toolsRepository + TOOLCHAIN_TYPE_LABEL);
-  }
 
   private CppHelper() {
     // prevents construction
@@ -595,13 +592,10 @@ public class CppHelper {
   }
 
   /**
-   * Resolves the linkstamp collection from the {@code CcLinkParams} into a map.
-   *
-   * <p>Emits a warning on the rule if there are identical linkstamp artifacts with different
+   * Emits a warning on the rule if there are identical linkstamp artifacts with different
    * compilation contexts.
    */
-  public static Map<Artifact, NestedSet<Artifact>> resolveLinkstamps(
-      RuleErrorConsumer listener, CcLinkParams linkParams) {
+  public static void checkLinkstampsUnique(RuleErrorConsumer listener, CcLinkParams linkParams) {
     Map<Artifact, NestedSet<Artifact>> result = new LinkedHashMap<>();
     for (Linkstamp pair : linkParams.getLinkstamps()) {
       Artifact artifact = pair.getArtifact();
@@ -611,7 +605,6 @@ public class CppHelper {
       }
       result.put(artifact, pair.getDeclaredIncludeSrcs());
     }
-    return result;
   }
 
   public static void addTransitiveLipoInfoForCommonAttributes(
@@ -921,14 +914,26 @@ public class CppHelper {
         objectDir.getRelative(rootRelativePath), sourceTreeArtifact.getRoot());
   }
 
-  static String getArtifactNameForCategory(RuleContext ruleContext, CcToolchainProvider toolchain,
-      ArtifactCategory category, String outputName) {
-    return toolchain.getFeatures().getArtifactNameForCategory(category, outputName);
+  static String getArtifactNameForCategory(
+      RuleContext ruleContext,
+      CcToolchainProvider toolchain,
+      ArtifactCategory category,
+      String outputName)
+      throws RuleErrorException {
+    try {
+      return toolchain.getFeatures().getArtifactNameForCategory(category, outputName);
+    } catch (InvalidConfigurationException e) {
+      ruleContext.throwWithRuleError(e.getMessage());
+      throw new IllegalStateException("Should not be reached");
+    }
   }
 
   static String getDotdFileName(
-      RuleContext ruleContext, CcToolchainProvider toolchain, ArtifactCategory outputCategory,
-      String outputName) {
+      RuleContext ruleContext,
+      CcToolchainProvider toolchain,
+      ArtifactCategory outputCategory,
+      String outputName)
+      throws RuleErrorException {
     String baseName = outputCategory == ArtifactCategory.OBJECT_FILE
         || outputCategory == ArtifactCategory.PROCESSED_HEADER
         ? outputName

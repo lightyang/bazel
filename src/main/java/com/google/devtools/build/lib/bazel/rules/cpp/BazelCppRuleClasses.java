@@ -55,7 +55,6 @@ import com.google.devtools.build.lib.packages.TriState;
 import com.google.devtools.build.lib.rules.cpp.CcToolchain;
 import com.google.devtools.build.lib.rules.cpp.CppConfiguration;
 import com.google.devtools.build.lib.rules.cpp.CppFileTypes;
-import com.google.devtools.build.lib.rules.cpp.CppHelper;
 import com.google.devtools.build.lib.rules.cpp.CppRuleClasses;
 import com.google.devtools.build.lib.rules.cpp.transitions.LipoContextCollectorTransition;
 import com.google.devtools.build.lib.util.FileTypeSet;
@@ -113,10 +112,7 @@ public class BazelCppRuleClasses {
 
   static final String[] DEPS_ALLOWED_RULES =
       new String[] {
-        "cc_inc_library",
-        "cc_library",
-        "objc_library",
-        "cc_proto_library",
+        "cc_inc_library", "cc_library", "objc_library", "cc_proto_library", "cc_import",
       };
 
   /**
@@ -136,7 +132,7 @@ public class BazelCppRuleClasses {
                   .value(CppRuleClasses.ccToolchainTypeAttribute(env)))
           .setPreferredDependencyPredicate(Predicates.<String>or(CPP_SOURCE, C_SOURCE, CPP_HEADER))
           .requiresConfigurationFragments(PlatformConfiguration.class)
-          .addRequiredToolchains(CppHelper.getCcToolchainType(env.getToolsRepository()))
+          .addRequiredToolchains(CppRuleClasses.ccToolchainTypeAttribute(env))
           .build();
     }
 

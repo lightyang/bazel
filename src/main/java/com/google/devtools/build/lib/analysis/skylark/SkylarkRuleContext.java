@@ -28,7 +28,6 @@ import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.actions.Root;
 import com.google.devtools.build.lib.analysis.ActionsProvider;
 import com.google.devtools.build.lib.analysis.AliasProvider;
-import com.google.devtools.build.lib.analysis.AnalysisUtils;
 import com.google.devtools.build.lib.analysis.ConfigurationMakeVariableContext;
 import com.google.devtools.build.lib.analysis.DefaultInfo;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
@@ -43,7 +42,6 @@ import com.google.devtools.build.lib.analysis.stringtemplate.ExpansionException;
 import com.google.devtools.build.lib.analysis.test.InstrumentedFilesCollector;
 import com.google.devtools.build.lib.analysis.test.InstrumentedFilesProvider;
 import com.google.devtools.build.lib.cmdline.Label;
-import com.google.devtools.build.lib.collect.nestedset.NestedSet;
 import com.google.devtools.build.lib.events.Location;
 import com.google.devtools.build.lib.packages.AspectDescriptor;
 import com.google.devtools.build.lib.packages.Attribute;
@@ -139,7 +137,9 @@ public final class SkylarkRuleContext implements SkylarkValue {
           + "<pre class=language-python>list(ctx.attr.&lt;ATTR&gt;.files)[0]</pre>";
   public static final String ATTR_DOC =
       "A struct to access the values of the attributes. The values are provided by "
-          + "the user (if not, a default value is used).";
+          + "the user (if not, a default value is used). The attributes of the struct and the "
+          + "types of their values correspond to the keys and values of the <code>attrs</code> "
+          + "dict provided to the <code>rule</code> function.";
   public static final String SPLIT_ATTR_DOC =
       "A struct to access the values of attributes with split configurations. If the attribute is "
           + "a label list, the value of split_attr is a dict of the keys of the split (as strings) "
@@ -1080,12 +1080,6 @@ public final class SkylarkRuleContext implements SkylarkValue {
         "ctx.actions.declare_directory", "ctx.experimental_new_directory", null, skylarkSemantics);
     checkMutable("experimental_new_directory");
     return actionFactory.declareDirectory(name, siblingArtifactUnchecked);
-  }
-
-  @SkylarkCallable(documented = false)
-  public NestedSet<Artifact> middleMan(String attribute) throws EvalException {
-    checkMutable("middle_man");
-    return AnalysisUtils.getMiddlemanFor(ruleContext, attribute, Mode.HOST);
   }
 
   @SkylarkCallable(documented = false)

@@ -99,6 +99,19 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
   public boolean incompatibleComprehensionVariablesDoNotLeak;
 
   @Option(
+    name = "incompatible_depset_union",
+    defaultValue = "false",
+    category = "incompatible changes",
+    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+    effectTags = {OptionEffectTag.UNKNOWN},
+    metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
+    help =
+        "If set to true, depset union using `+`, `|` or `.union` are forbidden. "
+            + "Use the `depset` constructor instead."
+  )
+  public boolean incompatibleDepsetUnion;
+
+  @Option(
     name = "incompatible_depset_is_not_iterable",
     defaultValue = "false",
     category = "incompatible changes",
@@ -122,6 +135,17 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
     help = "If set to true, the dictionary literal syntax doesn't allow duplicated keys."
   )
   public boolean incompatibleDictLiteralHasNoDuplicates;
+
+  @Option(
+    name = "incompatible_disable_glob_tracking",
+    defaultValue = "false",
+    category = "incompatible changes",
+    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
+    effectTags = {OptionEffectTag.UNKNOWN},
+    metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
+    help = "If set to true, do not track the values of globs (this is used by rare specific cases"
+  )
+  public boolean incompatibleDisableGlobTracking;
 
   @Option(
     name = "incompatible_disallow_dict_plus",
@@ -160,7 +184,7 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
 
   @Option(
     name = "incompatible_disallow_uncalled_set_constructor",
-    defaultValue = "false",
+    defaultValue = "true",
     category = "incompatible changes",
     documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
     effectTags = {OptionEffectTag.UNKNOWN},
@@ -168,19 +192,6 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
     help = "If set to true, it's not allowed to use `set()` even if that code is never executed."
   )
   public boolean incompatibleDisallowUncalledSetConstructor;
-
-  @Option(
-    name = "incompatible_list_plus_equals_inplace",
-    defaultValue = "true",
-    category = "incompatible changes",
-    documentationCategory = OptionDocumentationCategory.UNCATEGORIZED,
-    effectTags = {OptionEffectTag.UNKNOWN},
-    metadataTags = {OptionMetadataTag.INCOMPATIBLE_CHANGE},
-    help =
-        "If set to true, `+=` on lists works like the `extend` method mutating the original "
-            + "list. Otherwise it copies the original list without mutating it."
-  )
-  public boolean incompatibleListPlusEqualsInplace;
 
   @Option(
     name = "incompatible_load_argument_is_label",
@@ -265,12 +276,13 @@ public class SkylarkSemanticsOptions extends OptionsBase implements Serializable
         .incompatibleCheckedArithmetic(incompatibleCheckedArithmetic)
         .incompatibleComprehensionVariablesDoNotLeak(incompatibleComprehensionVariablesDoNotLeak)
         .incompatibleDepsetIsNotIterable(incompatibleDepsetIsNotIterable)
+        .incompatibleDepsetUnion(incompatibleDepsetUnion)
         .incompatibleDictLiteralHasNoDuplicates(incompatibleDictLiteralHasNoDuplicates)
+        .incompatibleDisableGlobTracking(incompatibleDisableGlobTracking)
         .incompatibleDisallowDictPlus(incompatibleDisallowDictPlus)
         .incompatibleDisallowKeywordOnlyArgs(incompatibleDisallowKeywordOnlyArgs)
         .incompatibleDisallowToplevelIfStatement(incompatibleDisallowToplevelIfStatement)
         .incompatibleDisallowUncalledSetConstructor(incompatibleDisallowUncalledSetConstructor)
-        .incompatibleListPlusEqualsInplace(incompatibleListPlusEqualsInplace)
         .incompatibleLoadArgumentIsLabel(incompatibleLoadArgumentIsLabel)
         .incompatibleNewActionsApi(incompatibleNewActionsApi)
         .incompatibleShowAllPrintMessages(incompatibleShowAllPrintMessages)

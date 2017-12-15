@@ -35,6 +35,7 @@ import com.google.devtools.build.lib.shell.AbnormalTerminationException;
 import com.google.devtools.build.lib.shell.Command;
 import com.google.devtools.build.lib.shell.CommandException;
 import com.google.devtools.build.lib.shell.CommandResult;
+import com.google.devtools.build.lib.shell.ExecutionStatistics;
 import com.google.devtools.build.lib.util.NetUtil;
 import com.google.devtools.build.lib.util.OS;
 import com.google.devtools.build.lib.util.OsUtils;
@@ -47,7 +48,7 @@ import java.time.Duration;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ThreadLocalRandom;
+import java.util.Optional;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.annotation.Nullable;
@@ -57,7 +58,7 @@ import javax.annotation.Nullable;
  * completion.
  */
 @ThreadSafe
-public final class LocalSpawnRunner implements SpawnRunner {
+public class LocalSpawnRunner implements SpawnRunner {
   private static final Joiner SPACE_JOINER = Joiner.on(' ');
   private static final String UNHANDLED_EXCEPTION_MSG = "Unhandled exception running a local spawn";
   private static final int LOCAL_EXEC_ERROR = -1;
@@ -79,7 +80,7 @@ public final class LocalSpawnRunner implements SpawnRunner {
   private final LocalEnvProvider localEnvProvider;
 
   // TODO(b/62588075): Move this logic to ProcessWrapperUtil?
-  private static Path getProcessWrapper(Path execRoot, OS localOs) {
+  protected static Path getProcessWrapper(Path execRoot, OS localOs) {
     return execRoot.getRelative("_bin/process-wrapper" + OsUtils.executableExtension(localOs));
   }
 
@@ -131,21 +132,12 @@ public final class LocalSpawnRunner implements SpawnRunner {
     }
   }
 
-  private static Path createActionTemp(Path execRoot) throws IOException {
-    String idStr =
-        // Make the name unique among other executor threads.
-        Long.toHexString(Thread.currentThread().getId())
-            + "_"
-            // Make the name unique among other temp directories that this thread has ever created.
-            // On Windows, file and directory deletion is asynchronous, meaning the previous temp
-            // directory name isn't immediately available for the next action that this thread runs.
-            // See https://github.com/bazelbuild/bazel/issues/4035
-            + Long.toHexString(ThreadLocalRandom.current().nextLong());
-    Path result = execRoot.getRelative("tmp" + idStr);
-    if (!result.exists() && !result.createDirectory()) {
-      throw new IOException(String.format("Could not create temp directory '%s'", result));
-    }
-    return result;
+  protected Path createActionTemp(Path execRoot) throws IOException {
+    return execRoot.getRelative(
+        java.nio.file.Files.createTempDirectory(
+                java.nio.file.Paths.get(execRoot.getPathString()), "local-spawn-runner.")
+            .getFileName()
+            .toString());
   }
 
   private final class SubprocessHandler {
@@ -256,30 +248,39 @@ public final class LocalSpawnRunner implements SpawnRunner {
       setState(State.LOCAL_ACTION_RUNNING);
 
       Path tmpDir = createActionTemp(execRoot);
+      Optional<String> statisticsPath = Optional.empty();
       try {
         Command cmd;
-        OutputStream stdOut = ByteStreams.nullOutputStream();
-        OutputStream stdErr = ByteStreams.nullOutputStream();
+        OutputStream stdOut;
+        OutputStream stdErr;
+        Path commandTmpDir = tmpDir.getRelative("work");
+        commandTmpDir.createDirectory();
         if (useProcessWrapper) {
           // If the process wrapper is enabled, we use its timeout feature, which first interrupts
           // the subprocess and only kills it after a grace period so that the subprocess can output
           // a stack trace, test log or similar, which is incredibly helpful for debugging. The
           // process wrapper also supports output file redirection, so we don't need to stream the
           // output through this process.
-          List<String> cmdLine =
+          stdOut = ByteStreams.nullOutputStream();
+          stdErr = ByteStreams.nullOutputStream();
+          ProcessWrapperUtil.CommandLineBuilder commandLineBuilder =
               ProcessWrapperUtil.commandLineBuilder()
                   .setProcessWrapperPath(processWrapper)
                   .setCommandArguments(spawn.getArguments())
                   .setStdoutPath(getPathOrDevNull(outErr.getOutputPath()))
                   .setStderrPath(getPathOrDevNull(outErr.getErrorPath()))
                   .setTimeout(policy.getTimeout())
-                  .setKillDelay(Duration.ofSeconds(localExecutionOptions.localSigkillGraceSeconds))
-                  .build();
+                  .setKillDelay(Duration.ofSeconds(localExecutionOptions.localSigkillGraceSeconds));
+          if (localExecutionOptions.collectLocalExecutionStatistics) {
+            statisticsPath = Optional.of(tmpDir.getRelative("stats.out").getPathString());
+            commandLineBuilder.setStatisticsPath(statisticsPath.get());
+          }
+          List<String> cmdLine = commandLineBuilder.build();
           cmd =
               new Command(
                   cmdLine.toArray(new String[0]),
                   localEnvProvider.rewriteLocalEnv(
-                      spawn.getEnvironment(), execRoot, tmpDir, productName),
+                      spawn.getEnvironment(), execRoot, commandTmpDir, productName),
                   execRoot.getPathFile());
         } else {
           stdOut = outErr.getOutputStream();
@@ -288,7 +289,7 @@ public final class LocalSpawnRunner implements SpawnRunner {
               new Command(
                   spawn.getArguments().toArray(new String[0]),
                   localEnvProvider.rewriteLocalEnv(
-                      spawn.getEnvironment(), execRoot, tmpDir, productName),
+                      spawn.getEnvironment(), execRoot, commandTmpDir, productName),
                   execRoot.getPathFile(),
                   policy.getTimeout());
         }
@@ -334,14 +335,27 @@ public final class LocalSpawnRunner implements SpawnRunner {
             wasTimeout
                 ? Status.TIMEOUT
                 : (exitCode == 0 ? Status.SUCCESS : Status.NON_ZERO_EXIT);
-        return new SpawnResult.Builder()
-            .setStatus(status)
-            .setExitCode(exitCode)
-            .setExecutorHostname(hostName)
-            .setWallTime(wallTime)
-            .setUserTime(commandResult.getUserExecutionTime())
-            .setSystemTime(commandResult.getSystemExecutionTime())
-            .build();
+        SpawnResult.Builder spawnResultBuilder =
+            new SpawnResult.Builder()
+                .setStatus(status)
+                .setExitCode(exitCode)
+                .setExecutorHostname(hostName)
+                .setWallTime(wallTime);
+        if (statisticsPath.isPresent()) {
+          Optional<ExecutionStatistics.ResourceUsage> resourceUsage =
+              ExecutionStatistics.getResourceUsage(statisticsPath.get());
+          if (resourceUsage.isPresent()) {
+            spawnResultBuilder.setUserTime(resourceUsage.get().getUserExecutionTime());
+            spawnResultBuilder.setSystemTime(resourceUsage.get().getSystemExecutionTime());
+            spawnResultBuilder.setNumBlockOutputOperations(
+                resourceUsage.get().getBlockOutputOperations());
+            spawnResultBuilder.setNumBlockInputOperations(
+                resourceUsage.get().getBlockInputOperations());
+            spawnResultBuilder.setNumInvoluntaryContextSwitches(
+                resourceUsage.get().getInvoluntaryContextSwitches());
+          }
+        }
+        return spawnResultBuilder.build();
       } finally {
         // Delete the temp directory tree, so the next action that this thread executes will get a
         // fresh, empty temp directory.

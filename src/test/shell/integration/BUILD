@@ -125,6 +125,13 @@ sh_test(
 )
 
 sh_test(
+    name = "configured_query_test",
+    size = "large",
+    srcs = ["configured_query_test.sh"],
+    data = [":test-deps"],
+)
+
+sh_test(
     name = "bazel_command_log_test",
     size = "medium",
     srcs = ["bazel_command_log_test.sh"],
@@ -289,6 +296,7 @@ sh_test(
     size = "medium",
     srcs = ["process-wrapper_test.sh"],
     data = [
+        ":execution_statistics_utils.sh",
         ":spend_cpu_time",
         ":test-deps",
         "//src/main/protobuf:execution_statistics.proto",
@@ -296,10 +304,49 @@ sh_test(
     ],
 )
 
+sh_test(
+    name = "linux_sandbox_test",
+    size = "large",
+    srcs = ["linux-sandbox_test.sh"],
+    data = [
+        ":execution_statistics_utils.sh",
+        ":spend_cpu_time",
+        ":test-deps",
+        "//src/main/protobuf:execution_statistics.proto",
+        "//src/test/shell:sandboxing_test_utils.sh",
+        "//third_party/protobuf:protoc",
+    ],
+)
+
+sh_test(
+    name = "linux_sandbox_network_test",
+    size = "large",
+    srcs = ["linux-sandbox_network_test.sh"],
+    data = [
+        ":test-deps",
+        "//src/test/shell:sandboxing_test_utils.sh",
+    ],
+)
+
+package_group(
+    name = "spend_cpu_time_users",
+    packages = [
+        "//src/test/java/com/google/devtools/build/lib/...",
+        "//src/test/java/com/google/devtools/build/lib/shell/...",
+    ],
+)
+
 cc_binary(
     name = "spend_cpu_time",
     testonly = 1,
-    srcs = ["spend_cpu_time.cc"],
+    srcs = select({
+        "//src/conditions:windows": ["spend_cpu_time_windows.cc"],
+        "//src/conditions:windows_msvc": ["spend_cpu_time_windows.cc"],
+        "//conditions:default": ["spend_cpu_time.cc"],
+    }),
+    visibility = [
+        ":spend_cpu_time_users",
+    ],
 )
 
 ########################################################################

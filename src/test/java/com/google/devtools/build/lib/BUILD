@@ -1,11 +1,15 @@
 package(
-    default_visibility = ["//src/test/java/com/google/devtools/build/lib:__subpackages__"],
+    default_visibility = [
+        "//src/test/java/com/google/devtools/build/lib:__subpackages__",
+        "//tools/test:__pkg__",
+    ],
 )
 
 # Tests for Windows-specific functionality that can run cross-platform.
 CROSS_PLATFORM_WINDOWS_TESTS = [
     "util/DependencySetWindowsTest.java",
     "vfs/PathFragmentWindowsTest.java",
+    "vfs/WindowsLocalPathTest.java",
     "windows/PathWindowsTest.java",
 ]
 
@@ -204,7 +208,7 @@ java_test(
 # systems
 java_test(
     name = "windows_test",
-    srcs = CROSS_PLATFORM_WINDOWS_TESTS,
+    srcs = CROSS_PLATFORM_WINDOWS_TESTS + ["vfs/LocalPathAbstractTest.java"],
     jvm_flags = [
         "-Dblaze.os=Windows",
         "-Dbazel.windows_unix_root=C:/fake/msys",
@@ -265,6 +269,7 @@ java_test(
         "//src/main/java/com/google/devtools/build/lib/vfs",
         "//src/main/java/com/google/devtools/build/lib/vfs/inmemoryfs",
         "//src/main/java/com/google/devtools/build/lib/windows",
+        "//src/main/java/com/google/devtools/build/lib/windows:windows_short_path",
         "//src/main/java/com/google/devtools/build/lib/windows/jni",
         "//third_party:guava",
         "//third_party:junit4",
@@ -734,6 +739,8 @@ java_test(
     ]),
     data = [
         ":shell/killmyself",
+        "//src/main/tools:process-wrapper",
+        "//src/test/shell/integration:spend_cpu_time",
     ],
     flaky = True,
     tags = [
@@ -746,8 +753,11 @@ java_test(
         ":test_runner",
         ":testutil",
         "//src/main/java/com/google/devtools/build/lib:bazel-main",
+        "//src/main/java/com/google/devtools/build/lib:runtime",
+        "//src/main/java/com/google/devtools/build/lib:util",
         "//src/main/java/com/google/devtools/build/lib/collect",
         "//src/main/java/com/google/devtools/build/lib/shell",
+        "//src/main/protobuf:execution_statistics_java_proto",
         "//third_party:guava",
         "//third_party:guava-testlib",
         "//third_party:jsr305",
@@ -997,6 +1007,7 @@ java_test(
         "//src/main/java/com/google/devtools/build/lib:bazel-rules",
         "//src/main/java/com/google/devtools/build/lib:build-base",
         "//src/main/java/com/google/devtools/build/lib:core-rules",
+        "//src/main/java/com/google/devtools/build/lib:core-workspace-rules",
         "//src/main/java/com/google/devtools/build/lib:events",
         "//src/main/java/com/google/devtools/build/lib:java-compilation",
         "//src/main/java/com/google/devtools/build/lib:packages-internal",
@@ -1193,6 +1204,7 @@ java_test(
         ":analysis_testutil",
         "//src/main/java/com/google/devtools/build/lib:build-base",
         "//src/main/java/com/google/devtools/build/lib:io",
+        "//src/main/java/com/google/devtools/build/lib:unix",
         "//src/main/java/com/google/devtools/build/lib:util",
         "//src/main/java/com/google/devtools/build/lib/actions",
         "//src/main/java/com/google/devtools/build/lib/exec/local",
@@ -1201,6 +1213,9 @@ java_test(
         "//src/main/java/com/google/devtools/build/lib/vfs",
         "//src/main/java/com/google/devtools/build/lib/vfs/inmemoryfs",
         "//src/main/java/com/google/devtools/common/options",
+        "//src/main/tools:process-wrapper",
+        "//src/test/java/com/google/devtools/build/lib:testutil",
+        "//src/test/shell/integration:spend_cpu_time",
         "//third_party:guava",
         "//third_party:junit4",
         "//third_party:mockito",

@@ -22,7 +22,7 @@ import com.google.devtools.build.lib.actions.ResourceSet;
 import com.google.devtools.build.lib.analysis.AnalysisUtils;
 import com.google.devtools.build.lib.analysis.FileProvider;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
-import com.google.devtools.build.lib.analysis.OutputGroupProvider;
+import com.google.devtools.build.lib.analysis.OutputGroupInfo;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetBuilder;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.Runfiles;
@@ -61,7 +61,6 @@ import com.google.devtools.build.lib.rules.java.JavaCompilationArgs.ClasspathTyp
 import com.google.devtools.build.lib.rules.java.JavaCompilationArgsProvider;
 import com.google.devtools.build.lib.rules.java.JavaCompilationArtifacts;
 import com.google.devtools.build.lib.rules.java.JavaCompilationHelper;
-import com.google.devtools.build.lib.rules.java.JavaGenJarsProvider;
 import com.google.devtools.build.lib.rules.java.JavaInfo;
 import com.google.devtools.build.lib.rules.java.JavaRuleOutputJarsProvider;
 import com.google.devtools.build.lib.rules.java.JavaRuleOutputJarsProvider.OutputJar;
@@ -91,6 +90,8 @@ public class AndroidCommon {
 
   public static final ImmutableSet<String> TRANSITIVE_ATTRIBUTES =
       ImmutableSet.of("deps", "exports");
+  private static final ResourceSet DEX_RESOURCE_SET =
+      ResourceSet.createWithRamCpuIo(4096.0, 5.0, 0.0);
 
   public static final <T extends TransitiveInfoProvider> Iterable<T> getTransitivePrerequisites(
       RuleContext ruleContext, Mode mode, final Class<T> classType) {
@@ -232,7 +233,7 @@ public class AndroidCommon {
             .setProgressMessage("Converting %s to dex format", jarToDex.getExecPathString())
             .setMnemonic("AndroidDexer")
             .addCommandLine(commandLine.build())
-            .setResources(ResourceSet.createWithRamCpuIo(4096.0, 5.0, 0.0));
+            .setResources(DEX_RESOURCE_SET);
     if (mainDexList != null) {
       builder.addInput(mainDexList);
     }
@@ -790,18 +791,19 @@ public class AndroidCommon {
             recursiveJavaCompilationArgs,
             compileTimeDependencyArtifacts,
             NestedSetBuilder.<Artifact>emptySet(Order.STABLE_ORDER));
-    javaCommon.addTransitiveInfoProviders(builder, filesToBuild, classJar, ANDROID_COLLECTION_SPEC);
 
-    JavaGenJarsProvider javaGenJarsProvider =
-        javaCommon.createJavaGenJarsProvider(genClassJar, genSourceJar);
-    javaCommon.addJavaGenJarsProvider(builder, javaGenJarsProvider);
+    JavaInfo.Builder javaInfoBuilder = JavaInfo.Builder.create();
+
+    javaCommon.addTransitiveInfoProviders(
+        builder, javaInfoBuilder, filesToBuild, classJar, ANDROID_COLLECTION_SPEC);
+
+    javaCommon.addGenJarsProvider(builder, javaInfoBuilder, genClassJar, genSourceJar);
 
     DataBinding.maybeAddProvider(builder, ruleContext);
-    JavaInfo javaInfo = JavaInfo.Builder.create()
+    JavaInfo javaInfo = javaInfoBuilder
         .addProvider(JavaCompilationArgsProvider.class, compilationArgsProvider)
         .addProvider(JavaRuleOutputJarsProvider.class, ruleOutputJarsProvider)
         .addProvider(JavaSourceJarsProvider.class, sourceJarsProvider)
-        .addProvider(JavaGenJarsProvider.class, javaGenJarsProvider)
         .build();
 
     return builder
@@ -830,7 +832,7 @@ public class AndroidCommon {
                 nativeLibs))
         .addSkylarkTransitiveInfo(AndroidSkylarkApiProvider.NAME, new AndroidSkylarkApiProvider())
         .addOutputGroup(
-            OutputGroupProvider.HIDDEN_TOP_LEVEL, collectHiddenTopLevelArtifacts(ruleContext))
+            OutputGroupInfo.HIDDEN_TOP_LEVEL, collectHiddenTopLevelArtifacts(ruleContext))
         .addOutputGroup(
             JavaSemantics.SOURCE_JARS_OUTPUT_GROUP, sourceJarsProvider.getTransitiveSourceJars());
   }
@@ -962,10 +964,10 @@ public class AndroidCommon {
 
   private NestedSet<Artifact> collectHiddenTopLevelArtifacts(RuleContext ruleContext) {
     NestedSetBuilder<Artifact> builder = NestedSetBuilder.stableOrder();
-    for (OutputGroupProvider provider :
+    for (OutputGroupInfo provider :
         getTransitivePrerequisites(
-            ruleContext, Mode.TARGET, OutputGroupProvider.SKYLARK_CONSTRUCTOR)) {
-      builder.addTransitive(provider.getOutputGroup(OutputGroupProvider.HIDDEN_TOP_LEVEL));
+            ruleContext, Mode.TARGET, OutputGroupInfo.SKYLARK_CONSTRUCTOR)) {
+      builder.addTransitive(provider.getOutputGroup(OutputGroupInfo.HIDDEN_TOP_LEVEL));
     }
     return builder.build();
   }
@@ -1049,5 +1051,31 @@ public class AndroidCommon {
           "resources",
           "The resources attribute has been removed. Please use resource_files instead.");
     }
+  }
+
+  /**
+   * Used for instrumentation tests. Filter out classes from the instrumentation JAR that are also
+   * present in the target JAR. During an instrumentation test, ART will load jars from both APKs
+   * into the same classloader. If the same class exists in both jars, there will be runtime
+   * crashes.
+   *
+   * <p>R.class files that share the same package are also filtered out to prevent
+   * surprising/incorrect references to resource IDs.
+   */
+  public static void createZipFilterAction(
+      RuleContext ruleContext,
+      Artifact in,
+      Artifact filter,
+      Artifact out,
+      boolean checkHashMismatch) {
+    new ZipFilterBuilder(ruleContext)
+        .setInputZip(in)
+        .addFilterZips(ImmutableList.of(filter))
+        .setOutputZip(out)
+        .addFileTypeToFilter(".class")
+        .setCheckHashMismatch(checkHashMismatch)
+        .addExplicitFilter("R\\.class")
+        .addExplicitFilter("R\\$.*\\.class")
+        .build();
   }
 }

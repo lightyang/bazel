@@ -335,7 +335,7 @@ public class WorkspaceFactory {
                   // This effectively adds a "local_repository(name = "<ws>", path = ".")"
                   // definition to the WORKSPACE file.
                   WorkspaceFactoryHelper.createAndAddRepositoryRule(
-                      builder, localRepositoryRuleClass, bindRuleClass, kwargs, ast, allowOverride);
+                      builder, localRepositoryRuleClass, bindRuleClass, kwargs, ast);
                 } catch (InvalidRuleException | NameConflictException | LabelSyntaxException e) {
                   throw new EvalException(ast.getLocation(), e.getMessage());
                 }
@@ -451,11 +451,21 @@ public class WorkspaceFactory {
           throws EvalException, InterruptedException {
         try {
           Package.Builder builder = PackageFactory.getContext(env, ast).pkgBuilder;
+          if (!allowOverride
+              && kwargs.containsKey("name")
+              && builder.targets.containsKey(kwargs.get("name"))) {
+            throw new EvalException(
+                ast.getLocation(),
+                "Cannot redefine repository after any load statement in the WORKSPACE file"
+                    + " (for repository '"
+                    + kwargs.get("name")
+                    + "')");
+          }
           RuleClass ruleClass = ruleFactory.getRuleClass(ruleClassName);
           RuleClass bindRuleClass = ruleFactory.getRuleClass("bind");
           Rule rule =
               WorkspaceFactoryHelper.createAndAddRepositoryRule(
-                  builder, ruleClass, bindRuleClass, kwargs, ast, allowOverride);
+                  builder, ruleClass, bindRuleClass, kwargs, ast);
           if (!isLegalWorkspaceName(rule.getName())) {
             throw new EvalException(
                 ast.getLocation(), rule + "'s name field must be a legal workspace name");
@@ -505,7 +515,6 @@ public class WorkspaceFactory {
       workspaceEnv.setupDynamic(
           PackageFactory.PKG_CONTEXT,
           new PackageFactory.PackageContext(builder, null, localReporter, AttributeContainer::new));
-      workspaceEnv.setupDynamic("$allow_override", allowOverride);
     } catch (EvalException e) {
       throw new AssertionError(e);
     }
@@ -514,8 +523,9 @@ public class WorkspaceFactory {
   private static ClassObject newNativeModule(
       ImmutableMap<String, BaseFunction> workspaceFunctions, String version) {
     ImmutableMap.Builder<String, Object> builder = new ImmutableMap.Builder<>();
-    for (String nativeFunction : Runtime.getFunctionNames(SkylarkNativeModule.class)) {
-      builder.put(nativeFunction, Runtime.getFunction(SkylarkNativeModule.class, nativeFunction));
+    Runtime.BuiltinRegistry builtins = Runtime.getBuiltinRegistry();
+    for (String nativeFunction : builtins.getFunctionNames(SkylarkNativeModule.class)) {
+      builder.put(nativeFunction, builtins.getFunction(SkylarkNativeModule.class, nativeFunction));
     }
     for (Map.Entry<String, BaseFunction> function : workspaceFunctions.entrySet()) {
       builder.put(function.getKey(), function.getValue());

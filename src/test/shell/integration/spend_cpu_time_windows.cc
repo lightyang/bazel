@@ -12,32 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-syntax = "proto2";
+#include <iostream>
 
-
-// option java_api_version = 2;
-option optimize_for = LITE_RUNTIME;
-
-package aapt.pb;
-option java_package = "com.google.devtools.build.android.proto";
-
-message ConfigDescription {
-  optional bytes data = 1;
-  optional string product = 2;
-}
-
-message StringPool {
-  optional bytes data = 1;
-}
-
-message CompiledFile {
-  message Symbol {
-    optional string resource_name = 1;
-    optional uint32 line_no = 2;
+int main(int argc, char** argv) {
+  // TODO(bazel-team): implement this program.
+  std::cout << "ERROR: spend_cpu_time is not yet implemented on Windows."
+            << std::endl
+            << "Called with args:" << std::endl;
+  for (int i = 0; i < argc; ++i) {
+    std::cout << "argv[" << i << "]=(" << argv[i] << ")" << std::endl;
   }
-
-  optional string resource_name = 1;
-  optional ConfigDescription config = 2;
-  optional string source_path = 3;
-  repeated Symbol exported_symbols = 4;
+  return 1;
 }

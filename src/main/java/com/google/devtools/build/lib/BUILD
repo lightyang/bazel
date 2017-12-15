@@ -184,6 +184,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib/collect/compacthashset",
         "//src/main/java/com/google/devtools/build/lib/concurrent",
         "//src/main/java/com/google/devtools/build/lib/shell",
+        "//src/main/java/com/google/devtools/build/lib/skyframe/serialization",
         "//src/main/java/com/google/devtools/build/lib/vfs",
         "//src/main/java/com/google/devtools/common/options",
         "//third_party:guava",
@@ -428,6 +429,7 @@ java_library(
             "analysis/BuildInfo.java",
             "analysis/TransitiveInfoProvider.java",
             "analysis/config/BuildConfigurationOptionDetails.java",
+            "rules/repository/CoreWorkspaceRules.java",
         ],
     ) + [
         "runtime/BlazeServerStartupOptions.java",
@@ -505,6 +507,7 @@ java_library(
         "//src/main/java/com/google/devtools/build/lib:build-base",
         "//src/main/java/com/google/devtools/build/lib:build-info",
         "//src/main/java/com/google/devtools/build/lib:core-rules",
+        "//src/main/java/com/google/devtools/build/lib:core-workspace-rules",
         "//src/main/java/com/google/devtools/build/lib:events",
         "//src/main/java/com/google/devtools/build/lib:java-compilation",
         "//src/main/java/com/google/devtools/build/lib:java-rules",
@@ -890,6 +893,23 @@ java_library(
     ],
 )
 
+# TODO(bazel-team): Include in the srcs the implementations of the rules inside
+# CoreWorkspaceRules.java once they can be extracted from the "build-base" target. They can't be
+# extracted currently because of non-trivial inter-package dependencies.
+java_library(
+    name = "core-workspace-rules",
+    srcs = [
+        "rules/repository/CoreWorkspaceRules.java",
+    ],
+    deps = [
+        "//src/main/java/com/google/devtools/build/lib:build-base",
+        "//src/main/java/com/google/devtools/build/lib:core-rules",
+        "//src/main/java/com/google/devtools/build/lib:packages-internal",
+        "//src/main/java/com/google/devtools/build/lib:util",
+        "//third_party:guava",
+    ],
+)
+
 java_library(
     name = "android-rules",
     srcs = glob(
@@ -1196,21 +1216,11 @@ genrule(
     ],
 )
 
-# The skylark repository classes are passed as parameter of the Skylark documentation generator.
-SKYLARK_REPOSITORY_CLASSES = [
-    "com.google.devtools.build.lib.bazel.repository.skylark.SkylarkExecutionResult",
-    "com.google.devtools.build.lib.bazel.repository.skylark.SkylarkOS",
-    "com.google.devtools.build.lib.bazel.repository.skylark.SkylarkPath",
-    "com.google.devtools.build.lib.bazel.repository.skylark.SkylarkRepositoryContext",
-    "com.google.devtools.build.lib.bazel.repository.skylark.SkylarkRepositoryModule",
-]
-
 genrule(
     name = "gen_skylarklibrary",
     outs = ["skylark-library.zip"],
     cmd = "mkdir -p $(@D)/skylark-lib &&" +
-          "$(location //src/main/java/com/google/devtools/build/docgen:skydoc_bin) $(@D)/skylark-lib external" +
-          " ".join(SKYLARK_REPOSITORY_CLASSES) +
+          "$(location //src/main/java/com/google/devtools/build/docgen:skydoc_bin) $(@D)/skylark-lib" +
           " && zip -qj $@ $(@D)/skylark-lib/*",
     tools = ["//src/main/java/com/google/devtools/build/docgen:skydoc_bin"],
     visibility = ["//site:__pkg__"],

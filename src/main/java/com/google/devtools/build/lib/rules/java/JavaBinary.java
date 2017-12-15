@@ -24,7 +24,7 @@ import com.google.common.collect.Lists;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
 import com.google.devtools.build.lib.analysis.FilesToRunProvider;
-import com.google.devtools.build.lib.analysis.OutputGroupProvider;
+import com.google.devtools.build.lib.analysis.OutputGroupInfo;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetBuilder;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetFactory;
 import com.google.devtools.build.lib.analysis.RuleContext;
@@ -313,7 +313,7 @@ public class JavaBinary implements RuleConfiguredTargetFactory {
       // of safety.)
       if (javaConfig.enforceOneVersionOnJavaTests() || !isJavaTestRule(ruleContext)) {
         builder.addOutputGroup(
-            OutputGroupProvider.HIDDEN_TOP_LEVEL,
+            OutputGroupInfo.HIDDEN_TOP_LEVEL,
             OneVersionCheckActionBuilder.newBuilder()
                 .withEnforcementLevel(javaConfig.oneVersionEnforcementLevel())
                 .outputArtifact(
@@ -427,16 +427,14 @@ public class JavaBinary implements RuleConfiguredTargetFactory {
 
     JavaRuleOutputJarsProvider ruleOutputJarsProvider = ruleOutputJarsProviderBuilder.build();
 
-    common.addTransitiveInfoProviders(builder, filesToBuild, classJar);
+    JavaInfo.Builder javaInfoBuilder = JavaInfo.Builder.create();
 
-    JavaGenJarsProvider javaGenJarsProvider =
-        common.createJavaGenJarsProvider(genClassJar, genSourceJar);
-    common.addJavaGenJarsProvider(builder, javaGenJarsProvider);
+    common.addTransitiveInfoProviders(builder, javaInfoBuilder, filesToBuild, classJar);
+    common.addGenJarsProvider(builder, javaInfoBuilder, genClassJar, genSourceJar);
 
-    JavaInfo javaInfo = JavaInfo.Builder.create()
+    JavaInfo javaInfo = javaInfoBuilder
         .addProvider(JavaSourceJarsProvider.class, sourceJarsProvider)
         .addProvider(JavaRuleOutputJarsProvider.class, ruleOutputJarsProvider)
-        .addProvider(JavaGenJarsProvider.class, javaGenJarsProvider)
         .build();
 
     return builder

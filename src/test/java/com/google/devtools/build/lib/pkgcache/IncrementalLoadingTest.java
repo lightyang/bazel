@@ -41,7 +41,6 @@ import com.google.devtools.build.lib.skyframe.DiffAwareness;
 import com.google.devtools.build.lib.skyframe.SequencedSkyframeExecutor;
 import com.google.devtools.build.lib.skyframe.SkyValueDirtinessChecker;
 import com.google.devtools.build.lib.skyframe.SkyframeExecutor;
-import com.google.devtools.build.lib.syntax.GlobList;
 import com.google.devtools.build.lib.testutil.ManualClock;
 import com.google.devtools.build.lib.testutil.TestConstants;
 import com.google.devtools.build.lib.util.io.TimestampGranularityMonitor;
@@ -49,6 +48,7 @@ import com.google.devtools.build.lib.vfs.Dirent;
 import com.google.devtools.build.lib.vfs.FileStatus;
 import com.google.devtools.build.lib.vfs.FileSystem;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
+import com.google.devtools.build.lib.vfs.LocalPath;
 import com.google.devtools.build.lib.vfs.ModifiedFileSet;
 import com.google.devtools.build.lib.vfs.Path;
 import com.google.devtools.build.lib.vfs.PathFragment;
@@ -77,8 +77,8 @@ import org.junit.runners.JUnit4;
 public class IncrementalLoadingTest {
   protected PackageCacheTester tester;
 
-  private Path throwOnReaddir = null;
-  private Path throwOnStat = null;
+  private LocalPath throwOnReaddir = null;
+  private LocalPath throwOnStat = null;
 
   @Before
   public final void createTester() throws Exception {
@@ -86,7 +86,8 @@ public class IncrementalLoadingTest {
     FileSystem fs =
         new InMemoryFileSystem(clock) {
           @Override
-          public Collection<Dirent> readdir(Path path, boolean followSymlinks) throws IOException {
+          public Collection<Dirent> readdir(LocalPath path, boolean followSymlinks)
+              throws IOException {
             if (path.equals(throwOnReaddir)) {
               throw new FileNotFoundException(path.getPathString());
             }
@@ -95,7 +96,7 @@ public class IncrementalLoadingTest {
 
           @Nullable
           @Override
-          public FileStatus stat(Path path, boolean followSymlinks) throws IOException {
+          public FileStatus stat(LocalPath path, boolean followSymlinks) throws IOException {
             if (path.equals(throwOnStat)) {
               throw new IOException("bork " + path.getPathString());
             }
@@ -338,7 +339,7 @@ public class IncrementalLoadingTest {
     Path buildFile = tester.addFile("e/BUILD", "sh_library(name = 'e', data = glob(['*.txt']))");
     Path parentDir = buildFile.getParentDirectory();
     tester.addFile("e/data.txt");
-    throwOnReaddir = parentDir;
+    throwOnReaddir = parentDir.getLocalPath();
     tester.sync();
     try {
       tester.getTarget("//e:e");
@@ -349,7 +350,7 @@ public class IncrementalLoadingTest {
     tester.sync();
     Target target = tester.getTarget("//e:e");
     assertThat(((Rule) target).containsErrors()).isFalse();
-    GlobList<?> globList = (GlobList<?>) ((Rule) target).getAttributeContainer().getAttr("data");
+    List<?> globList = (List<?>) ((Rule) target).getAttributeContainer().getAttr("data");
     assertThat(globList).containsExactly(Label.parseAbsolute("//e:data.txt"));
   }
 

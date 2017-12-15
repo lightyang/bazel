@@ -342,7 +342,8 @@ public final class ApplicationManifest {
       @Nullable Artifact rTxt,
       boolean incremental,
       Artifact proguardCfg,
-      @Nullable String packageUnderTest)
+      @Nullable String packageUnderTest,
+      boolean hasLocalResourceFiles)
       throws InterruptedException, RuleErrorException {
     LocalResourceContainer data =
         LocalResourceContainer.forAssetsAndResources(
@@ -382,7 +383,8 @@ public final class ApplicationManifest {
                     .getConfiguration()
                     .getFragment(AndroidConfiguration.class)
                     .throwOnResourceConflict())
-            .setPackageUnderTest(packageUnderTest);
+            .setPackageUnderTest(packageUnderTest)
+            .setIsTestWithResources(hasLocalResourceFiles);
     if (!incremental) {
       builder
           .targetAaptVersion(targetAaptVersion)
@@ -860,7 +862,7 @@ public final class ApplicationManifest {
       boolean createSource,
       Artifact proguardCfg,
       @Nullable Artifact mainDexProguardCfg)
-      throws InterruptedException {
+      throws InterruptedException, RuleErrorException {
 
     TransitiveInfoCollection resourcesPrerequisite =
         ruleContext.getPrerequisite("resources", Mode.TARGET);
@@ -917,8 +919,7 @@ public final class ApplicationManifest {
     for (String extension : uncompressedExtensions) {
       additionalAaptOpts.add("-0").add(extension);
     }
-    if (resourceFilterFactory.hasConfigurationFilters()
-        && !resourceFilterFactory.isPrefiltering()) {
+    if (resourceFilterFactory.hasConfigurationFilters()) {
       additionalAaptOpts.add("-c").add(resourceFilterFactory.getConfigurationFilterString());
     }
 

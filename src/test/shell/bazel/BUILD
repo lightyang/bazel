@@ -22,7 +22,6 @@ filegroup(
     name = "test-deps",
     testonly = 1,
     srcs = [
-        "bazel_sandboxing_test_utils.sh",
         "remote_helpers.sh",
         "testing_server.py",
         ":langtools-copy",
@@ -361,16 +360,16 @@ sh_test(
 )
 
 sh_test(
-    name = "linux_sandbox_test",
-    size = "large",
-    srcs = ["linux-sandbox_test.sh"],
+    name = "cc_integration_test",
+    size = "medium",
+    srcs = ["cc_integration_test.sh"],
     data = [":test-deps"],
 )
 
 sh_test(
-    name = "cc_integration_test",
+    name = "cc_static_binary_test",
     size = "medium",
-    srcs = ["cc_integration_test.sh"],
+    srcs = ["cc_static_binary_test.sh"],
     data = [":test-deps"],
 )
 
@@ -380,6 +379,7 @@ sh_test(
     srcs = ["bazel_sandboxing_test.sh"],
     data = [
         ":test-deps",
+        "//src/test/shell:sandboxing_test_utils.sh",
         "@mount_path_toolchain//file",
     ],
     tags = ["local"],
@@ -388,7 +388,10 @@ sh_test(
 sh_test(
     name = "bazel_sandboxing_cpp_test",
     srcs = ["bazel_sandboxing_cpp_test.sh"],
-    data = [":test-deps"],
+    data = [
+        ":test-deps",
+        "//src/test/shell:sandboxing_test_utils.sh",
+    ],
     tags = ["local"],
 )
 
@@ -421,11 +424,22 @@ sh_test(
 )
 
 sh_test(
+    name = "remote_execution_rest_test",
+    size = "large",
+    srcs = ["remote_execution_rest_test.sh"],
+    data = [
+        ":test-deps",
+        "//src/tools/remote:worker",
+    ],
+)
+
+sh_test(
     name = "remote_execution_sandboxing_test",
     size = "large",
     srcs = ["remote_execution_sandboxing_test.sh"],
     data = [
         ":test-deps",
+        "//src/test/shell:sandboxing_test_utils.sh",
         "//src/tools/remote:worker",
     ],
 )

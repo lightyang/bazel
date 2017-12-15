@@ -18,7 +18,7 @@
 #
 
 function die() {
-  echo >&2 "ERROR[$(basename "$0") $(date +%H:%M:%S.%N)] $@"
+  echo >&2 "ERROR[$(basename "$0") $(date +%H:%M:%S.%N)] $*"
   exit 1
 }
 
@@ -251,7 +251,7 @@ EOF
     || fail "Failed to build //pkg:test"
   assert_contains "PATH=$PATH_TO_BAZEL_WRAPPER:/bin:/usr/bin:/random/path" \
     bazel-genfiles/pkg/test.out
-  assert_contains "TMPDIR=.*execroot.*tmp[0-9a-fA-F]\+_[0-9a-fA-F]\+$" \
+  assert_contains "TMPDIR=.*execroot.*local-spawn-runner.*work$" \
     bazel-genfiles/pkg/test.out
   assert_not_contains "TMPDIR=.*newfancytmpdir" \
     bazel-genfiles/pkg/test.out
@@ -325,6 +325,7 @@ function test_genrule_toolchain_dependency {
 genrule(
     name = "toolchain_check",
     outs = ["version"],
+    toolchains = ['@bazel_tools//tools/jdk:current_java_runtime'],
     cmd = "ls -al \$(JAVABASE) > \$@",
 )
 EOF

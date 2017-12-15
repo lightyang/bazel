@@ -43,6 +43,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Consumer;
+import javax.annotation.Nullable;
 
 /**
  * Builder class to construct C++ compile actions.
@@ -82,6 +83,8 @@ public class CppCompileActionBuilder {
   private CcToolchainProvider ccToolchain;
   private final ActionEnvironment env;
   private final boolean codeCoverageEnabled;
+  @Nullable private String actionName;
+  private ImmutableList<Artifact> builtinIncludeFiles;
   // New fields need to be added to the copy constructor.
 
   /**
@@ -174,6 +177,7 @@ public class CppCompileActionBuilder {
     this.codeCoverageEnabled = other.codeCoverageEnabled;
     this.cppSemantics = other.cppSemantics;
     this.ccToolchain = other.ccToolchain;
+    this.actionName = other.actionName;
   }
 
   public PathFragment getTempOutputFile() {
@@ -216,6 +220,9 @@ public class CppCompileActionBuilder {
   }
 
   private String getActionName() {
+    if (actionName != null) {
+      return actionName;
+    }
     PathFragment sourcePath = sourceFile.getExecPath();
     if (CppFileTypes.CPP_MODULE_MAP.matches(sourcePath)) {
       return CppCompileAction.CPP_MODULE_COMPILE;
@@ -357,6 +364,7 @@ public class CppCompileActionBuilder {
               usePic,
               useHeaderModules,
               realMandatoryInputs,
+              getBuiltinIncludeFiles(),
               prunableInputs,
               outputFile,
               tempOutputFile,
@@ -383,6 +391,7 @@ public class CppCompileActionBuilder {
               usePic,
               useHeaderModules,
               realMandatoryInputs,
+              getBuiltinIncludeFiles(),
               prunableInputs,
               outputFile,
               dotdFile,
@@ -411,13 +420,22 @@ public class CppCompileActionBuilder {
     return action;
   }
 
+  private ImmutableList<Artifact> getBuiltinIncludeFiles() {
+    ImmutableList.Builder<Artifact> result = ImmutableList.builder();
+    result.addAll(ccToolchain.getBuiltinIncludeFiles());
+    if (builtinIncludeFiles != null) {
+      result.addAll(builtinIncludeFiles);
+    }
+    return result.build();
+  }
+
   /**
    * Returns the list of mandatory inputs for the {@link CppCompileAction} as configured.
    */
   NestedSet<Artifact> buildMandatoryInputs() {
     NestedSetBuilder<Artifact> realMandatoryInputsBuilder = NestedSetBuilder.compileOrder();
     realMandatoryInputsBuilder.addTransitive(mandatoryInputsBuilder.build());
-    realMandatoryInputsBuilder.addAll(ccToolchain.getBuiltinIncludeFiles());
+    realMandatoryInputsBuilder.addAll(getBuiltinIncludeFiles());
     realMandatoryInputsBuilder.addAll(context.getTransitiveCompilationPrerequisites());
     if (useHeaderModules() && !shouldPruneModules()) {
       realMandatoryInputsBuilder.addTransitive(context.getTransitiveModules(usePic));
@@ -474,6 +492,15 @@ public class CppCompileActionBuilder {
                 includePath));
       }
     }
+  }
+
+  /**
+   * Set action name that is used to pick the right action_config and features from {@link
+   * FeatureConfiguration}. By default the action name is decided from the source filetype.
+   */
+  public CppCompileActionBuilder setActionName(String actionName) {
+    this.actionName = actionName;
+    return this;
   }
 
   /**
@@ -558,8 +585,11 @@ public class CppCompileActionBuilder {
   }
 
   public CppCompileActionBuilder setOutputs(
-      RuleContext ruleContext, ArtifactCategory outputCategory, String outputName,
-      boolean generateDotd) {
+      RuleContext ruleContext,
+      ArtifactCategory outputCategory,
+      String outputName,
+      boolean generateDotd)
+      throws RuleErrorException {
     this.outputFile = CppHelper.getCompileOutputArtifact(
         ruleContext,
         CppHelper.getArtifactNameForCategory(ruleContext, ccToolchain, outputCategory, outputName),
@@ -663,6 +693,12 @@ public class CppCompileActionBuilder {
 
   public CppCompileActionBuilder setCoptsFilter(Predicate<String> coptsFilter) {
     this.coptsFilter = Preconditions.checkNotNull(coptsFilter);
+    return this;
+  }
+
+  public CppCompileActionBuilder setBuiltinIncludeFiles(
+      ImmutableList<Artifact> builtinIncludeFiles) {
+    this.builtinIncludeFiles = builtinIncludeFiles;
     return this;
   }
 }

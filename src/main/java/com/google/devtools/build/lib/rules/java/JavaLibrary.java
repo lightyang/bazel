@@ -17,7 +17,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.ConfiguredTarget;
-import com.google.devtools.build.lib.analysis.OutputGroupProvider;
+import com.google.devtools.build.lib.analysis.OutputGroupInfo;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetBuilder;
 import com.google.devtools.build.lib.analysis.RuleConfiguredTargetFactory;
 import com.google.devtools.build.lib.analysis.RuleContext;
@@ -208,11 +208,11 @@ public class JavaLibrary implements RuleConfiguredTargetFactory {
     JavaRuleOutputJarsProvider ruleOutputJarsProvider = ruleOutputJarsProviderBuilder.build();
 
     NestedSet<Artifact> filesToBuild = filesBuilder.build();
-    common.addTransitiveInfoProviders(builder, filesToBuild, classJar);
 
-    JavaGenJarsProvider javaGenJarsProvider =
-        common.createJavaGenJarsProvider(genClassJar, genSourceJar);
-    common.addJavaGenJarsProvider(builder, javaGenJarsProvider);
+    JavaInfo.Builder javaInfoBuilder = JavaInfo.Builder.create();
+
+    common.addTransitiveInfoProviders(builder, javaInfoBuilder, filesToBuild, classJar);
+    common.addGenJarsProvider(builder, javaInfoBuilder, genClassJar, genSourceJar);
 
     NestedSet<Artifact> proguardSpecs = new ProguardLibrary(ruleContext).collectProguardSpecs();
 
@@ -224,14 +224,13 @@ public class JavaLibrary implements RuleConfiguredTargetFactory {
         : JavaCommon.getTransitivePlugins(ruleContext);
 
     // java_library doesn't need to return JavaRunfilesProvider
-    JavaInfo javaInfo = JavaInfo.Builder.create()
+    JavaInfo javaInfo = javaInfoBuilder
         .addProvider(JavaCompilationArgsProvider.class, compilationArgsProvider)
         .addProvider(JavaSourceJarsProvider.class, sourceJarsProvider)
         .addProvider(ProtoJavaApiInfoAspectProvider.class, protoAspectBuilder.build())
         .addProvider(JavaRuleOutputJarsProvider.class, ruleOutputJarsProvider)
         // TODO(bazel-team): this should only happen for java_plugin
         .addProvider(JavaPluginInfoProvider.class, pluginInfoProvider)
-        .addProvider(JavaGenJarsProvider.class, javaGenJarsProvider)
         .build();
 
     builder
@@ -250,7 +249,7 @@ public class JavaLibrary implements RuleConfiguredTargetFactory {
         .addProvider(new ProguardSpecProvider(proguardSpecs))
         .addNativeDeclaredProvider(javaInfo)
         .addOutputGroup(JavaSemantics.SOURCE_JARS_OUTPUT_GROUP, transitiveSourceJars)
-        .addOutputGroup(OutputGroupProvider.HIDDEN_TOP_LEVEL, proguardSpecs);
+        .addOutputGroup(OutputGroupInfo.HIDDEN_TOP_LEVEL, proguardSpecs);
 
 
     if (ruleContext.hasErrors()) {
