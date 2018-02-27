@@ -1229,6 +1229,18 @@ public class CppCompileAction extends AbstractAction
     StringBuilder message = new StringBuilder();
     message.append(getProgressMessage());
     message.append('\n');
+    for (Map.Entry<String, String> entry : getEnvironment().entrySet()) {
+      message.append("  Environment variable: ");
+      message.append(ShellEscaper.escapeString(entry.getKey()));
+      message.append('=');
+      message.append(ShellEscaper.escapeString(entry.getValue()));
+      message.append('\n');
+    }
+    for (String var : getClientEnvironmentVariables()) {
+      message.append("  Environment variables taken from the client environment: ");
+      message.append(ShellEscaper.escapeString(var));
+      message.append('\n');
+    }
     // Outputting one argument per line makes it easier to diff the results.
     // The first element in getArguments() is actually the command to execute.
     String legend = "  Command: ";
