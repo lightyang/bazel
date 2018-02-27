@@ -21,6 +21,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.devtools.build.lib.actions.ActionOwner;
+import com.google.devtools.build.lib.actions.ActionEnvironment;
 import com.google.devtools.build.lib.actions.Artifact;
 import com.google.devtools.build.lib.analysis.RuleContext;
 import com.google.devtools.build.lib.analysis.config.BuildConfiguration;
@@ -78,7 +79,7 @@ public class CppCompileActionBuilder {
   private Map<String, String> environment = new LinkedHashMap<>();
   private CppSemantics cppSemantics;
   private CcToolchainProvider ccToolchain;
-  private final ImmutableMap<String, String> localShellEnvironment;
+  private final ActionEnvironment env;
   private final boolean codeCoverageEnabled;
   @Nullable private String actionName;
   private ImmutableList<Artifact> builtinIncludeFiles;
@@ -121,7 +122,7 @@ public class CppCompileActionBuilder {
     this.mandatoryInputsBuilder = NestedSetBuilder.stableOrder();
     this.additionalIncludeScanningRoots = new ImmutableList.Builder<>();
     this.allowUsingHeaderModules = true;
-    this.localShellEnvironment = configuration.getLocalShellEnvironment();
+    this.env = configuration.getActionEnvironment();
     this.codeCoverageEnabled = configuration.isCodeCoverageEnabled();
     this.ccToolchain = ccToolchain;
   }
@@ -157,7 +158,7 @@ public class CppCompileActionBuilder {
     this.shouldScanIncludes = other.shouldScanIncludes;
     this.executionInfo = new LinkedHashMap<>(other.executionInfo);
     this.environment = new LinkedHashMap<>(other.environment);
-    this.localShellEnvironment = other.localShellEnvironment;
+    this.env = other.env;
     this.codeCoverageEnabled = other.codeCoverageEnabled;
     this.cppSemantics = other.cppSemantics;
     this.ccToolchain = other.ccToolchain;
@@ -375,7 +376,7 @@ public class CppCompileActionBuilder {
               outputFile,
               tempOutputFile,
               dotdFile,
-              localShellEnvironment,
+              env,
               ccCompilationInfo,
               coptsFilter,
               getLipoScannables(realMandatoryInputs),
@@ -405,7 +406,7 @@ public class CppCompileActionBuilder {
               dwoFile,
               ltoIndexingFile,
               optionalSourceFile,
-              localShellEnvironment,
+              env,
               ccCompilationInfo,
               coptsFilter,
               getLipoScannables(realMandatoryInputs),
