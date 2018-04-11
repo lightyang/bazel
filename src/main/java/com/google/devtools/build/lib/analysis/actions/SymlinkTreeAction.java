@@ -56,7 +56,6 @@ public final class SymlinkTreeAction extends AbstractAction {
    * @param filesetTree true if this is fileset symlink tree,
    * @param enableRunfiles true is the actual symlink tree needs to be created.
    */
-  @AutoCodec.Instantiator
   public SymlinkTreeAction(
       ActionOwner owner,
       Artifact inputManifest,
@@ -83,6 +82,7 @@ public final class SymlinkTreeAction extends AbstractAction {
    * @param filesetTree true if this is fileset symlink tree,
    * @param enableRunfiles true is the actual symlink tree needs to be created.
    */
+  @AutoCodec.Instantiator
   public SymlinkTreeAction(
       ActionOwner owner,
       Artifact inputManifest,
