@@ -356,7 +356,7 @@ public class SkylarkActionFactory implements SkylarkValue {
       @Param(
         name = "use_default_shell_env",
         type = Boolean.class,
-        defaultValue = "False",
+        defaultValue = "True",
         named = true,
         positional = false,
         doc = "Whether the action should use the built in shell environment or not."
@@ -541,7 +541,7 @@ public class SkylarkActionFactory implements SkylarkValue {
       @Param(
         name = "use_default_shell_env",
         type = Boolean.class,
-        defaultValue = "False",
+        defaultValue = "True",
         named = true,
         positional = false,
         doc = "Whether the action should use the built in shell environment or not."
