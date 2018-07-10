@@ -1229,7 +1229,7 @@ public class CppCompileAction extends AbstractAction
     StringBuilder message = new StringBuilder();
     message.append(getProgressMessage());
     message.append('\n');
-    for (Map.Entry<String, String> entry : getEnvironment().entrySet()) {
+    for (Map.Entry<String, String> entry : getIncompleteEnvironmentForTesting().entrySet()) {
       message.append("  Environment variable: ");
       message.append(ShellEscaper.escapeString(entry.getKey()));
       message.append('=');
