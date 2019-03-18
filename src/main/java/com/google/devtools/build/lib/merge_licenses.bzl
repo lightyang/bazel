@@ -28,7 +28,7 @@ def _windows_action(ctx, files):
     )
 
 def _bash_action(ctx, files):
-    cmd = "for f in $SRCS; do echo ===== $f ===== && cat $f && echo && echo ; done > $OUT"
+    cmd = 'for f in $SRCS; do echo ===== $f ===== && cat $f && echo && echo ; done > "%s"' % (ctx.outputs.out.path,)
     ctx.actions.run_shell(
         inputs = depset(direct = files),
         outputs = [ctx.outputs.out],
